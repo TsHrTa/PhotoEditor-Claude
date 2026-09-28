@@ -1,0 +1,55 @@
+# PhotoEditor – Plan
+
+A simple Lightroom-style photo editor: light and color adjustments, masks (brush, gradients, AI selection), AI denoise/sharpen.
+
+## Stack
+- .NET 10, Avalonia 12, CommunityToolkit.Mvvm
+- SkiaSharp (display, JPEG/PNG/WebP, GPU runtime shaders for live preview)
+- Magick.NET (TIFF, HEIC, RAW) – later
+- ONNX Runtime + DirectML (AI models) – later
+- Avoid ImageSharp (commercial license restrictions) and Ultralytics YOLO (AGPL)
+
+## Principles
+- Non-destructive: the original image is never modified; edits are a list of settings applied on render.
+- Live preview on a downscaled image via GPU shaders; full resolution only on export.
+- Masks are grayscale images; every mask type (brush, gradient, AI) produces the same kind of mask.
+
+## Phases
+Each item is meant to be one small, self-contained step.
+
+### Phase 1 – Viewer, adjustments, export
+- [x] Project setup (Avalonia MVVM, git)
+- [ ] Open image (file dialog + drag & drop), show in viewer
+- [ ] Zoom (fit / 100% / mouse wheel) and pan
+- [ ] Adjustment pipeline: settings model + SkSL shader rendering on a preview-sized image
+- [ ] Light: exposure, contrast, highlights, shadows, whites, blacks
+- [ ] Color: temperature, tint, saturation, vibrance
+- [ ] HSL panel: hue / saturation / luminance per color band (reds, oranges, yellows, greens, aquas, blues, purples, magentas)
+- [ ] Before/after toggle, reset per slider (double-click) and reset all
+- [ ] Export full resolution (JPEG quality, PNG), keep EXIF
+
+### Phase 2 – Edit stack
+- [ ] Undo / redo
+- [ ] Save/load edit settings as sidecar file (.json next to the image)
+
+### Phase 3 – Masks
+- [ ] Mask model: list of masks, each with its own adjustment set; add/subtract/intersect components
+- [ ] Mask overlay display (red tint) and mask list panel
+- [ ] Brush (size, feather, flow, erase)
+- [ ] Linear gradient (on-canvas handles)
+- [ ] Radial gradient (ellipse, feather, invert)
+- [ ] Vignette (amount, midpoint, roundness, feather)
+
+### Phase 4 – AI masks
+- [ ] ONNX Runtime integration (DirectML with CPU fallback), model download on first use
+- [ ] Click / box to select (MobileSAM or EfficientSAM)
+- [ ] Select Subject (BiRefNet-lite)
+- [ ] Select Sky / People (SegFormer)
+
+### Phase 5 – AI enhance
+- [ ] Denoise (NAFNet or SCUNet), tiled processing with progress
+- [ ] Defocus deblur / sharpen (Restormer or NAFNet), strength blending
+- [ ] Classic sharpening (unsharp mask) in the normal pipeline
+
+## Where I left off
+- 2026-09-29: Project created with the Avalonia MVVM template; builds cleanly. Next: open image + viewer.
