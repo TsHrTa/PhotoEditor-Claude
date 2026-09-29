@@ -102,6 +102,43 @@ public partial class MainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(OverlayMask))]
     public partial bool ShowMaskOverlay { get; set; } = true;
 
+    /// <summary>The overlay was switched on automatically (a mask was created or changed), so a slider may hide it.</summary>
+    private bool _overlayShownAutomatically;
+    private bool _settingOverlay;
+
+    partial void OnShowMaskOverlayChanged(bool value)
+    {
+        if (!_settingOverlay)
+            _overlayShownAutomatically = false; // the user chose: leave it as it is
+    }
+
+    private void SetOverlayAutomatically(bool show)
+    {
+        _settingOverlay = true;
+        ShowMaskOverlay = show;
+        _settingOverlay = false;
+        _overlayShownAutomatically = show;
+    }
+
+    /// <summary>
+    /// Shows the overlay when a mask gets a new or changed shape (new mask, brush stroke, gradient, AI selection)
+    /// and hides it again at the first slider change after that; a choice made with O / the checkbox is kept.
+    /// </summary>
+    private void UpdateOverlayForEdit(EditState before, EditState after, string? coalesceKey)
+    {
+        bool shapeChanged = after.Masks.Count > before.Masks.Count
+            || after.Masks.Any(m => before.FindMask(m.Id) is not { } old || !ReferenceEquals(old.Components, m.Components));
+        if (shapeChanged)
+        {
+            SetOverlayAutomatically(true);
+            return;
+        }
+        bool sliderMoved = coalesceKey is not null && AdjustmentParameters.All.Any(p => p.ToString() == coalesceKey)
+            && (before.Adjustments != after.Adjustments || after.Masks.Any(m => before.FindMask(m.Id)?.Adjustments != m.Adjustments));
+        if (sliderMoved && _overlayShownAutomatically && ShowMaskOverlay)
+            SetOverlayAutomatically(false);
+    }
+
     /// <summary>Mask the viewer tints red (the selected one, when the overlay is on).</summary>
     public Mask? OverlayMask =>
         ShowMaskOverlay && !ShowOriginal && (_strokeMaskId ?? SelectedMask?.Id) is { } id ? State.FindMask(id) : null;
@@ -593,7 +630,9 @@ public partial class MainViewModel : ViewModelBase
         if (Original is null)
             return; // nothing open, or only the camera preview of a RAW that is still decoding
         _history.Record(state, coalesceKey);
+        var before = State;
         State = state;
+        UpdateOverlayForEdit(before, state, coalesceKey);
         UpdateHistoryCommands();
         _hasUnsavedEdits = true;
         ScheduleSave();
