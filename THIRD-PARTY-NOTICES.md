@@ -9,6 +9,7 @@ PhotoEditor is for personal use. AI models are downloaded on first use into
 | Feature | Model | Source | Licence |
 |---|---|---|---|
 | Select Object (click / box) | SAM 2.1 Hiera-Tiny (Meta), ONNX conversion | [onnx-community/sam2.1-hiera-tiny-ONNX](https://huggingface.co/onnx-community/sam2.1-hiera-tiny-ONNX) @ `814a0666` | Apache-2.0 (SAM 2.1 weights and code by Meta) |
+| Select Subject | BiRefNet-lite (Zheng Peng et al.), ONNX conversion | [onnx-community/BiRefNet_lite-ONNX](https://huggingface.co/onnx-community/BiRefNet_lite-ONNX) @ `de15b22b` | MIT |
 
 ## Libraries
 

@@ -15,6 +15,53 @@ public partial class MainViewModel
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(30) };
     private readonly ModelStore _models = new(ModelStore.DefaultDirectory, Http);
 
+    private AiMaskDetector? _detector;
+
+    /// <summary>Subject (and later sky / people) detection; reports progress in the status bar.</summary>
+    private AiMaskDetector Detector => _detector ??= new AiMaskDetector(_models,
+        message => Avalonia.Threading.Dispatcher.UIThread.Post(() => Status = message));
+
+    /// <summary>Adds the photo's main subject (AI) to the selected mask, or to a new mask "Subject".</summary>
+    [CommunityToolkit.Mvvm.Input.RelayCommand]
+    private async Task SelectSubject()
+    {
+        if (Original is not { } image || _selecting)
+            return;
+        _selecting = true;
+        try
+        {
+            var detector = Detector;
+            var subject = await Task.Run(() => detector.DetectSubject(image));
+            if (!ReferenceEquals(Original, image))
+                return;
+            Guid targetId;
+            if (SelectedMask is { } current)
+            {
+                targetId = current.Id;
+            }
+            else
+            {
+                var created = new Mask { Name = State.Masks.Exists(m => m.Name == "Subject") ? State.NextMaskName() : "Subject" };
+                ApplyEdit(State.AddMask(created));
+                targetId = created.Id;
+            }
+            EditMask(targetId, m => m.AddComponent(subject), null);
+            if (SelectedMask?.Id != targetId)
+                SelectedMask = Masks.FirstOrDefault(m => m.Id == targetId);
+            SelectedComponentIndex = State.FindMask(targetId)!.Components.Count - 1;
+            Status = "Subject selected. Tick Invert on the component for the background.";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.IO.IOException
+            or System.IO.InvalidDataException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException or UnauthorizedAccessException)
+        {
+            Status = $"Select Subject failed: {ex.Message}";
+        }
+        finally
+        {
+            _selecting = false;
+        }
+    }
+
     private SegmentAnything? _sam;
     private Task<SegmentAnything>? _samLoading;
 

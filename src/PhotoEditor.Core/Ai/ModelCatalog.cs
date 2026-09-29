@@ -25,4 +25,13 @@ public static class ModelCatalog
 
     /// <summary>All files needed for click / box selection (≈ 155 MB).</summary>
     public static IReadOnlyList<ModelInfo> SelectObject { get; } = [SamEncoder, SamEncoderData, SamDecoder, SamDecoderData];
+
+    /// <summary>BiRefNet-lite (salient object / subject segmentation), 1024 × 1024 input.</summary>
+    public static readonly ModelInfo Subject = new("birefnet-lite/model.onnx", "Select Subject",
+        "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/de15b22ba131738a16dff04aab8bdf8dc32e3ac1/onnx/model.onnx",
+        "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333", 224_005_088,
+        "MIT (BiRefNet by Zheng Peng et al.; ONNX conversion by onnx-community)");
+
+    /// <summary>Files needed for Select Subject (≈ 224 MB).</summary>
+    public static IReadOnlyList<ModelInfo> SelectSubject { get; } = [Subject];
 }

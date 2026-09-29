@@ -55,12 +55,12 @@ Each item is meant to be one small, self-contained step.
 - [x] Recipe model + engine: steps Auto / set values / add mask / goal ("region metric ≥ reference + X %", corrected only when not met, within a max change), measuring on a small rendered copy
 - [x] Presets panel: list (built-in + user), apply, apply to many photos, save current edit as preset, delete
 - [x] Preset editor window: add / remove / reorder steps, edit fields
-- [ ] AI mask sources in presets (Subject, People, Sky, Background) — needs Phase 4 models
+- [ ] AI mask sources in presets: Subject + Background done; Sky / People follow with SegFormer
 
 ### Phase 4 – AI masks
 - [x] ONNX Runtime integration (DirectML with CPU fallback), model download on first use
 - [x] Click / box to select (SAM 2.1 tiny instead of MobileSAM / EfficientSAM: newer, more accurate)
-- [ ] Select Subject (BiRefNet-lite)
+- [x] Select Subject (BiRefNet-lite)
 - [ ] Select Sky / People (SegFormer)
 
 ### Phase 5 – AI enhance
@@ -125,7 +125,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Select Object done (Phase 4 item 2). Model: SAM 2.1 Hiera-Tiny, ONNX by onnx-community (Apache-2.0), 4 files ≈ 155 MB in `models/sam2.1-tiny/` (.onnx + external .onnx_data must sit side by side; `ModelStore` now supports sub-folders and `GetAllAsync`), pinned to revision 814a0666 + SHA-256 (`Core/Ai/ModelCatalog`). `Core/Ai/SegmentAnything`: photo squashed to 1024², ImageNet mean/std → encoder (3 embeddings, once per photo, ~1.4 s CPU here); decoder takes points (1024-space, label 1 include / 0 exclude, int64 → `Tensor.Int64`) and/or a box, returns 3 masks 256² + IoU scores; the best is bilinearly upscaled as logits, sigmoid → soft edge, stored as a grayscale PNG (long side 1024) in the new `RasterMaskComponent` (JSON "raster", keeps the prompts so clicks refine it; decoded rasters cached per PNG). UI: "Select (S)" tool — click = add, Alt+click = remove, drag = box; the first use downloads the model with progress in the status bar, the encoder runs once per photo in the background; points (green / red) and the box are drawn for the selected object component. Verified: unit tests (raster component, upscaling, preprocessing) + a real-model test when PHOTOEDITOR_MODELS points to the models (passes here in 3 s), and in the app under Xvfb (download, click on a person's legs selects them cleanly). Exclude clicks inside a solid object only nudge the mask (SAM behaviour). Object masks are not written to the Lightroom XMP (reported). THIRD-PARTY-NOTICES.md lists models and libraries. Next: Select Subject (BiRefNet).
 
+- 2026-09-29: Select Subject done (Phase 4 item 3). BiRefNet-lite ONNX by onnx-community (MIT), one 224 MB fp32 file (fp16 exists but may not run on the CPU fallback), pinned revision de15b22b + SHA-256. Input 1024² squashed, ImageNet normalisation (shared `Core/Ai/ImageTensor`, also used by SAM now), output 1024² logits → sigmoid → raster (long side 1024) in a `RasterMaskComponent` with Source "subject". `Core/Ai/AiMaskDetector` implements `IMaskDetector` for presets: downloads / loads on first use (status messages), caches the result per photo bitmap, thread-safe. Presets' Subject and Background steps now work; the built-in "Portrait – subject pops (AI)" was verified end to end (real-model test + in the app: subject 20 vs background 47.9 → +1.5 EV on the subject, limited by the max change). UI: "Subject" button in the Masks panel (adds to the selected mask or a new "Subject" mask; Invert gives the background). Speed: ~20 s per photo on this 4-core cloud CPU, expected well under 1 s with DirectML. Next: Sky / People (SegFormer).
+
 ### To check visually (Windows)
+- Subject button and the portrait preset on real portraits: edge quality (hair), speed with DirectML.
 - Select (S): first-use download, speed on your GPU (status says whether DirectML is used), click / Alt+click / box on real photos, edge quality at 100 %.
 - Preset editor: build "Auto → gradient from top named Sky → Goal Sky brightness at most whole image +10 % via Sky exposure" and try it on a real landscape; check the log reads sensibly.
 - "Paste to…" with several photos selected (JPEG + CR3): each gets its .json / .xmp, opening them shows the pasted edit, Lightroom picks up the CR3 ones.

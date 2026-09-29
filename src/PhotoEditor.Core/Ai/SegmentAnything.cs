@@ -22,8 +22,6 @@ public sealed class SegmentAnything : IDisposable
     /// <summary>Long side of the stored mask raster.</summary>
     public const int MaskSize = 1024;
 
-    private static readonly float[] Mean = [0.485f, 0.456f, 0.406f];
-    private static readonly float[] Std = [0.229f, 0.224f, 0.225f];
 
     private readonly OnnxModel _encoder;
     private readonly OnnxModel _decoder;
@@ -57,23 +55,7 @@ public sealed class SegmentAnything : IDisposable
         Load(store.PathOf(ModelCatalog.SamEncoder), store.PathOf(ModelCatalog.SamDecoder), preferred);
 
     /// <summary>The normalised 1 × 3 × 1024 × 1024 input for <paramref name="image"/>.</summary>
-    public static Tensor Preprocess(SKBitmap image)
-    {
-        using var resized = image.Resize(new SKImageInfo(InputSize, InputSize, SKColorType.Rgba8888, SKAlphaType.Unpremul),
-            new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear))
-            ?? throw new InvalidOperationException("Could not resize the photo for the AI model.");
-        var pixels = resized.GetPixelSpan();
-        int rowBytes = resized.RowBytes, plane = InputSize * InputSize;
-        var data = new float[3 * plane];
-        for (int y = 0; y < InputSize; y++)
-        for (int x = 0; x < InputSize; x++)
-        {
-            int o = y * rowBytes + x * 4, i = y * InputSize + x;
-            for (int c = 0; c < 3; c++)
-                data[c * plane + i] = (pixels[o + c] / 255f - Mean[c]) / Std[c];
-        }
-        return new Tensor(data, [1, 3, InputSize, InputSize]);
-    }
+    public static Tensor Preprocess(SKBitmap image) => ImageTensor.Normalized(image, InputSize, InputSize);
 
     /// <summary>Analyses the photo (the slow part); keep the result for all clicks on it.</summary>
     public SamEmbedding Encode(SKBitmap image)
@@ -139,26 +121,8 @@ public sealed class SegmentAnything : IDisposable
     }
 
     /// <summary>Bilinearly upsamples square logits to <paramref name="width"/> × <paramref name="height"/> and applies a sigmoid.</summary>
-    public static float[] UpscaleLogits(float[] logits, int size, int width, int height)
-    {
-        var result = new float[width * height];
-        for (int y = 0; y < height; y++)
-        {
-            float fy = Math.Clamp((y + 0.5f) * size / height - 0.5f, 0, size - 1);
-            int y0 = (int)fy, y1 = Math.Min(y0 + 1, size - 1);
-            float ty = fy - y0;
-            for (int x = 0; x < width; x++)
-            {
-                float fx = Math.Clamp((x + 0.5f) * size / width - 0.5f, 0, size - 1);
-                int x0 = (int)fx, x1 = Math.Min(x0 + 1, size - 1);
-                float tx = fx - x0;
-                float v = (logits[y0 * size + x0] * (1 - tx) + logits[y0 * size + x1] * tx) * (1 - ty)
-                        + (logits[y1 * size + x0] * (1 - tx) + logits[y1 * size + x1] * tx) * ty;
-                result[y * width + x] = 1f / (1f + MathF.Exp(-v));
-            }
-        }
-        return result;
-    }
+    public static float[] UpscaleLogits(float[] logits, int size, int width, int height) =>
+        ImageTensor.LogitsToCoverage(logits, size, size, width, height);
 
     public void Dispose()
     {

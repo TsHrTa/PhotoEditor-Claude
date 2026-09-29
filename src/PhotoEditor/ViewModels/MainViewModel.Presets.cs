@@ -16,8 +16,8 @@ public partial class MainViewModel
 {
     private readonly PresetStore _presetStore = new(PresetStore.DefaultDirectory);
 
-    /// <summary>AI mask detection for presets (none until the Phase 4 models exist).</summary>
-    private IMaskDetector? MaskDetector => null;
+    /// <summary>AI mask detection for presets (Select Subject; Sky / People follow).</summary>
+    private IMaskDetector? MaskDetector => Detector;
 
     /// <summary>Built-in presets followed by the user's.</summary>
     public ObservableCollection<Preset> Presets { get; } = [];
