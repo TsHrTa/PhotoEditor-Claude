@@ -23,24 +23,28 @@ public sealed record Tensor(float[] Data, long[] Shape)
 
 /// <summary>
 /// A loaded ONNX model. Tries the GPU (DirectML) first and falls back to the CPU when DirectML is not
-/// available (other OS, no DirectX 12 GPU, driver problem) or the model fails to load on it.
+/// available (other OS, no DirectX 12 GPU, driver problem), the model fails to load on it, or a run fails on it
+/// (some GPUs / drivers reject operators of some models): then the model is reloaded on the CPU and the run repeated.
 /// </summary>
 public sealed class OnnxModel : IDisposable
 {
-    private readonly InferenceSession _session;
+    private readonly string _path;
+    private readonly object _lock = new();
+    private InferenceSession _session;
 
-    private OnnxModel(InferenceSession session, InferenceDevice device, string? fallbackReason)
+    private OnnxModel(string path, InferenceSession session, InferenceDevice device, string? fallbackReason)
     {
+        _path = path;
         _session = session;
         Device = device;
         FallbackReason = fallbackReason;
     }
 
     /// <summary>Where the model runs.</summary>
-    public InferenceDevice Device { get; }
+    public InferenceDevice Device { get; private set; }
 
     /// <summary>Why the GPU is not used (null when it is, or when the CPU was requested).</summary>
-    public string? FallbackReason { get; }
+    public string? FallbackReason { get; private set; }
 
     public IReadOnlyList<string> InputNames => _session.InputNames;
     public IReadOnlyList<string> OutputNames => _session.OutputNames;
@@ -64,10 +68,12 @@ public sealed class OnnxModel : IDisposable
                         // Required by the DirectML execution provider.
                         EnableMemoryPattern = false,
                         ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
-                        GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+                        // Only basic optimizations: the extended ones fuse nodes (e.g. LayerNormFusion) into
+                        // operators that DirectML rejects on some GPUs ("The parameter is incorrect").
+                        GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_BASIC,
                     };
                     options.AppendExecutionProvider_DML(0);
-                    return new OnnxModel(new InferenceSession(path, options), InferenceDevice.DirectML, null);
+                    return new OnnxModel(path, new InferenceSession(path, options), InferenceDevice.DirectML, null);
                 }
                 catch (OnnxRuntimeException ex)
                 {
@@ -80,12 +86,50 @@ public sealed class OnnxModel : IDisposable
             }
         }
 
-        var cpu = new SessionOptions { GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL };
-        return new OnnxModel(new InferenceSession(path, cpu), InferenceDevice.Cpu, reason);
+        return new OnnxModel(path, CpuSession(path), InferenceDevice.Cpu, reason);
     }
 
-    /// <summary>Runs the model with named float inputs; returns all outputs as float tensors.</summary>
+    private static InferenceSession CpuSession(string path) =>
+        new(path, new SessionOptions { GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL });
+
+    /// <summary>
+    /// Runs the model with named float inputs; returns all outputs as float tensors. If the run fails on the GPU,
+    /// the model moves to the CPU (for the rest of the session) and the run is repeated there.
+    /// </summary>
     public IReadOnlyDictionary<string, Tensor> Run(IReadOnlyDictionary<string, Tensor> inputs)
+    {
+        InferenceSession session;
+        lock (_lock)
+            session = _session;
+        try
+        {
+            return Run(session, inputs);
+        }
+        catch (OnnxRuntimeException ex) when (Device == InferenceDevice.DirectML)
+        {
+            lock (_lock)
+            {
+                if (ReferenceEquals(_session, session))
+                {
+                    _session = CpuSession(_path);
+                    Device = InferenceDevice.Cpu;
+                    FallbackReason = $"the GPU could not run this model ({FirstLine(ex.Message)})";
+                    session.Dispose();
+                }
+                session = _session;
+            }
+            return Run(session, inputs);
+        }
+    }
+
+    private static string FirstLine(string message)
+    {
+        int end = message.IndexOfAny(['\r', '\n']);
+        var line = end < 0 ? message : message[..end];
+        return line.Length > 200 ? line[..200] + "…" : line;
+    }
+
+    private static IReadOnlyDictionary<string, Tensor> Run(InferenceSession session, IReadOnlyDictionary<string, Tensor> inputs)
     {
         var values = new List<OrtValue>();
         try
@@ -100,13 +144,13 @@ public sealed class OnnxModel : IDisposable
                     : OrtValue.CreateTensorValueFromMemory(tensor.Data, tensor.Shape));
             }
             using var runOptions = new RunOptions();
-            using var outputs = _session.Run(runOptions, inputs.Keys.ToList(), values, _session.OutputNames);
+            using var outputs = session.Run(runOptions, inputs.Keys.ToList(), values, session.OutputNames);
             var result = new Dictionary<string, Tensor>();
             for (int i = 0; i < outputs.Count; i++)
             {
                 var output = outputs[i];
                 var shape = output.GetTensorTypeAndShape().Shape;
-                result[_session.OutputNames[i]] = new Tensor(output.GetTensorDataAsSpan<float>().ToArray(), shape);
+                result[session.OutputNames[i]] = new Tensor(output.GetTensorDataAsSpan<float>().ToArray(), shape);
             }
             return result;
         }
@@ -117,5 +161,9 @@ public sealed class OnnxModel : IDisposable
         }
     }
 
-    public void Dispose() => _session.Dispose();
+    public void Dispose()
+    {
+        lock (_lock)
+            _session.Dispose();
+    }
 }
