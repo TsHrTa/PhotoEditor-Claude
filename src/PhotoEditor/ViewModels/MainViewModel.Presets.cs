@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PhotoEditor.Core.Export;
+using PhotoEditor.Core.Jobs;
 using PhotoEditor.Core.Presets;
 
 namespace PhotoEditor.ViewModels;
@@ -88,7 +89,10 @@ public partial class MainViewModel
 
     private bool CanApplyPreset() => SelectedPreset is not null && HasImage && !IsApplyingPreset;
 
-    /// <summary>Runs the selected preset on other photos (their sidecars are written; the photos are not changed).</summary>
+    /// <summary>
+    /// Runs the selected preset on other photos as background jobs (their sidecars are written; the photos are
+    /// not changed). The open photo is done right away, in the editor (one undo step).
+    /// </summary>
     public async Task ApplyPresetToFilesAsync(IReadOnlyList<string> paths)
     {
         if (SelectedPreset is not { } preset || paths.Count == 0)
@@ -98,19 +102,30 @@ public partial class MainViewModel
             await ApplyPreset();
 
         var detector = MaskDetector;
-        var failed = new List<string>();
-        for (int i = 0; i < others.Count; i++)
+        foreach (var path in others)
         {
-            Status = $"Applying \"{preset.Name}\"… {i + 1} / {others.Count} ({Path.GetFileName(others[i])})";
-            var path = others[i];
-            var result = await Task.Run(() => PresetEngine.ApplyToFile(preset, path, detector));
-            if (result.Error is not null)
-                failed.Add($"{Path.GetFileName(path)} ({result.Error})");
+            var job = Enqueue(new BackgroundJob($"Preset \"{preset.Name}\" – {Path.GetFileName(path)}", ctx =>
+            {
+                ctx.Report(null, "Applying…");
+                var result = PresetEngine.ApplyToFile(preset, path, detector);
+                return result.Error is null ? null : throw new IOException(result.Error);
+            }, photoPath: path));
+            _ = AfterJobAsync(job, () => OnPhotoChangedByJob(path));
         }
-        int done = paths.Count - failed.Count;
-        Status = failed.Count == 0
-            ? $"Applied \"{preset.Name}\" to {done} photo{(done == 1 ? "" : "s")}."
-            : $"Applied to {done} of {paths.Count}; failed: {string.Join(", ", failed)}";
+        if (others.Count > 0)
+            Status = $"Queued \"{preset.Name}\" for {others.Count} photo{(others.Count == 1 ? "" : "s")} (see Jobs).";
+    }
+
+    /// <summary>A job rewrote a photo's sidecar: refresh its thumbnail, and the editor if the photo is open.</summary>
+    private void OnPhotoChangedByJob(string path)
+    {
+        OnEditsSaved(path);
+        if (FilePath is not null && ImageExporter.IsSameFile(path, FilePath) && Original is not null)
+        {
+            var (state, _) = LoadSidecar(path, _geometry);
+            if (state != State)
+                ApplyEdit(state);
+        }
     }
 
     /// <summary>Saves the current edit (the groups ticked under "Include") as a user preset.</summary>

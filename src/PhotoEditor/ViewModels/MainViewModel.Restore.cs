@@ -1,29 +1,29 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Net.Http;
-using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PhotoEditor.Core.Ai;
 using PhotoEditor.Core.Imaging;
+using PhotoEditor.Core.Jobs;
 using SkiaSharp;
 
 namespace PhotoEditor.ViewModels;
 
 /// <summary>
-/// AI Denoise and AI Deblur. The "Denoise (AI)" and "Deblur (AI)" sliders blend the original with AI-restored
-/// copies, which are computed once per photo (tiled, with progress and Cancel), cached on disk and used for the
-/// preview and export: working = blend(blend(original, denoised, denoise), deblurred, deblur), where the deblurred
-/// copy is made from the denoised one when Denoise is on (deblurring raw noise would amplify it).
+/// AI Denoise and AI Deblur in the editor. The "Denoise (AI)" and "Deblur (AI)" sliders blend the original with
+/// AI-restored copies (see <see cref="RestorePipeline"/>). Missing copies are computed as urgent jobs in the
+/// background queue and cached on disk; moving to another photo does not stop them, so the result is ready
+/// when you come back.
 /// </summary>
 public partial class MainViewModel
 {
     private readonly RestoreCache _restoreCache = new(RestoreCache.DefaultDirectory);
-    private readonly Dictionary<RestoreKind, ImageRestorer> _restorers = [];
+    private RestorePipeline? _pipeline;
+
+    /// <summary>Used only from the queue's worker thread.</summary>
+    private RestorePipeline Pipeline => _pipeline ??= new RestorePipeline(_models, _restoreCache);
 
     /// <summary>Restored copies of the open photo by variant ("denoise", "deblur", "deblur-of-denoised").</summary>
     private readonly Dictionary<string, SKBitmap> _restored = [];
@@ -36,9 +36,9 @@ public partial class MainViewModel
     private SKBitmap? _working;
     private (double Denoise, double Deblur) _workingAmounts;
 
-    private CancellationTokenSource _restoreCancel = new();
     private int _restoreGeneration;
 
+    /// <summary>The open photo is waiting for AI denoise / deblur.</summary>
     [ObservableProperty]
     public partial bool IsRestoring { get; private set; }
 
@@ -51,13 +51,12 @@ public partial class MainViewModel
             Preview = preview;
     }
 
-    /// <summary>Called when a photo was opened: forget the previous photo's restored copies.</summary>
+    /// <summary>Called when a photo was shown: forget the previous photo's restored copies (its jobs keep running).</summary>
     private void ResetRestore(PreviewImage originalPreview)
     {
-        _restoreCancel.Cancel();
-        _restoreCancel = new CancellationTokenSource();
         _restored.Clear();
         _restoring.Clear();
+        IsRestoring = false;
         _restoredFor = Original;
         _working = null;
         _workingAmounts = (0, 0);
@@ -108,127 +107,77 @@ public partial class MainViewModel
     private async Task<SKBitmap?> WorkingImageAsync(SKBitmap original, (double Denoise, double Deblur) amounts)
     {
         SKBitmap? denoised = null;
-        if (amounts.Denoise > 0 && (denoised = await RestoredAsync(original, RestoreKind.Denoise, original, "denoise")) is null)
+        if (amounts.Denoise > 0 && (denoised = await RestoredAsync(original, RestoreKind.Denoise, original)) is null)
             return null;
         SKBitmap? deblurred = null;
-        if (amounts.Deblur > 0)
-        {
-            var from = denoised ?? original;
-            if ((deblurred = await RestoredAsync(original, RestoreKind.Deblur, from, denoised is null ? "deblur" : "deblur-of-denoised")) is null)
-                return null;
-        }
-        return await Task.Run(() =>
-        {
-            var result = denoised is null ? original : ImageRestorer.Blend(original, denoised, amounts.Denoise);
-            if (deblurred is not null)
-            {
-                var blended = ImageRestorer.Blend(result, deblurred, amounts.Deblur);
-                if (!ReferenceEquals(result, original))
-                    result.Dispose();
-                result = blended;
-            }
-            return result;
-        });
+        if (amounts.Deblur > 0 && (deblurred = await RestoredAsync(original, RestoreKind.Deblur, denoised ?? original)) is null)
+            return null;
+        return await Task.Run(() => RestorePipeline.Blend(original, denoised, amounts.Denoise, deblurred, amounts.Deblur));
     }
 
-    /// <summary>A restored copy of <paramref name="source"/>: from memory, the disk cache, or computed now (once per variant).</summary>
-    private Task<SKBitmap?> RestoredAsync(SKBitmap original, RestoreKind kind, SKBitmap source, string variant)
+    /// <summary>
+    /// A restored copy of <paramref name="source"/> (the original, or the denoised copy for deblur): from memory,
+    /// or from an urgent job (disk cache or computed). Null if it failed, was cancelled, or another photo was opened.
+    /// </summary>
+    private Task<SKBitmap?> RestoredAsync(SKBitmap original, RestoreKind kind, SKBitmap source)
     {
-        if (!ReferenceEquals(_restoredFor, original))
+        string variant = RestorePipeline.Variant(kind, !ReferenceEquals(source, original));
+        if (!ReferenceEquals(_restoredFor, original) || FilePath is not { } path)
             return Task.FromResult<SKBitmap?>(null);
         if (_restored.TryGetValue(variant, out var done))
             return Task.FromResult<SKBitmap?>(done);
         if (_restoring.TryGetValue(variant, out var running))
             return running;
-        var task = ComputeRestoredAsync(original, kind, source, variant, FilePath, _restoreCancel.Token);
+        string name = RestorePipeline.StepName(kind);
+        var job = Enqueue(new BackgroundJob($"{name} – {Path.GetFileName(path)}",
+            ctx => Pipeline.Restore(path, source, kind, variant,
+                new Progress(p => ctx.Report(p.Fraction, p.Detail is null ? p.Step : $"{p.Step} · {p.Detail}")), ctx.Cancel),
+            key: $"restore|{variant}|{path}", photoPath: path), urgent: true);
+        var task = AwaitRestoreAsync(original, variant, name, job);
         _restoring[variant] = task;
+        IsRestoring = true;
         return task;
     }
 
-    private async Task<SKBitmap?> ComputeRestoredAsync(SKBitmap original, RestoreKind kind, SKBitmap source, string variant,
-        string? path, CancellationToken cancel)
+    private async Task<SKBitmap?> AwaitRestoreAsync(SKBitmap original, string variant, string name, BackgroundJob job)
     {
-        string name = kind == RestoreKind.Denoise ? "AI Denoise" : "AI Deblur";
-        IsRestoring = true;
         try
         {
-            if (path is not null && await Task.Run(() => _restoreCache.Load(path, variant, source.Width, source.Height)) is { } cached)
-            {
-                Status = $"{name}: loaded the saved result.";
-                return Keep(original, variant, cached);
-            }
-
-            var files = ImageRestorer.ModelFiles(kind);
-            if (!files.All(_models.IsAvailable))
-            {
-                long total = files.Where(m => !_models.IsAvailable(m)).Sum(m => m.SizeBytes);
-                var download = new Progress<DownloadProgress>(p =>
-                    Status = $"Downloading the {name} model… {p.Fraction ?? 0:P0} of {total / 1_000_000} MB");
-                await _models.GetAllAsync(files, download, cancel);
-            }
-            if (!_restorers.TryGetValue(kind, out var restorer))
-                _restorers[kind] = restorer = await Task.Run(() => ImageRestorer.Load(_models, kind), cancel);
-            string device = restorer.Device == InferenceDevice.DirectML ? "GPU" : "CPU — slow";
-            var watch = Stopwatch.StartNew();
-            var progress = new Progress<TileProgress>(p =>
-            {
-                string eta = p.Done == 0 ? "" : $", about {Remaining(watch.Elapsed, p)} left";
-                Status = $"{name} ({device}): {p.Fraction:P0}{eta}. Keeps running while you edit; Cancel stops it.";
-            });
-            var result = await Task.Run(() => restorer.Restore(source, progress, cancel), cancel);
-            if (path is not null)
-            {
-                try
-                {
-                    await Task.Run(() => _restoreCache.Save(path, variant, result));
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    // Not fatal: it is recomputed next time.
-                }
-            }
-            Status = $"{name} done ({watch.Elapsed.TotalSeconds:0} s).";
-            return Keep(original, variant, result);
+            var result = await job.Completion as SKBitmap;
+            if (result is null || !ReferenceEquals(_restoredFor, original))
+                return null; // another photo was opened meanwhile (the result is in the disk cache)
+            _restored[variant] = result;
+            Status = $"{name} done.";
+            return result;
         }
         catch (OperationCanceledException)
         {
-            Status = $"{name} cancelled.";
+            if (ReferenceEquals(_restoredFor, original))
+                Status = $"{name} cancelled.";
             return null;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException
-            or Microsoft.ML.OnnxRuntime.OnnxRuntimeException or UnauthorizedAccessException)
+        catch (Exception ex)
         {
-            Status = $"{name} failed: {ex.Message}";
+            if (ReferenceEquals(_restoredFor, original))
+                Status = $"{name} failed: {ex.Message}";
             return null;
         }
         finally
         {
             if (ReferenceEquals(_restoredFor, original))
+            {
                 _restoring.Remove(variant);
-            IsRestoring = _restoring.Count > 0;
+                IsRestoring = _restoring.Count > 0;
+            }
         }
     }
 
-    private SKBitmap? Keep(SKBitmap original, string variant, SKBitmap restored)
-    {
-        if (!ReferenceEquals(_restoredFor, original))
-            return null; // another photo was opened meanwhile
-        _restored[variant] = restored;
-        return restored;
-    }
-
-    private static string Remaining(TimeSpan elapsed, TileProgress p)
-    {
-        var left = TimeSpan.FromTicks(elapsed.Ticks * (p.Total - p.Done) / Math.Max(1, p.Done));
-        return left.TotalMinutes >= 1 ? $"{left.TotalMinutes:0} min" : $"{left.TotalSeconds:0} s";
-    }
-
-    /// <summary>Stops the running AI denoise / deblur (it starts again when a slider changes).</summary>
+    /// <summary>Stops the open photo's AI denoise / deblur (it starts again when a slider changes).</summary>
     [RelayCommand]
     private void CancelRestore()
     {
-        _restoreCancel.Cancel();
-        _restoreCancel = new CancellationTokenSource();
+        if (FilePath is { } path)
+            Queue.CancelAll(j => j.Key?.StartsWith("restore|", StringComparison.Ordinal) == true && j.PhotoPath == path);
     }
 
     /// <summary>The source to export from, waiting for the AI copies if they are still being computed.</summary>
@@ -239,5 +188,11 @@ public partial class MainViewModel
         if (_working is not null && _workingAmounts == amounts)
             return _working;
         return await WorkingImageAsync(original, amounts);
+    }
+
+    /// <summary>Reports on the calling thread (the job's worker), unlike <see cref="Progress{T}"/>.</summary>
+    private sealed class Progress(Action<RestoreProgress> report) : IProgress<RestoreProgress>
+    {
+        public void Report(RestoreProgress value) => report(value);
     }
 }
