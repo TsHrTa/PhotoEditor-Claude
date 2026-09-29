@@ -20,7 +20,7 @@ public partial class App : Application
             var viewModel = new MainViewModel();
             // Allow "PhotoEditor.exe image.jpg" (e.g. "Open with" on Windows).
             if (desktop.Args is [var path, ..])
-                viewModel.OpenFile(path);
+                _ = viewModel.OpenFileAsync(path);
             desktop.MainWindow = new MainWindow
             {
                 DataContext = viewModel,

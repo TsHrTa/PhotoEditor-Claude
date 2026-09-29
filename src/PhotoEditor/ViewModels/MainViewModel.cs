@@ -572,13 +572,26 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Loads the image at <paramref name="path"/>; reports failures in <see cref="Status"/>.</summary>
-    public bool OpenFile(string path)
+    [ObservableProperty]
+    public partial bool IsOpening { get; private set; }
+
+    /// <summary>
+    /// Loads the image at <paramref name="path"/> (decoding runs on a background thread; RAW files
+    /// take a few seconds); reports failures in <see cref="Status"/>.
+    /// </summary>
+    public async Task<bool> OpenFileAsync(string path)
     {
+        if (IsOpening)
+            return false;
+        IsOpening = true;
+        Status = $"Opening {Path.GetFileName(path)}…";
         try
         {
-            var bitmap = ImageLoader.Load(path);
-            var preview = PreviewImage.Create(bitmap);
+            var (bitmap, preview) = await Task.Run(() =>
+            {
+                var b = ImageLoader.Load(path);
+                return (b, PreviewImage.Create(b));
+            });
             SaveEdits(); // flush edits of the previous image
             var (state, sidecarNote) = LoadSidecar(path);
             Original = bitmap;
@@ -596,6 +609,10 @@ public partial class MainViewModel : ViewModelBase
         {
             Status = $"Could not open {Path.GetFileName(path)}: {ex.Message}";
             return false;
+        }
+        finally
+        {
+            IsOpening = false;
         }
     }
 }

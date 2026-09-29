@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.17.2" />
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
   </ItemGroup>
 

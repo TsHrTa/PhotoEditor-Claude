@@ -13,9 +13,14 @@ public static class ExifMetadata
     private static readonly byte[] PngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     private const ushort OrientationTag = 0x0112;
 
-    /// <summary>Returns the EXIF TIFF block of the file (without the "Exif\0\0" prefix), or null.</summary>
+    /// <summary>
+    /// Returns the EXIF TIFF block of the file (without the "Exif\0\0" prefix), or null.
+    /// For RAW files a minimal block (camera, date, exposure) is built from LibRaw's metadata.
+    /// </summary>
     public static byte[]? Read(string path)
     {
+        if (RawImageLoader.IsRaw(path))
+            return RawImageLoader.ReadMetadata(path) is { } raw ? RawImageLoader.BuildExif(raw) : null;
         try
         {
             return Read(File.ReadAllBytes(path));

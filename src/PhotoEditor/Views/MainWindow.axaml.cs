@@ -152,8 +152,8 @@ public partial class MainWindow : Window
         });
 
         var path = files.FirstOrDefault()?.TryGetLocalPath();
-        if (path is not null)
-            ViewModel?.OpenFile(path);
+        if (path is not null && ViewModel is { } vm)
+            await vm.OpenFileAsync(path);
     }
 
     private static string? FirstImagePath(DragEventArgs e) =>
@@ -167,10 +167,10 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void OnDrop(object? sender, DragEventArgs e)
+    private async void OnDrop(object? sender, DragEventArgs e)
     {
-        if (FirstImagePath(e) is { } path)
-            ViewModel?.OpenFile(path);
         e.Handled = true;
+        if (FirstImagePath(e) is { } path && ViewModel is { } vm)
+            await vm.OpenFileAsync(path);
     }
 }
