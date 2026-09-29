@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
@@ -31,8 +32,9 @@ public partial class MainWindow : Window
         AddKeyBinding(Key.NumPad0, new RelayCommand(Viewer.ZoomToFit));
         AddKeyBinding(Key.D1, new RelayCommand(Viewer.ZoomToActualSize));
         AddKeyBinding(Key.NumPad1, new RelayCommand(Viewer.ZoomToActualSize));
-        KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(Key.OemPipe), Command = new RelayCommand(() => ViewModel?.ToggleBeforeAfterCommand.Execute(null)) });
-        KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(Key.OemBackslash), Command = new RelayCommand(() => ViewModel?.ToggleBeforeAfterCommand.Execute(null)) });
+        AddPlainKeyBinding(Key.OemPipe, () => ViewModel?.ToggleBeforeAfterCommand.Execute(null));
+        AddPlainKeyBinding(Key.OemBackslash, () => ViewModel?.ToggleBeforeAfterCommand.Execute(null));
+        AddPlainKeyBinding(Key.O, () => ViewModel?.ToggleMaskOverlayCommand.Execute(null));
         // handledEventsToo: the slider thumb handles the pointer itself.
         AddHandler(DoubleTappedEvent, OnDoubleTapped, RoutingStrategies.Bubble, handledEventsToo: true);
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
@@ -41,6 +43,18 @@ public partial class MainWindow : Window
 
     private void AddKeyBinding(Key key, System.Windows.Input.ICommand command) =>
         KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(key, KeyModifiers.Control), Command = command });
+
+    /// <summary>Shortcut without modifiers; ignored while typing in a text box.</summary>
+    private void AddPlainKeyBinding(Key key, Action action) =>
+        KeyBindings.Add(new KeyBinding
+        {
+            Gesture = new KeyGesture(key),
+            Command = new RelayCommand(() =>
+            {
+                if (FocusManager?.GetFocusedElement() is not TextBox)
+                    action();
+            }),
+        });
 
     private MainViewModel? ViewModel => DataContext as MainViewModel;
 

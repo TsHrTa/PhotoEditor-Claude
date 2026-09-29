@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace PhotoEditor.Core.Masks;
 
 /// <summary>How a component's coverage is combined with the components before it.</summary>
@@ -27,6 +29,10 @@ public abstract record MaskComponent
 
     /// <summary>Uses 1 − coverage.</summary>
     public bool Invert { get; init; }
+
+    /// <summary>Name shown in the mask panel.</summary>
+    [JsonIgnore]
+    public virtual string DisplayName => GetType().Name;
 
     /// <summary>
     /// Writes this component's coverage (0..1) for a <paramref name="width"/> × <paramref name="height"/>

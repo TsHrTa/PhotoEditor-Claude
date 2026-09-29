@@ -142,3 +142,25 @@ public class MaskImageCacheTests
         Assert.NotSame(cache.Get(mask, 4, 4), cache.Get(changed, 4, 4));
     }
 }
+
+public class MaskOverlayTests
+{
+    [Fact]
+    public void Overlay_TintsMaskedPixelsRed()
+    {
+        var mask = new Mask { Components = [new RectComponent(0, 0, 0.5f, 1)] };
+        using var maskImage = SKImage.FromBitmap(MaskRasterizer.RasterizeToBitmap(mask, 4, 4));
+        using var surface = SKSurface.Create(new SKImageInfo(4, 4, SKColorType.Rgba8888, SKAlphaType.Premul));
+        surface.Canvas.Clear(SKColors.White);
+        using var shader = MaskOverlay.CreateShader(maskImage, 4, 4);
+        using var paint = new SKPaint { Shader = shader };
+        surface.Canvas.DrawRect(0, 0, 4, 4, paint);
+        using var bmp = new SKBitmap(new SKImageInfo(4, 4, SKColorType.Rgba8888, SKAlphaType.Premul));
+        surface.ReadPixels(bmp.Info, bmp.GetPixels(), bmp.RowBytes, 0, 0);
+
+        var tinted = bmp.GetPixel(0, 1);
+        Assert.Equal(255, tinted.Red);
+        Assert.InRange(tinted.Green, 120, 135);
+        Assert.Equal(SKColors.White, bmp.GetPixel(3, 1));
+    }
+}

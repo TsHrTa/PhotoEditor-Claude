@@ -29,6 +29,9 @@ public class ImageViewer : Control
     public static readonly StyledProperty<EditState> StateProperty =
         AvaloniaProperty.Register<ImageViewer, EditState>(nameof(State), EditState.Default);
 
+    public static readonly StyledProperty<Mask?> OverlayMaskProperty =
+        AvaloniaProperty.Register<ImageViewer, Mask?>(nameof(OverlayMask));
+
     public static readonly DirectProperty<ImageViewer, double> ZoomProperty =
         AvaloniaProperty.RegisterDirect<ImageViewer, double>(nameof(Zoom), v => v.Zoom);
 
@@ -41,7 +44,7 @@ public class ImageViewer : Control
 
     static ImageViewer()
     {
-        AffectsRender<ImageViewer>(SourceProperty, StateProperty);
+        AffectsRender<ImageViewer>(SourceProperty, StateProperty, OverlayMaskProperty);
         ClipToBoundsProperty.OverrideDefaultValue<ImageViewer>(true);
         FocusableProperty.OverrideDefaultValue<ImageViewer>(true);
     }
@@ -58,6 +61,13 @@ public class ImageViewer : Control
     {
         get => GetValue(StateProperty);
         set => SetValue(StateProperty, value);
+    }
+
+    /// <summary>Mask shown as a red tint over the image (null = none).</summary>
+    public Mask? OverlayMask
+    {
+        get => GetValue(OverlayMaskProperty);
+        set => SetValue(OverlayMaskProperty, value);
     }
 
     /// <summary>Current display scale (1 = 100%).</summary>
@@ -177,12 +187,14 @@ public class ImageViewer : Control
         var state = State;
         var maskImages = state.Masks.Where(m => m.IsActive)
             .ToDictionary(m => m.Id, m => _maskCache.Get(m, source.Preview.Width, source.Preview.Height));
-        _maskCache.Retain(state.Masks);
-        context.Custom(new ImageDrawOperation(bounds, image, dest, _view.Scale, state, maskImages));
+        var overlay = OverlayMask is { } om ? _maskCache.Get(om, source.Preview.Width, source.Preview.Height) : null;
+        _maskCache.Retain(OverlayMask is { } keep ? state.Masks.Add(keep) : state.Masks);
+        context.Custom(new ImageDrawOperation(bounds, image, dest, _view.Scale, state, maskImages, overlay));
     }
 
     private sealed class ImageDrawOperation(
-        Rect bounds, SKImage image, SKRect dest, double scale, EditState state, Dictionary<Guid, SKImage> maskImages)
+        Rect bounds, SKImage image, SKRect dest, double scale, EditState state,
+        Dictionary<Guid, SKImage> maskImages, SKImage? overlay)
         : ICustomDrawOperation
     {
         public Rect Bounds => bounds;
@@ -207,6 +219,12 @@ public class ImageViewer : Control
             canvas.Translate(dest.Left, dest.Top);
             canvas.Scale(dest.Width / image.Width, dest.Height / image.Height);
             canvas.DrawRect(0, 0, image.Width, image.Height, paint);
+            if (overlay is not null)
+            {
+                using var overlayShader = MaskOverlay.CreateShader(overlay, image.Width, image.Height);
+                using var overlayPaint = new SKPaint { Shader = overlayShader };
+                canvas.DrawRect(0, 0, image.Width, image.Height, overlayPaint);
+            }
             canvas.Restore();
         }
     }

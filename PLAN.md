@@ -35,7 +35,7 @@ Each item is meant to be one small, self-contained step.
 
 ### Phase 3 – Masks
 - [x] Mask model: list of masks, each with its own adjustment set; add/subtract/intersect components
-- [ ] Mask overlay display (red tint) and mask list panel
+- [x] Mask overlay display (red tint) and mask list panel
 - [ ] Brush (size, feather, flow, erase)
 - [ ] Linear gradient (on-canvas handles)
 - [ ] Radial gradient (ellipse, feather, invert)
@@ -75,7 +75,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Mask model done. `Core/Masks`: `Mask` record (Id, Name, Enabled, own `AdjustmentSettings`, `ImmutableList<MaskComponent>`), abstract `MaskComponent` (Mode Add=max / Subtract=×(1−c) / Intersect=×c, Invert; renders coverage from normalised coords), `MaskRasterizer` (→ float / Gray8), `MaskImageCache` (preview masks re-rasterised only when the component list instance changes). `Core/Editing/EditState` (global adjustments + masks) is now what history, sidecar (`masks` array), export and viewer use. Rendering: global pass, then per active mask a second shader pass `mix(prev, adjust(prev), mask)` chained as nested SkSL shaders; CPU renderer mirrors it (parity tests with masks). No concrete component types yet (tests use their own), so no mask UI; `[JsonPolymorphic]` + `[JsonDerivedType]` must be added on `MaskComponent` together with the first real component. Next: mask overlay (red tint) and mask list panel.
 
+- 2026-09-29: Mask panel + overlay done. Right panel "Masks": New mask / Delete / Whole image, list with enable checkbox, name box, "Show overlay (O)", component list (mode combo — disabled for the first component, Invert, ✕). Selecting a mask makes all sliders edit that mask's adjustments ("Editing mask: …" label). Overlay: `Core/Masks/MaskOverlay` SkSL draws the selected mask as 50% red over the image. Mask ops are pure functions in `Core/Editing/EditStateOperations` (tested). Plain-key shortcuts (\, O) are ignored while a TextBox has focus. "New mask" creates an empty mask for now; the brush/gradient items will add "New brush/linear/radial" buttons. Next: brush.
+
 ### To check visually (Windows)
+- Mask panel layout and ListBox selection; red overlay visible and aligned with the image at all zoom levels (verified under Xvfb only once a component type exists).
 - Export… save dialog: JPEG/PNG type choice, suggested name, overwrite prompt; exported JPEG opens in Windows Photos with EXIF (camera, date) intact and correct orientation.
 - `\` key toggles before/after on a Windows keyboard layout (bound to OemPipe and OemBackslash).
 - HSL sliders on a real photo: sky (Blues luminance −), foliage (Greens/Yellows hue), skin (Oranges) behave as expected, no banding/artefacts at band borders.

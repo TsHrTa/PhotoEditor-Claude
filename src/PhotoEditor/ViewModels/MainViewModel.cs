@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Diagnostics;
 using System.Linq;
@@ -11,6 +12,7 @@ using PhotoEditor.Core.Adjustments;
 using PhotoEditor.Core.Editing;
 using PhotoEditor.Core.Export;
 using PhotoEditor.Core.Imaging;
+using PhotoEditor.Core.Masks;
 using SkiaSharp;
 
 namespace PhotoEditor.ViewModels;
@@ -50,15 +52,124 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>When true the viewer shows the unedited original ("before").</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DisplayState))]
+    [NotifyPropertyChangedFor(nameof(OverlayMask))]
     public partial bool ShowOriginal { get; set; }
 
     /// <summary>What the viewer renders (respects the before/after toggle).</summary>
     public EditState DisplayState => ShowOriginal ? EditState.Default : State;
 
-    /// <summary>The adjustment set the sliders currently edit.</summary>
-    public AdjustmentSettings CurrentAdjustments => State.Adjustments;
+    /// <summary>The adjustment set the sliders currently edit: the selected mask's, or the global one.</summary>
+    public AdjustmentSettings CurrentAdjustments =>
+        SelectedMask is { } item && State.FindMask(item.Id) is { } mask ? mask.Adjustments : State.Adjustments;
 
-    private EditState WithCurrentAdjustments(AdjustmentSettings settings) => State with { Adjustments = settings };
+    private EditState WithCurrentAdjustments(AdjustmentSettings settings) =>
+        SelectedMask is { } item && State.FindMask(item.Id) is not null
+            ? State.UpdateMask(item.Id, m => m with { Adjustments = settings })
+            : State with { Adjustments = settings };
+
+    // ---- Masks ----
+
+    public ObservableCollection<MaskItemViewModel> Masks { get; } = [];
+
+    /// <summary>Selected mask; the sliders edit its adjustments. Null = whole image.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSelectedMask))]
+    [NotifyPropertyChangedFor(nameof(EditingLabel))]
+    [NotifyPropertyChangedFor(nameof(OverlayMask))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteMaskCommand))]
+    public partial MaskItemViewModel? SelectedMask { get; set; }
+
+    public bool HasSelectedMask => SelectedMask is not null;
+
+    public ObservableCollection<ComponentItemViewModel> SelectedMaskComponents { get; } = [];
+
+    public bool SelectedMaskHasNoComponents => HasSelectedMask && SelectedMaskComponents.Count == 0;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(OverlayMask))]
+    public partial bool ShowMaskOverlay { get; set; } = true;
+
+    /// <summary>Mask the viewer tints red (the selected one, when the overlay is on).</summary>
+    public Mask? OverlayMask =>
+        ShowMaskOverlay && !ShowOriginal && SelectedMask is { } item ? State.FindMask(item.Id) : null;
+
+    public string EditingLabel => SelectedMask is { } m ? $"Editing mask: {m.Name}" : "Editing: whole image";
+
+    partial void OnSelectedMaskChanged(MaskItemViewModel? value)
+    {
+        OnPropertyChanged(nameof(CurrentAdjustments));
+        foreach (var p in Parameters)
+            p.Refresh();
+        SyncComponents();
+    }
+
+    [RelayCommand]
+    private void NewMask()
+    {
+        var mask = new Mask { Name = State.NextMaskName() };
+        ApplyEdit(State.AddMask(mask));
+        SelectedMask = Masks.FirstOrDefault(m => m.Id == mask.Id);
+    }
+
+    [RelayCommand(CanExecute = nameof(HasSelectedMask))]
+    private void DeleteMask()
+    {
+        if (SelectedMask is { } item)
+            ApplyEdit(State.RemoveMask(item.Id));
+    }
+
+    [RelayCommand]
+    private void EditWholeImage() => SelectedMask = null;
+
+    [RelayCommand]
+    private void ToggleMaskOverlay() => ShowMaskOverlay = !ShowMaskOverlay;
+
+    private void EditMask(Guid id, Func<Mask, Mask> update, string? key) => ApplyEdit(State.UpdateMask(id, update), key);
+
+    private void EditSelectedComponent(int index, Func<MaskComponent, MaskComponent> update)
+    {
+        if (SelectedMask is { } item)
+            EditMask(item.Id, m => index < m.Components.Count ? m.ReplaceComponent(index, update(m.Components[index])) : m, null);
+    }
+
+    private void DeleteSelectedComponent(int index)
+    {
+        if (SelectedMask is { } item)
+            EditMask(item.Id, m => index < m.Components.Count ? m.RemoveComponent(index) : m, null);
+    }
+
+    /// <summary>Brings the mask list in line with <see cref="State"/>, keeping the selection when possible.</summary>
+    private void SyncMasks()
+    {
+        var masks = State.Masks;
+        if (!masks.Select(m => m.Id).SequenceEqual(Masks.Select(m => m.Id)))
+        {
+            var selectedId = SelectedMask?.Id;
+            Masks.Clear();
+            foreach (var mask in masks)
+                Masks.Add(new MaskItemViewModel(mask, EditMask));
+            SelectedMask = Masks.FirstOrDefault(m => m.Id == selectedId);
+        }
+        else
+        {
+            for (int i = 0; i < masks.Count; i++)
+                Masks[i].Update(masks[i]);
+        }
+        SyncComponents();
+        OnPropertyChanged(nameof(OverlayMask));
+        OnPropertyChanged(nameof(EditingLabel));
+    }
+
+    private void SyncComponents()
+    {
+        SelectedMaskComponents.Clear();
+        if (SelectedMask is { } item && State.FindMask(item.Id) is { } mask)
+        {
+            for (int i = 0; i < mask.Components.Count; i++)
+                SelectedMaskComponents.Add(new ComponentItemViewModel(i, mask.Components[i], EditSelectedComponent, DeleteSelectedComponent));
+        }
+        OnPropertyChanged(nameof(SelectedMaskHasNoComponents));
+    }
 
     [ObservableProperty]
     public partial string? FilePath { get; set; }
@@ -88,6 +199,7 @@ public partial class MainViewModel : ViewModelBase
 
     partial void OnStateChanged(EditState value)
     {
+        SyncMasks();
         OnPropertyChanged(nameof(CurrentAdjustments));
         foreach (var p in Parameters)
             p.Refresh();
@@ -238,6 +350,7 @@ public partial class MainViewModel : ViewModelBase
             var (state, sidecarNote) = LoadSidecar(path);
             Original = bitmap;
             Preview = preview;
+            SelectedMask = null;
             _history.Reset(state);
             State = state;
             UpdateHistoryCommands();
