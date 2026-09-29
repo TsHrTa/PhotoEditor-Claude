@@ -143,6 +143,7 @@ public partial class MainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsLinearGradientActive))]
     [NotifyPropertyChangedFor(nameof(IsRadialGradientActive))]
     [NotifyPropertyChangedFor(nameof(IsCropActive))]
+    [NotifyPropertyChangedFor(nameof(IsObjectSelectActive))]
     public partial EditTool ActiveTool { get; set; }
 
     /// <summary>When on, left-dragging on the image paints into the selected mask.</summary>
@@ -299,7 +300,7 @@ public partial class MainViewModel : ViewModelBase
     public MaskComponent? EditableComponent =>
         !ShowOriginal && SelectedMask is { } item && State.FindMask(item.Id) is { } mask
         && SelectedComponentIndex >= 0 && SelectedComponentIndex < mask.Components.Count
-        && mask.Components[SelectedComponentIndex] is (LinearGradientComponent or RadialGradientComponent) and var component
+        && mask.Components[SelectedComponentIndex] is (LinearGradientComponent or RadialGradientComponent or RasterMaskComponent) and var component
             ? component
             : null;
 

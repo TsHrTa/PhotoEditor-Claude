@@ -60,6 +60,12 @@ public class ImageViewer : Control
     private readonly ViewTransform _view = new();
     private readonly MaskImageCache _maskCache = new();
     private Point? _panStart;
+
+    // Select Object: press position (view), whether Alt was held, current pointer while dragging a box
+    private Point? _selectStart;
+    private Point? _selectCurrent;
+    private bool _selectExclude;
+    private const double BoxDragThreshold = 5;
     private Point? _pointer;
     private bool _stroking;
     private double _zoom = 1;
@@ -142,6 +148,9 @@ public class ImageViewer : Control
 
     /// <summary>The crop frame is dragged (crop tool).</summary>
     public event EventHandler<CropEditEventArgs>? CropEdit;
+
+    /// <summary>Select Object tool: a click (point) or a dragged box.</summary>
+    public event EventHandler<ObjectSelectEventArgs>? ObjectSelect;
 
     /// <summary>Current display scale (1 = 100%).</summary>
     public double Zoom
@@ -238,6 +247,14 @@ public class ImageViewer : Control
                 CropEdit?.Invoke(this, new CropEditEventArgs(cropHandle, _cropFrom, _cropFrom, EditPhase.Begin));
                 return;
             }
+            if (Tool == EditTool.ObjectSelect)
+            {
+                _selectStart = _selectCurrent = pos;
+                _selectExclude = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
+                e.Pointer.Capture(this);
+                e.Handled = true;
+                return;
+            }
             if (Tool == EditTool.Brush)
             {
                 _stroking = true;
@@ -299,6 +316,11 @@ public class ImageViewer : Control
         {
             CropEdit?.Invoke(this, new CropEditEventArgs(_cropHandle, _cropFrom, ToNormalizedPoint(p), EditPhase.Move));
         }
+        else if (_selectStart is not null)
+        {
+            _selectCurrent = p;
+            InvalidateVisual(); // rubber band
+        }
         else if (_stroking)
         {
             RaiseStroke(BrushStrokePhase.Move, p, false);
@@ -316,6 +338,10 @@ public class ImageViewer : Control
         else if (Tool == EditTool.Crop)
         {
             Cursor = CropCursor(HitTestCrop(p));
+        }
+        else if (Tool == EditTool.ObjectSelect)
+        {
+            Cursor = new Cursor(StandardCursorType.Cross);
         }
         else if (EditableComponent is { } editable)
         {
@@ -347,6 +373,30 @@ public class ImageViewer : Control
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
+        if (_selectStart is { } selectStart)
+        {
+            var end = e.GetPosition(this);
+            _selectStart = _selectCurrent = null;
+            e.Pointer.Capture(null);
+            InvalidateVisual();
+            if (Point.Distance(selectStart, end) >= BoxDragThreshold)
+            {
+                // Box: the view rectangle's corners in image coordinates (approximate on a straightened crop).
+                var a = ToNormalizedPoint(selectStart);
+                var b = ToNormalizedPoint(end);
+                var box = new SelectBox(
+                    (float)Math.Clamp(Math.Min(a.X, b.X), 0, 1), (float)Math.Clamp(Math.Min(a.Y, b.Y), 0, 1),
+                    (float)Math.Clamp(Math.Max(a.X, b.X), 0, 1), (float)Math.Clamp(Math.Max(a.Y, b.Y), 0, 1));
+                ObjectSelect?.Invoke(this, new ObjectSelectEventArgs(null, box));
+            }
+            else
+            {
+                var (x, y) = ToNormalizedPoint(end);
+                if (x is >= 0 and <= 1 && y is >= 0 and <= 1)
+                    ObjectSelect?.Invoke(this, new ObjectSelectEventArgs(new SelectPoint((float)x, (float)y, !_selectExclude), null));
+            }
+            return;
+        }
         if (_cropHandle != CropHandle.None)
         {
             var handle = _cropHandle;
@@ -393,6 +443,7 @@ public class ImageViewer : Control
             ComponentEdit?.Invoke(this, new ComponentEditEventArgs(null, EditPhase.End, false));
         }
         _panStart = null;
+        _selectStart = _selectCurrent = null;
         Cursor = null;
     }
 
@@ -600,6 +651,13 @@ public class ImageViewer : Control
         else if (EditableComponent is { } editable)
             DrawGradientGuides(context, editable);
 
+        if (_selectStart is { } s0 && _selectCurrent is { } s1 && Point.Distance(s0, s1) >= BoxDragThreshold)
+        {
+            var box = new Rect(s0, s1);
+            context.DrawRectangle(null, GuideShadow, box);
+            context.DrawRectangle(null, GuideDashed, box);
+        }
+
         if (Tool == EditTool.Brush && _pointer is { } p)
         {
             // Brush cursor: outer circle = radius, inner = where the feather starts.
@@ -658,11 +716,30 @@ public class ImageViewer : Control
             }
         }
 
+        else if (component is RasterMaskComponent raster)
+        {
+            // The clicks (green = include, red = exclude) and the box of an AI selection.
+            if (raster.Box is { } b)
+            {
+                var r = new Rect(ToView(new BrushPoint(b.Left, b.Top)), ToView(new BrushPoint(b.Right, b.Bottom)));
+                context.DrawRectangle(null, GuideShadow, r);
+                context.DrawRectangle(null, GuideDashed, r);
+            }
+            foreach (var point in raster.Points)
+            {
+                var brush = point.Include ? IncludeBrush : ExcludeBrush;
+                context.DrawEllipse(brush, GuideShadow, ToView(new BrushPoint(point.X, point.Y)), 5, 5);
+            }
+        }
+
         foreach (var (_, pos) in Handles(component))
         {
             context.DrawEllipse(Brushes.White, GuideShadow, pos, HandleRadius, HandleRadius);
         }
     }
+
+    private static readonly IBrush IncludeBrush = new SolidColorBrush(Color.FromRgb(60, 200, 90));
+    private static readonly IBrush ExcludeBrush = new SolidColorBrush(Color.FromRgb(230, 60, 60));
 
     private sealed class ImageDrawOperation(
         Rect bounds, SKImage image, SKRect clip, SKMatrix toView, double scale, double pixelScale, EditState state,

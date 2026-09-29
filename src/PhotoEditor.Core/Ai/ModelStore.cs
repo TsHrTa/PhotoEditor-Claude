@@ -3,7 +3,8 @@ using System.Security.Cryptography;
 namespace PhotoEditor.Core.Ai;
 
 /// <summary>A downloadable model file.</summary>
-/// <param name="Id">Stable identifier, also the file name in the model folder (e.g. "mobile-sam-encoder.onnx").</param>
+/// <param name="Id">Stable identifier and relative path in the model folder (e.g. "sam2.1-tiny/vision_encoder.onnx");
+/// files that belong together (an .onnx file and its external .onnx_data) share a folder and keep their original names.</param>
 /// <param name="Url">Where to download it from.</param>
 /// <param name="Sha256">Expected SHA-256 (hex); the download is rejected if it differs.</param>
 /// <param name="SizeBytes">Approximate size, shown before downloading.</param>
@@ -38,7 +39,7 @@ public sealed class ModelStore(string directory, HttpClient http)
         if (File.Exists(path))
             return path;
 
-        System.IO.Directory.CreateDirectory(Directory);
+        System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var part = path + ".part";
         try
         {
@@ -72,6 +73,26 @@ public sealed class ModelStore(string directory, HttpClient http)
             if (File.Exists(part))
                 File.Delete(part);
         }
+    }
+
+    /// <summary>Downloads all <paramref name="models"/> that are missing; progress covers all of them.</summary>
+    public async Task GetAllAsync(IReadOnlyList<ModelInfo> models, IProgress<DownloadProgress>? progress = null, CancellationToken cancel = default)
+    {
+        long total = models.Where(m => !IsAvailable(m)).Sum(m => m.SizeBytes), done = 0;
+        foreach (var model in models)
+        {
+            if (IsAvailable(model))
+                continue;
+            long before = done;
+            var inner = progress is null ? null : new Relay(p => progress.Report(new DownloadProgress(before + p.Received, total)));
+            await GetAsync(model, inner, cancel);
+            done += model.SizeBytes;
+        }
+    }
+
+    private sealed class Relay(Action<DownloadProgress> report) : IProgress<DownloadProgress>
+    {
+        public void Report(DownloadProgress value) => report(value);
     }
 
     /// <summary>Deletes the local copy (e.g. to force a fresh download).</summary>

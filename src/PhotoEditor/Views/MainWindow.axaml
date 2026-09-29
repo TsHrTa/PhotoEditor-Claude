@@ -150,14 +150,16 @@
                         <Button Content="Whole image" Command="{Binding EditWholeImageCommand}"
                                 ToolTip.Tip="Deselect the mask; sliders edit the whole image" />
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="6">
+                    <WrapPanel ItemSpacing="6" LineSpacing="6">
                         <ToggleButton Content="Brush (B)" IsChecked="{Binding IsBrushActive}"
                                       ToolTip.Tip="Paint the selected mask (a new mask is created if none is selected). Alt = erase. Middle/right-drag pans." />
                         <ToggleButton Content="Linear (L)" IsChecked="{Binding IsLinearGradientActive}"
                                       ToolTip.Tip="Drag on the image to add a linear gradient to the selected mask (or a new one). Drag its handles to adjust." />
                         <ToggleButton Content="Radial (R)" IsChecked="{Binding IsRadialGradientActive}"
                                       ToolTip.Tip="Drag from the centre outwards to add a radial gradient to the selected mask (or a new one). Drag its handles to adjust." />
-                    </StackPanel>
+                        <ToggleButton Content="Select (S)" IsChecked="{Binding IsObjectSelectActive}"
+                                      ToolTip.Tip="AI: click on an object to select it (Alt+click removes parts, drag a box around it). Downloads the model (~155 MB) the first time." />
+                    </WrapPanel>
                     <StackPanel Spacing="2" IsVisible="{Binding IsBrushActive}">
                         <Grid ColumnDefinitions="70,*,40">
                             <TextBlock Text="Size" VerticalAlignment="Center" />

@@ -10,10 +10,15 @@ public enum InferenceDevice
     Cpu,
 }
 
-/// <summary>A float tensor: row-major data plus its shape.</summary>
+/// <summary>A float tensor (or, with <see cref="LongData"/>, an int64 one): row-major data plus its shape.</summary>
 public sealed record Tensor(float[] Data, long[] Shape)
 {
     public long Length => Shape.Aggregate(1L, (a, b) => a * b);
+
+    /// <summary>Set for int64 inputs (e.g. point labels); <see cref="Data"/> is then empty.</summary>
+    public long[]? LongData { get; init; }
+
+    public static Tensor Int64(long[] data, long[] shape) => new([], shape) { LongData = data };
 }
 
 /// <summary>
@@ -87,9 +92,12 @@ public sealed class OnnxModel : IDisposable
         {
             foreach (var (_, tensor) in inputs)
             {
-                if (tensor.Data.Length != tensor.Length)
-                    throw new ArgumentException($"Tensor data has {tensor.Data.Length} values, shape needs {tensor.Length}.");
-                values.Add(OrtValue.CreateTensorValueFromMemory(tensor.Data, tensor.Shape));
+                int count = tensor.LongData?.Length ?? tensor.Data.Length;
+                if (count != tensor.Length)
+                    throw new ArgumentException($"Tensor data has {count} values, shape needs {tensor.Length}.");
+                values.Add(tensor.LongData is { } longs
+                    ? OrtValue.CreateTensorValueFromMemory(longs, tensor.Shape)
+                    : OrtValue.CreateTensorValueFromMemory(tensor.Data, tensor.Shape));
             }
             using var runOptions = new RunOptions();
             using var outputs = _session.Run(runOptions, inputs.Keys.ToList(), values, _session.OutputNames);

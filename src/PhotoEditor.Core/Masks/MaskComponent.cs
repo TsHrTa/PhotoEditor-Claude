@@ -27,6 +27,7 @@ public enum MaskMode
 [JsonDerivedType(typeof(BrushComponent), "brush")]
 [JsonDerivedType(typeof(LinearGradientComponent), "linear")]
 [JsonDerivedType(typeof(RadialGradientComponent), "radial")]
+[JsonDerivedType(typeof(RasterMaskComponent), "raster")]
 public abstract record MaskComponent
 {
     public MaskMode Mode { get; init; } = MaskMode.Add;

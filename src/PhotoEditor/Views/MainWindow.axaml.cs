@@ -54,6 +54,8 @@ public partial class MainWindow : Window
         Viewer.BrushStroke += OnBrushStroke;
         Viewer.ComponentEdit += OnComponentEdit;
         Viewer.CropEdit += OnCropEdit;
+        Viewer.ObjectSelect += async (_, e) => { if (ViewModel is { } vm) await vm.SelectObjectAsync(e.Point, e.Box); };
+        AddPlainKeyBinding(Key.S, () => { if (ViewModel is { } vm) vm.IsObjectSelectActive = !vm.IsObjectSelectActive; });
         AddPlainKeyBinding(Key.B, () => { if (ViewModel is { } vm) vm.IsBrushActive = !vm.IsBrushActive; });
         AddPlainKeyBinding(Key.L, () => { if (ViewModel is { } vm) vm.IsLinearGradientActive = !vm.IsLinearGradientActive; });
         AddPlainKeyBinding(Key.R, () => { if (ViewModel is { } vm) vm.IsRadialGradientActive = !vm.IsRadialGradientActive; });

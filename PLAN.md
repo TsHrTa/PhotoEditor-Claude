@@ -59,7 +59,7 @@ Each item is meant to be one small, self-contained step.
 
 ### Phase 4 – AI masks
 - [x] ONNX Runtime integration (DirectML with CPU fallback), model download on first use
-- [ ] Click / box to select (MobileSAM or EfficientSAM)
+- [x] Click / box to select (SAM 2.1 tiny instead of MobileSAM / EfficientSAM: newer, more accurate)
 - [ ] Select Subject (BiRefNet-lite)
 - [ ] Select Sky / People (SegFormer)
 
@@ -123,7 +123,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Preset editor done. `PresetEditorWindow` (dialog) + `PresetEditorViewModel` with a view-model per step type (Auto, Create mask, Set sliders with slider/value rows, Goal with region / outside, metric, relation, target + unit hint, reference / outside, fix-by slider, fix target = region's mask / whole image / another mask, max change, tolerance); editable combo boxes offer the mask names defined by the steps; ↑ ↓ ✕ per step. "Try on this photo" runs the draft from the edit before the first try and shows the step log; Cancel restores that edit. Built-in presets are edited as "(copy)"; renaming a user preset renames its file. Goals can now fix the whole image explicitly (`GoalStep.FixWholeImage`). Verified under Xvfb: editor shows the built-in portrait preset, Try shows the log (AI steps skipped), Save writes a preset identical to the original apart from the name. Next: AI mask sources once Hugging Face is reachable (Phase 4).
 
+- 2026-09-29: Select Object done (Phase 4 item 2). Model: SAM 2.1 Hiera-Tiny, ONNX by onnx-community (Apache-2.0), 4 files ≈ 155 MB in `models/sam2.1-tiny/` (.onnx + external .onnx_data must sit side by side; `ModelStore` now supports sub-folders and `GetAllAsync`), pinned to revision 814a0666 + SHA-256 (`Core/Ai/ModelCatalog`). `Core/Ai/SegmentAnything`: photo squashed to 1024², ImageNet mean/std → encoder (3 embeddings, once per photo, ~1.4 s CPU here); decoder takes points (1024-space, label 1 include / 0 exclude, int64 → `Tensor.Int64`) and/or a box, returns 3 masks 256² + IoU scores; the best is bilinearly upscaled as logits, sigmoid → soft edge, stored as a grayscale PNG (long side 1024) in the new `RasterMaskComponent` (JSON "raster", keeps the prompts so clicks refine it; decoded rasters cached per PNG). UI: "Select (S)" tool — click = add, Alt+click = remove, drag = box; the first use downloads the model with progress in the status bar, the encoder runs once per photo in the background; points (green / red) and the box are drawn for the selected object component. Verified: unit tests (raster component, upscaling, preprocessing) + a real-model test when PHOTOEDITOR_MODELS points to the models (passes here in 3 s), and in the app under Xvfb (download, click on a person's legs selects them cleanly). Exclude clicks inside a solid object only nudge the mask (SAM behaviour). Object masks are not written to the Lightroom XMP (reported). THIRD-PARTY-NOTICES.md lists models and libraries. Next: Select Subject (BiRefNet).
+
 ### To check visually (Windows)
+- Select (S): first-use download, speed on your GPU (status says whether DirectML is used), click / Alt+click / box on real photos, edge quality at 100 %.
 - Preset editor: build "Auto → gradient from top named Sky → Goal Sky brightness at most whole image +10 % via Sky exposure" and try it on a real landscape; check the log reads sensibly.
 - "Paste to…" with several photos selected (JPEG + CR3): each gets its .json / .xmp, opening them shows the pasted edit, Lightroom picks up the CR3 ones.
 - Sharpening at 100 % on a real photo: amount / radius / masking feel right, no strong halos at defaults you would use.
