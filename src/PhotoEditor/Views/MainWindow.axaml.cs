@@ -19,6 +19,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         AddKeyBinding(Key.O, new AsyncRelayCommand(OpenAsync));
         AddKeyBinding(Key.E, new AsyncRelayCommand(ExportAsync));
+        AddKeyBinding(Key.S, new RelayCommand(() => ViewModel?.SaveEdits()));
         AddKeyBinding(Key.Z, new RelayCommand(() => ViewModel?.UndoCommand.Execute(null)));
         AddKeyBinding(Key.Y, new RelayCommand(() => ViewModel?.RedoCommand.Execute(null)));
         KeyBindings.Add(new KeyBinding
@@ -42,6 +43,12 @@ public partial class MainWindow : Window
         KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(key, KeyModifiers.Control), Command = command });
 
     private MainViewModel? ViewModel => DataContext as MainViewModel;
+
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        ViewModel?.SaveEdits(); // don't lose an auto-save that is still pending
+        base.OnClosing(e);
+    }
 
     private async void OnOpenClick(object? sender, RoutedEventArgs e) => await OpenAsync();
 

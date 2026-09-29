@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -95,6 +96,51 @@ public partial class MainViewModel : ViewModelBase
         _history.Record(settings, coalesceKey);
         Settings = settings;
         UpdateHistoryCommands();
+        ScheduleSave();
+    }
+
+    private static readonly TimeSpan SaveDelay = TimeSpan.FromMilliseconds(500);
+    private CancellationTokenSource? _pendingSave;
+
+    /// <summary>Saves the sidecar shortly after the last change (edits are auto-saved).</summary>
+    private void ScheduleSave()
+    {
+        _pendingSave?.Cancel();
+        if (FilePath is null)
+            return;
+        var cts = _pendingSave = new CancellationTokenSource();
+        _ = SaveAfterDelayAsync(cts.Token);
+    }
+
+    private async Task SaveAfterDelayAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(SaveDelay, token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        SaveEdits();
+    }
+
+    /// <summary>Writes the sidecar now (cancels a pending auto-save). No file is created for an unedited image.</summary>
+    [RelayCommand]
+    public void SaveEdits()
+    {
+        _pendingSave?.Cancel();
+        _pendingSave = null;
+        if (FilePath is not { } path || (Settings.IsDefault && !SidecarFile.Exists(path)))
+            return;
+        try
+        {
+            SidecarFile.Save(path, new EditDocument { Adjustments = Settings });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Status = $"Could not save edits: {ex.Message}";
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanUndo))]
@@ -102,6 +148,7 @@ public partial class MainViewModel : ViewModelBase
     {
         Settings = _history.Undo();
         UpdateHistoryCommands();
+        ScheduleSave();
     }
 
     private bool CanUndo() => _history.CanUndo;
@@ -111,6 +158,7 @@ public partial class MainViewModel : ViewModelBase
     {
         Settings = _history.Redo();
         UpdateHistoryCommands();
+        ScheduleSave();
     }
 
     private bool CanRedo() => _history.CanRedo;
@@ -159,6 +207,20 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
+    private static (AdjustmentSettings Settings, string Note) LoadSidecar(string imagePath)
+    {
+        try
+        {
+            return SidecarFile.Load(imagePath) is { } doc
+                ? (doc.Adjustments, " – edits loaded")
+                : (AdjustmentSettings.Default, "");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            return (AdjustmentSettings.Default, $" – could not read saved edits: {ex.Message}");
+        }
+    }
+
     /// <summary>Loads the image at <paramref name="path"/>; reports failures in <see cref="Status"/>.</summary>
     public bool OpenFile(string path)
     {
@@ -166,14 +228,16 @@ public partial class MainViewModel : ViewModelBase
         {
             var bitmap = ImageLoader.Load(path);
             var preview = PreviewImage.Create(bitmap);
+            SaveEdits(); // flush edits of the previous image
+            var (settings, sidecarNote) = LoadSidecar(path);
             Original = bitmap;
             Preview = preview;
-            _history.Reset(AdjustmentSettings.Default);
-            Settings = AdjustmentSettings.Default;
+            _history.Reset(settings);
+            Settings = settings;
             UpdateHistoryCommands();
             ShowOriginal = false;
             FilePath = path;
-            Status = $"{bitmap.Width} × {bitmap.Height}";
+            Status = $"{bitmap.Width} × {bitmap.Height}{sidecarNote}";
             return true;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)

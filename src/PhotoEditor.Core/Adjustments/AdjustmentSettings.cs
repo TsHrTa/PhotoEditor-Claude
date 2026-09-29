@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace PhotoEditor.Core.Adjustments;
 
 /// <summary>
@@ -41,5 +43,6 @@ public sealed record AdjustmentSettings
     public HslBand Purples { get; init; } = HslBand.Zero;
     public HslBand Magentas { get; init; } = HslBand.Zero;
 
+    [JsonIgnore]
     public bool IsDefault => this == Default;
 }

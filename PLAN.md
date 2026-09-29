@@ -31,7 +31,7 @@ Each item is meant to be one small, self-contained step.
 
 ### Phase 2 – Edit stack
 - [x] Undo / redo
-- [ ] Save/load edit settings as sidecar file (.json next to the image)
+- [x] Save/load edit settings as sidecar file (.json next to the image)
 
 ### Phase 3 – Masks
 - [ ] Mask model: list of masks, each with its own adjustment set; add/subtract/intersect components
@@ -70,6 +70,8 @@ Each item is meant to be one small, self-contained step.
 - 2026-09-29: Export done (Phase 1 complete). `Core/Export/ImageExporter` renders the full-res original with `CpuAdjustmentRenderer` (~1.8 s for 24 MP on 4 cores), encodes JPEG (4:4:4 at quality ≥ 90) or PNG by extension, writes via temp file. `Core/Imaging/ExifMetadata` reads EXIF from JPEG APP1 / PNG eXIf / WebP EXIF, sets orientation to 1 (pixels are already upright) and embeds it into JPEG (APP1) or PNG (eXIf). Not handled: ICC profiles (everything is treated as sRGB), stale EXIF thumbnail / pixel-dimension tags, EXIF blocks > 64 KB in JPEG are dropped. UI: Export… button, Ctrl+E, JPEG quality box; export runs on a background thread. Next: Phase 2 undo/redo.
 
 - 2026-09-29: Undo/redo done. Generic `Core/Editing/EditHistory<T>` over immutable states; changes with the same key within 1 s coalesce (one slider drag = one step), capacity 500. All edits go through `MainViewModel.ApplyEdit(settings, key)`; opening an image resets history. Undo/Redo buttons, Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z. When masks arrive, the history type should become a combined edit-state record. Next: sidecar .json save/load.
+
+- 2026-09-29: Sidecar done (Phase 2 complete). `Core/Editing/SidecarFile`: `photo.jpg` → `photo.jpg.json`, camelCase JSON `{ version: 1, adjustments: {...} }` via System.Text.Json; unknown fields ignored, missing = default, out-of-range values clamped; atomic write via temp file. Auto-save 500 ms after the last edit / undo / redo, flushed on opening another image and on window close; Ctrl+S saves now. No file is created for an unedited image. Loaded on open (status shows "edits loaded"). Next: Phase 3 mask model.
 
 ### To check visually (Windows)
 - Export… save dialog: JPEG/PNG type choice, suggested name, overwrite prompt; exported JPEG opens in Windows Photos with EXIF (camera, date) intact and correct orientation.
