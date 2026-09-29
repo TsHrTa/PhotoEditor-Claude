@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -19,12 +20,15 @@ namespace PhotoEditor.ViewModels;
 public partial class MainViewModel
 {
     /// <summary>A decoded photo ready for editing.</summary>
-    private sealed record DecodedPhoto(SKBitmap Bitmap, PreviewImage Preview, SKEncodedOrigin Orientation);
+    private sealed record DecodedPhoto(SKBitmap Bitmap, PreviewImage Preview, SKEncodedOrigin Orientation, TimeSpan DecodeTime);
 
     private readonly PrefetchingLoader<DecodedPhoto> _decoder = new(path =>
     {
+        var watch = Stopwatch.StartNew();
         var bitmap = ImageLoader.Load(path);
-        return new DecodedPhoto(bitmap, PreviewImage.Create(bitmap), ImageLoader.ReadOrientation(path));
+        var photo = new DecodedPhoto(bitmap, PreviewImage.Create(bitmap), ImageLoader.ReadOrientation(path), watch.Elapsed);
+        Timings.Log($"decoded {Path.GetFileName(path)} ({bitmap.Width} × {bitmap.Height}) in {watch.Elapsed.TotalSeconds:0.00} s");
+        return photo;
     });
 
     private int _openGeneration;
@@ -45,6 +49,7 @@ public partial class MainViewModel
     {
         int generation = ++_openGeneration;
         bool Current() => generation == _openGeneration;
+        var watch = Stopwatch.StartNew();
         SaveEdits(); // flush edits of the previous photo
         IsOpening = true;
         Status = $"Opening {Path.GetFileName(path)}…";
@@ -58,13 +63,19 @@ public partial class MainViewModel
                 if (!Current())
                     return false;
                 if (quick is not null)
+                {
                     ShowCameraPreview(path, quick.Value.Preview, quick.Value.Geometry);
+                    Timings.Log($"camera preview of {Path.GetFileName(path)} shown after {watch.Elapsed.TotalSeconds:0.00} s");
+                }
             }
 
             var photo = await _decoder.Request(path, Neighbours(path));
             if (photo is null || !Current())
                 return false;
             ShowDecoded(path, photo);
+            string how = ready ? "already decoded ahead" : $"decoded in {photo.DecodeTime.TotalSeconds:0.0} s";
+            Status += $" · ready after {watch.Elapsed.TotalSeconds:0.0} s ({how})";
+            Timings.Log($"opened {Path.GetFileName(path)}: editable after {watch.Elapsed.TotalSeconds:0.00} s ({how})");
             return true;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
@@ -93,8 +104,8 @@ public partial class MainViewModel
     }
 
     /// <summary>
-    /// The RAW's embedded preview, stretched to the RAW's exact size (they differ by a few pixels) so the zoom
-    /// stays put when the decoded photo replaces it; null if the RAW has no usable preview.
+    /// The RAW's embedded preview (a few pixels smaller than the decoded RAW; the viewer keeps its zoom when the
+    /// decoded photo replaces it) and the RAW's geometry; null if the RAW has no usable preview.
     /// </summary>
     private static (PreviewImage Preview, ImageGeometry Geometry)? CameraPreview(string path)
     {
@@ -108,25 +119,10 @@ public partial class MainViewModel
         }
         catch (InvalidDataException)
         {
+            bitmap.Dispose();
             return null; // the decode will report the problem
         }
-        double aspect = (double)bitmap.Width / bitmap.Height, rawAspect = (double)geometry.Width / geometry.Height;
-        if (Math.Abs(aspect / rawAspect - 1) > 0.03)
-        {
-            // Not the same framing (e.g. a 16:9 preview of a 3:2 sensor): show it as it is.
-            return (PreviewImage.Create(bitmap), geometry with { Width = bitmap.Width, Height = bitmap.Height });
-        }
-        if (bitmap.Width != geometry.Width || bitmap.Height != geometry.Height)
-        {
-            var resized = bitmap.Resize(new SKImageInfo(geometry.Width, geometry.Height, SKColorType.Rgba8888, SKAlphaType.Premul),
-                new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
-            if (resized is not null)
-            {
-                bitmap.Dispose();
-                bitmap = resized;
-            }
-        }
-        return (PreviewImage.Create(bitmap), geometry);
+        return (PreviewImage.Create(bitmap), geometry with { Width = bitmap.Width, Height = bitmap.Height });
     }
 
     /// <summary>Shows the camera preview with the saved edit; the editing panels stay disabled until the RAW is decoded.</summary>

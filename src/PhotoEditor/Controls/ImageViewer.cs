@@ -174,8 +174,18 @@ public class ImageViewer : Control
             var previous = change.GetOldValue<PreviewImage?>();
             var next = change.GetNewValue<PreviewImage?>();
             bool sameSize = previous is not null && next is not null && previous.Width == next.Width && previous.Height == next.Height;
+            // A RAW's camera preview differs from the decoded RAW by a few pixels: keep the view then too.
+            bool nearlySame = previous is not null && next is not null
+                && Math.Abs(previous.Width - next.Width) <= previous.Width / 100
+                && Math.Abs(previous.Height - next.Height) <= previous.Height / 100;
             if (sameSize)
                 InvalidateVisual();
+            else if (nearlySame && next is not null)
+            {
+                _displayCrop = Tool == EditTool.Crop ? Crop.None : State.Crop;
+                _displayFrame = _displayCrop.Frame(next.Width, next.Height);
+                Update(() => _view.ReplaceImageSize(_displayFrame.HalfWidth * 2, _displayFrame.HalfHeight * 2));
+            }
             else
                 UpdateDisplayCrop(force: true);
         }

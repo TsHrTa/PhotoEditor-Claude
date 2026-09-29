@@ -83,4 +83,25 @@ public class ViewTransformTests
         Assert.Equal(123, i.X, 9);
         Assert.Equal(456, i.Y, 9);
     }
+
+    [Fact]
+    public void ReplaceImageSize_KeepsZoomAndTheCentredPart()
+    {
+        var view = new ViewTransform();
+        view.SetViewSize(800, 600);
+        view.SetImageSize(5616, 3744);
+        view.ZoomTo(1, 400, 300);
+        view.Pan(-1000, -500);
+        var (cx, cy) = view.ViewToImage(400, 300);
+        view.ReplaceImageSize(5634, 3752);
+        Assert.Equal(1, view.Scale);
+        var (nx, ny) = view.ViewToImage(400, 300);
+        Assert.Equal(cx * 5634 / 5616, nx, 3);
+        Assert.Equal(cy * 3752 / 3744, ny, 3);
+
+        view.ZoomToFit();
+        view.ReplaceImageSize(5616, 3744);
+        Assert.True(view.IsFit);
+        Assert.Equal(view.FitScale, view.Scale, 6);
+    }
 }

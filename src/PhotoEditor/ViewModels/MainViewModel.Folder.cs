@@ -150,7 +150,7 @@ public partial class MainViewModel
         _syncingFilmstrip = false;
     }
 
-    /// <summary>Loads every thumbnail, nearest to <paramref name="start"/> first, two at a time.</summary>
+    /// <summary>Loads every thumbnail, nearest to <paramref name="start"/> first, one or two at a time.</summary>
     private async Task LoadThumbnailsAsync(int start, CancellationToken cancel)
     {
         var items = _allPhotos.ToList();
@@ -159,7 +159,12 @@ public partial class MainViewModel
         var order = items.Select((item, i) => (item, i)).OrderBy(x => Math.Abs(x.i - start)).Select(x => x.item).ToList();
         try
         {
-            await Parallel.ForEachAsync(order, new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = cancel },
+            await Parallel.ForEachAsync(order, new ParallelOptions
+            {
+                // Leave most cores to decoding the photo being opened.
+                MaxDegreeOfParallelism = Environment.ProcessorCount >= 8 ? 2 : 1,
+                CancellationToken = cancel,
+            },
                 (item, _) =>
                 {
                     LoadThumbnail(item);
