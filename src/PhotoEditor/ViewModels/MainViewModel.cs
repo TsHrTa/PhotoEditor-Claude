@@ -132,6 +132,7 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsBrushActive))]
     [NotifyPropertyChangedFor(nameof(IsLinearGradientActive))]
+    [NotifyPropertyChangedFor(nameof(IsRadialGradientActive))]
     public partial EditTool ActiveTool { get; set; }
 
     /// <summary>When on, left-dragging on the image paints into the selected mask.</summary>
@@ -146,6 +147,13 @@ public partial class MainViewModel : ViewModelBase
     {
         get => ActiveTool == EditTool.LinearGradient;
         set => SetTool(EditTool.LinearGradient, value);
+    }
+
+    /// <summary>When on, dragging on the image creates a radial gradient.</summary>
+    public bool IsRadialGradientActive
+    {
+        get => ActiveTool == EditTool.RadialGradient;
+        set => SetTool(EditTool.RadialGradient, value);
     }
 
     private void SetTool(EditTool tool, bool on)
@@ -167,7 +175,7 @@ public partial class MainViewModel : ViewModelBase
     public MaskComponent? EditableComponent =>
         !ShowOriginal && SelectedMask is { } item && State.FindMask(item.Id) is { } mask
         && SelectedComponentIndex >= 0 && SelectedComponentIndex < mask.Components.Count
-        && mask.Components[SelectedComponentIndex] is LinearGradientComponent component
+        && mask.Components[SelectedComponentIndex] is (LinearGradientComponent or RadialGradientComponent) and var component
             ? component
             : null;
 
@@ -213,10 +221,13 @@ public partial class MainViewModel : ViewModelBase
 
         if (_componentEditMaskId is { } id && _componentEditIndex >= 0 && component is not null)
         {
-            if (end && _componentEditIsNew && component is LinearGradientComponent g && IsTiny(g))
+            if (end && _componentEditIsNew)
             {
-                // A click without dragging: use a default-length gradient downwards.
-                component = g with { End = new BrushPoint(g.Start.X, g.Start.Y + 0.25f) };
+                // A click without dragging: use a default size.
+                if (component is LinearGradientComponent g && IsTiny(g))
+                    component = g with { End = new BrushPoint(g.Start.X, g.Start.Y + 0.25f) };
+                else if (component is RadialGradientComponent r && r.RadiusX + r.RadiusY < 0.01f)
+                    component = r with { RadiusX = 0.2f, RadiusY = 0.15f };
             }
             int index = _componentEditIndex;
             EditMask(id, m => index < m.Components.Count ? m.ReplaceComponent(index, component) : m, _componentEditKey);
@@ -330,10 +341,10 @@ public partial class MainViewModel : ViewModelBase
 
     private void EditMask(Guid id, Func<Mask, Mask> update, string? key) => ApplyEdit(State.UpdateMask(id, update), key);
 
-    private void EditSelectedComponent(int index, Func<MaskComponent, MaskComponent> update)
+    private void EditSelectedComponent(int index, Func<MaskComponent, MaskComponent> update, string? key)
     {
         if (SelectedMask is { } item)
-            EditMask(item.Id, m => index < m.Components.Count ? m.ReplaceComponent(index, update(m.Components[index])) : m, null);
+            EditMask(item.Id, m => index < m.Components.Count ? m.ReplaceComponent(index, update(m.Components[index])) : m, key);
     }
 
     private void DeleteSelectedComponent(int index)

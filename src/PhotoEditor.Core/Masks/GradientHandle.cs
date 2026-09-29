@@ -9,4 +9,10 @@ public enum GradientHandle
 
     /// <summary>Moves the whole gradient.</summary>
     Move,
+
+    // Radial gradient edge handles (resize one radius).
+    Left,
+    Right,
+    Top,
+    Bottom,
 }

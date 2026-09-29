@@ -38,7 +38,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Mask overlay display (red tint) and mask list panel
 - [x] Brush (size, feather, flow, erase)
 - [x] Linear gradient (on-canvas handles)
-- [ ] Radial gradient (ellipse, feather, invert)
+- [x] Radial gradient (ellipse, feather, invert)
 - [ ] Vignette (amount, midpoint, roundness, feather)
 
 ### Phase 4 – AI masks
@@ -81,7 +81,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Linear gradient done. `Core/Masks/LinearGradientComponent` (JSON "linear"): full effect before Start, smoothstep fade to 0 at End, projection in pixel space; `DragHandle` (Start/End/Move) tested. `Core/Editing/EditTool` (None/Brush/LinearGradient/RadialGradient) drives the viewer (`Tool`); VM `ActiveTool` with `IsBrushActive` / `IsLinearGradientActive`. "Linear (L)" toggle: drag on the image creates a gradient in the selected mask (or a new one), then the tool switches off and the handles (start, centre = move, end; perpendicular guide lines) of the selected component (component list is now a ListBox) can be dragged; a click without drag gives a default 25 % gradient. Esc = no tool. One creation/drag = one undo step. Next: radial gradient (viewer code for it was drafted and removed to keep this commit to one item).
 
+- 2026-09-29: Radial gradient done. `Core/Masks/RadialGradientComponent` (JSON "radial"): centre + RadiusX/RadiusY (fractions of image width → equal radii = circle), feather (smoothstep from inner radius), effect inside (Invert = outside); handles: centre (move) + left/right/top/bottom (resize one radius); drag-to-create sets both radii from the centre, a click gives 0.2 × 0.15. "Radial (R)" toggle; per-component Feather slider in the component list. No rotation (Lightroom can rotate the ellipse) — possible later. Next: vignette.
+
 ### To check visually (Windows)
+- Radial gradient: ellipse guides/handles line up with the red overlay at all zoom levels; feather slider feels right.
 - Linear gradient: creating by drag, handle hit targets (10 px), guide lines readable on bright and dark photos.
 - Brush painting is smooth (no lag) on a real GPU with a 24 MP image; cursor circle size matches the painted stroke; Alt-erase works (Alt might trigger access keys).
 - Mask panel layout and ListBox selection; red overlay visible and aligned with the image at all zoom levels (verified under Xvfb only once a component type exists).

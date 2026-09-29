@@ -193,10 +193,13 @@ public class ImageViewer : Control
                 BeginDrag(e, editable, handle, isNew: false);
                 return;
             }
-            if (Tool == EditTool.LinearGradient)
+            if (Tool is EditTool.LinearGradient or EditTool.RadialGradient)
             {
                 var p = ToNormalized(pos);
-                BeginDrag(e, new LinearGradientComponent { Start = p, End = p }, GradientHandle.End, isNew: true);
+                MaskComponent created = Tool == EditTool.LinearGradient
+                    ? new LinearGradientComponent { Start = p, End = p }
+                    : new RadialGradientComponent { Center = p, RadiusX = 0, RadiusY = 0 };
+                BeginDrag(e, created, GradientHandle.End, isNew: true);
                 return;
             }
             if (e.ClickCount == 2)
@@ -262,6 +265,7 @@ public class ImageViewer : Control
         return original switch
         {
             LinearGradientComponent linear => linear.DragHandle(_dragHandle, _dragFrom, to),
+            RadialGradientComponent radial => radial.DragHandle(_dragHandle, _dragFrom, to, Aspect),
             _ => original,
         };
     }
@@ -312,6 +316,9 @@ public class ImageViewer : Control
         Cursor = null;
     }
 
+    /// <summary>Image width / height.</summary>
+    private float Aspect => _view.ImageHeight > 0 ? (float)(_view.ImageWidth / _view.ImageHeight) : 1f;
+
     private BrushPoint ToNormalized(Point viewPoint)
     {
         var (ix, iy) = _view.ViewToImage(viewPoint.X, viewPoint.Y);
@@ -343,6 +350,7 @@ public class ImageViewer : Control
     private IEnumerable<(GradientHandle Handle, Point Position)> Handles(MaskComponent component) => component switch
     {
         LinearGradientComponent g => [(GradientHandle.Start, ToView(g.Start)), (GradientHandle.End, ToView(g.End)), (GradientHandle.Move, ToView(g.Center))],
+        RadialGradientComponent g => g.HandlePoints(Aspect).Select(h => (h.Handle, ToView(h.Point))),
         _ => [],
     };
 
@@ -424,6 +432,19 @@ public class ImageViewer : Control
                     context.DrawLine(pen, p - n, p + n);
                 }
             }
+        }
+
+        else if (component is RadialGradientComponent radial)
+        {
+            // Outer ellipse = edge of the effect, dashed = where the feather starts.
+            var c = ToView(radial.Center);
+            double rx = radial.RadiusX * _view.ImageWidth * _view.Scale;
+            double ry = radial.RadiusY * _view.ImageWidth * _view.Scale;
+            double f = 1 - Math.Clamp(radial.Feather, 0, 1);
+            context.DrawEllipse(null, GuideShadow, c, rx, ry);
+            context.DrawEllipse(null, GuideLine, c, rx, ry);
+            if (f > 0.01 && f < 0.99)
+                context.DrawEllipse(null, GuideDashed, c, rx * f, ry * f);
         }
 
         foreach (var (_, pos) in Handles(component))
