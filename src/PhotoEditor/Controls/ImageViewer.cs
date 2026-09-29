@@ -6,6 +6,8 @@ using Avalonia.Media;
 using Avalonia.Platform;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
+using PhotoEditor.Core.Adjustments;
+using PhotoEditor.Core.Imaging;
 using PhotoEditor.Core.Viewing;
 using SkiaSharp;
 
@@ -17,8 +19,11 @@ namespace PhotoEditor.Controls;
 /// </summary>
 public class ImageViewer : Control
 {
-    public static readonly StyledProperty<SKBitmap?> SourceProperty =
-        AvaloniaProperty.Register<ImageViewer, SKBitmap?>(nameof(Source));
+    public static readonly StyledProperty<PreviewImage?> SourceProperty =
+        AvaloniaProperty.Register<ImageViewer, PreviewImage?>(nameof(Source));
+
+    public static readonly StyledProperty<AdjustmentSettings> SettingsProperty =
+        AvaloniaProperty.Register<ImageViewer, AdjustmentSettings>(nameof(Settings), AdjustmentSettings.Default);
 
     public static readonly DirectProperty<ImageViewer, double> ZoomProperty =
         AvaloniaProperty.RegisterDirect<ImageViewer, double>(nameof(Zoom), v => v.Zoom);
@@ -26,21 +31,28 @@ public class ImageViewer : Control
     private const double WheelZoomStep = 1.25;
 
     private readonly ViewTransform _view = new();
-    private SKImage? _image;
     private Point? _panStart;
     private double _zoom = 1;
 
     static ImageViewer()
     {
-        AffectsRender<ImageViewer>(SourceProperty);
+        AffectsRender<ImageViewer>(SourceProperty, SettingsProperty);
         ClipToBoundsProperty.OverrideDefaultValue<ImageViewer>(true);
         FocusableProperty.OverrideDefaultValue<ImageViewer>(true);
     }
 
-    public SKBitmap? Source
+    /// <summary>The image to show; 100% zoom refers to its full-resolution size.</summary>
+    public PreviewImage? Source
     {
         get => GetValue(SourceProperty);
         set => SetValue(SourceProperty, value);
+    }
+
+    /// <summary>Adjustments applied live by the GPU shader.</summary>
+    public AdjustmentSettings Settings
+    {
+        get => GetValue(SettingsProperty);
+        set => SetValue(SettingsProperty, value);
     }
 
     /// <summary>Current display scale (1 = 100%).</summary>
@@ -60,10 +72,8 @@ public class ImageViewer : Control
         if (change.Property == SourceProperty)
         {
             // The render thread may still hold the old image; let the GC release it.
-            var bitmap = change.GetNewValue<SKBitmap?>();
-            _image = bitmap is null ? null : SKImage.FromBitmap(bitmap);
-            if (bitmap is not null)
-                Update(() => _view.SetImageSize(bitmap.Width, bitmap.Height));
+            if (change.GetNewValue<PreviewImage?>() is { } image)
+                Update(() => _view.SetImageSize(image.Width, image.Height));
         }
         else if (change.Property == BoundsProperty)
         {
@@ -81,7 +91,7 @@ public class ImageViewer : Control
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
-        if (_image is null)
+        if (Source is null)
             return;
         var p = e.GetPosition(this);
         double factor = Math.Pow(WheelZoomStep, e.Delta.Y);
@@ -92,7 +102,7 @@ public class ImageViewer : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        if (_image is null)
+        if (Source is null)
             return;
         var point = e.GetCurrentPoint(this);
         if (e.ClickCount == 2 && point.Properties.IsLeftButtonPressed)
@@ -150,16 +160,19 @@ public class ImageViewer : Control
     {
         var bounds = new Rect(Bounds.Size);
         context.FillRectangle(Brushes.Transparent, bounds); // makes the whole area hit-testable
-        if (_image is null || bounds.Width <= 0 || bounds.Height <= 0)
+        if (Source is not { } source || bounds.Width <= 0 || bounds.Height <= 0)
             return;
 
         var (x0, y0) = _view.ImageToView(0, 0);
         var (x1, y1) = _view.ImageToView(_view.ImageWidth, _view.ImageHeight);
         var dest = new SKRect((float)x0, (float)y0, (float)x1, (float)y1);
-        context.Custom(new ImageDrawOperation(bounds, _image, dest, _view.Scale));
+        // Use the full-resolution image only when the preview would be magnified.
+        var image = _view.Scale > source.PreviewScale * 1.01 ? source.Full : source.Preview;
+        context.Custom(new ImageDrawOperation(bounds, image, dest, _view.Scale, Settings));
     }
 
-    private sealed class ImageDrawOperation(Rect bounds, SKImage image, SKRect dest, double scale) : ICustomDrawOperation
+    private sealed class ImageDrawOperation(Rect bounds, SKImage image, SKRect dest, double scale, AdjustmentSettings settings)
+        : ICustomDrawOperation
     {
         public Rect Bounds => bounds;
         public bool HitTest(Point p) => bounds.Contains(p);
@@ -176,8 +189,14 @@ public class ImageViewer : Control
             var sampling = scale >= 2
                 ? new SKSamplingOptions(SKFilterMode.Nearest)
                 : new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear);
-            using var paint = new SKPaint();
-            lease.SkCanvas.DrawImage(image, dest, sampling, paint);
+            var canvas = lease.SkCanvas;
+            using var shader = AdjustmentShader.CreateShader(image, settings, sampling);
+            using var paint = new SKPaint { Shader = shader };
+            canvas.Save();
+            canvas.Translate(dest.Left, dest.Top);
+            canvas.Scale(dest.Width / image.Width, dest.Height / image.Height);
+            canvas.DrawRect(0, 0, image.Width, image.Height, paint);
+            canvas.Restore();
         }
     }
 }

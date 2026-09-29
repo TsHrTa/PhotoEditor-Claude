@@ -29,8 +29,33 @@
                        Text="{Binding #Viewer.Zoom, StringFormat='{}{0:P0}'}" />
         </Grid>
 
+        <ScrollViewer DockPanel.Dock="Right" Width="300" Padding="12,0" IsEnabled="{Binding HasImage}">
+            <ItemsControl ItemsSource="{Binding Groups}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:AdjustmentGroupViewModel">
+                        <StackPanel Margin="0,0,0,16">
+                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                            <ItemsControl ItemsSource="{Binding Parameters}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ParameterViewModel">
+                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                            <TextBlock Text="{Binding Label}" VerticalAlignment="Bottom" />
+                                            <TextBlock Grid.Column="1" Text="{Binding DisplayValue}" VerticalAlignment="Bottom" />
+                                            <Slider Grid.Row="1" Grid.ColumnSpan="2"
+                                                    Minimum="{Binding Minimum}" Maximum="{Binding Maximum}"
+                                                    Value="{Binding Value}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
         <Panel Background="#202020">
-            <controls:ImageViewer x:Name="Viewer" Source="{Binding Image}" />
+            <controls:ImageViewer x:Name="Viewer" Source="{Binding Preview}" Settings="{Binding Settings}" />
             <TextBlock Text="Drop an image here"
                        Foreground="Gray"
                        HorizontalAlignment="Center" VerticalAlignment="Center"

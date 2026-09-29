@@ -22,7 +22,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Project setup (Avalonia MVVM, git)
 - [x] Open image (file dialog + drag & drop), show in viewer
 - [x] Zoom (fit / 100% / mouse wheel) and pan
-- [ ] Adjustment pipeline: settings model + SkSL shader rendering on a preview-sized image
+- [x] Adjustment pipeline: settings model + SkSL shader rendering on a preview-sized image
 - [ ] Light: exposure, contrast, highlights, shadows, whites, blacks
 - [ ] Color: temperature, tint, saturation, vibrance
 - [ ] HSL panel: hue / saturation / luminance per color band (reds, oranges, yellows, greens, aquas, blues, purples, magentas)
@@ -57,7 +57,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Zoom & pan done. `Core/Viewing/ViewTransform` (tested) holds scale/offset; viewer: wheel zooms at cursor, left/middle drag pans, double-click toggles fit/100%, Fit/100% buttons, Ctrl+0 / Ctrl+1; zoom % in status bar. Verified under Xvfb. Next: adjustment pipeline (settings model + SkSL shader on preview-sized image).
 
+- 2026-09-29: Adjustment pipeline done. `Core/Adjustments`: immutable `AdjustmentSettings` record, `AdjustmentParameter` descriptors (UI sliders are generated from `AdjustmentParameters.All`), `PreparedAdjustments` (derived constants), `AdjustmentShader` (SkSL, works in linear light: sRGB decode → adjust → sRGB encode) and `CpuAdjustmentRenderer` (same math in C#, parallel rows, for export). `ShaderParityTests` run the SkSL on Skia's raster backend and compare with the C# output (≤2/255). `PreviewImage` holds full-res + ≤2560px preview; the viewer uses the full image only when zoomed past the preview's resolution. Only Exposure exists so far. Next: Light sliders.
+
 ### To check visually (Windows)
+- Live preview is GPU-accelerated and smooth while dragging sliders on a 24MP JPEG (Xvfb here renders in software).
 - Mouse-wheel zoom step feels right with a real wheel / precision touchpad (1.25x per notch).
 - File dialog filter and drag & drop of a JPEG from Explorer.
 - A portrait phone JPEG (EXIF rotated) shows upright.
