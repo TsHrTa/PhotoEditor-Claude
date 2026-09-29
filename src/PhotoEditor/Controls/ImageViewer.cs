@@ -169,7 +169,15 @@ public class ImageViewer : Control
         if (change.Property == SourceProperty)
         {
             // The render thread may still hold the old image; let the GC release it.
-            UpdateDisplayCrop(force: true);
+            // Keep zoom and position when the same photo is swapped (Before / After, denoised copy);
+            // refit when a photo of another size is opened.
+            var previous = change.GetOldValue<PreviewImage?>();
+            var next = change.GetNewValue<PreviewImage?>();
+            bool sameSize = previous is not null && next is not null && previous.Width == next.Width && previous.Height == next.Height;
+            if (sameSize)
+                InvalidateVisual();
+            else
+                UpdateDisplayCrop(force: true);
         }
         else if (change.Property == StateProperty || change.Property == ToolProperty)
         {

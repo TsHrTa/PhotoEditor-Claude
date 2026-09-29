@@ -37,9 +37,31 @@ public sealed class DenoiserTests : IDisposable
             return t;
         });
         int diff = TestImages.MaxDifference(img, result, out var at);
-        Assert.True(diff == 0, $"difference {diff} at {at}");
-        int core = Denoiser.Window - 2 * Denoiser.Margin;
-        Assert.Equal(((w + core - 1) / core) * ((h + core - 1) / core), calls);
+        Assert.True(diff <= 1, $"difference {diff} at {at}"); // weighted average of equal values, rounding only
+        Assert.True(calls >= 1);
+    }
+
+    [Fact]
+    public void ProcessTiles_CrossFadesTilesThatDriftInBrightness()
+    {
+        // A flat grey image and a "model" that brightens each window by a different amount (like SCUNet's
+        // slight per-window drift): with cross-fading there is no visible step between neighbouring pixels.
+        using var flat = new SKBitmap(new SKImageInfo(1200, 800, SKColorType.Rgba8888, SKAlphaType.Premul));
+        flat.Erase(new SKColor(40, 40, 40));
+        int call = 0;
+        using var result = Denoiser.ProcessTiles(flat, t =>
+        {
+            float offset = (call++ % 3) * 0.03f; // up to ~8 levels between windows
+            return t with { Data = t.Data.Select(v => v + offset).ToArray() };
+        });
+        int maxStep = 0;
+        for (int y = 0; y < 800; y += 7)
+        for (int x = 1; x < 1200; x++)
+            maxStep = Math.Max(maxStep, Math.Abs(result.GetPixel(x, y).Red - result.GetPixel(x - 1, y).Red));
+        for (int x = 0; x < 1200; x += 7)
+        for (int y = 1; y < 800; y++)
+            maxStep = Math.Max(maxStep, Math.Abs(result.GetPixel(x, y).Red - result.GetPixel(x, y - 1).Red));
+        Assert.True(maxStep <= 1, $"largest step between neighbouring pixels: {maxStep}");
     }
 
     [Fact]

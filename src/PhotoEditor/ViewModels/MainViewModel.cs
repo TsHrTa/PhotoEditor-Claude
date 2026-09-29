@@ -549,6 +549,8 @@ public partial class MainViewModel : ViewModelBase
     {
         SyncMasks();
         RefreshSliders();
+        if (oldValue.Adjustments.DenoiseAmount != newValue.Adjustments.DenoiseAmount)
+            ScheduleDenoiseUpdate();
         if (oldValue.Crop != newValue.Crop)
         {
             if (!_settingCropAngle)
@@ -796,7 +798,13 @@ public partial class MainViewModel : ViewModelBase
         try
         {
             var watch = Stopwatch.StartNew();
-            await Task.Run(() => ImageExporter.Export(original, state, source, path, options));
+            if (await ExportSourceAsync(original, state.Adjustments.DenoiseAmount) is not { } exportSource)
+            {
+                Status = "Export stopped: the AI denoise did not finish.";
+                return;
+            }
+            Status = $"Exporting {Path.GetFileName(path)}…";
+            await Task.Run(() => ImageExporter.Export(exportSource, state, source, path, options));
             Status = $"Exported {Path.GetFileName(path)} ({watch.Elapsed.TotalSeconds:0.0} s)";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -862,6 +870,7 @@ public partial class MainViewModel : ViewModelBase
             UpdateHistoryCommands();
             ShowOriginal = false;
             FilePath = path;
+            ResetDenoise(preview);
             Status = $"{bitmap.Width} × {bitmap.Height}{sidecarNote}";
             return true;
         }

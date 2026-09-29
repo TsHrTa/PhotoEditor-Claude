@@ -62,9 +62,11 @@
                     ToolTip.Tip="Paste the copied settings into one or more other photos. Only their edit files (.json / .xmp) are written; the photos are not changed." />
         </WrapPanel>
 
-        <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto" Margin="8,4">
-            <TextBlock Text="{Binding Status}" />
-            <TextBlock Grid.Column="1" IsVisible="{Binding HasImage}"
+        <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto,Auto" Margin="8,4">
+            <TextBlock Text="{Binding Status}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            <Button Grid.Column="1" Content="Cancel denoise" Command="{Binding CancelDenoiseCommand}"
+                    IsVisible="{Binding IsDenoising}" Margin="8,0" Padding="8,2" />
+            <TextBlock Grid.Column="2" IsVisible="{Binding HasImage}" VerticalAlignment="Center"
                        Text="{Binding #Viewer.Zoom, StringFormat='{}{0:P0}'}" />
         </Grid>
 

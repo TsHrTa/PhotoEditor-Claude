@@ -11,8 +11,10 @@ public readonly record struct TileProgress(int Done, int Total)
 }
 
 /// <summary>
-/// AI noise reduction with SCUNet (real-photo variant): the photo is processed in overlapping tiles
-/// (512 × 512 windows; only the centre of each is kept, so no seams) because full photos do not fit the model.
+/// AI noise reduction with SCUNet (real-photo variant). Full photos do not fit the model, so it runs on
+/// overlapping 512 × 512 windows; neighbouring results are cross-faded over the overlap (each window's output
+/// drifts slightly in brightness, which a hard cut shows as bands in flat dark areas). Rows of windows are
+/// accumulated in a band buffer, so memory stays small even for 24 MP photos.
 /// Input / output are RGB 0..1, sizes divisible by 8.
 /// </summary>
 public sealed class Denoiser : IDisposable
@@ -20,8 +22,8 @@ public sealed class Denoiser : IDisposable
     /// <summary>Model input window (divisible by 8).</summary>
     public const int Window = 512;
 
-    /// <summary>Context kept around each tile's written core.</summary>
-    public const int Margin = 32;
+    /// <summary>Overlap between neighbouring windows (cross-faded).</summary>
+    public const int Overlap = 96;
 
     private readonly OnnxModel _model;
 
@@ -39,9 +41,8 @@ public sealed class Denoiser : IDisposable
             progress, cancel);
 
     /// <summary>
-    /// Runs <paramref name="run"/> (1 × 3 × H × W RGB 0..1 → same shape) over the image in overlapping tiles
-    /// and assembles the result. Windows smaller than <see cref="Window"/> (small images) are padded by
-    /// mirroring to a multiple of 8.
+    /// Runs <paramref name="run"/> (1 × 3 × H × W RGB 0..1 → same shape) over the image in overlapping windows
+    /// and assembles the cross-faded result. Windows larger than a small image are mirror-padded to a multiple of 8.
     /// </summary>
     public static SKBitmap ProcessTiles(SKBitmap image, Func<Tensor, Tensor> run, IProgress<TileProgress>? progress = null,
         CancellationToken cancel = default)
@@ -51,55 +52,117 @@ public sealed class Denoiser : IDisposable
             : image.Copy(SKColorType.Rgba8888);
         var source = converted ?? image;
         int width = source.Width, height = source.Height;
-        var result = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         var src = source.GetPixelSpan().ToArray();
-        int srcRow = source.RowBytes, dstRow = result.RowBytes;
-        var dst = new byte[dstRow * height];
+        int srcRow = source.RowBytes;
+        var dst = new byte[width * 4 * height];
 
-        const int core = Window - 2 * Margin;
-        int tilesX = (width + core - 1) / core, tilesY = (height + core - 1) / core, total = tilesX * tilesY, done = 0;
         int winW = Math.Min(Window, RoundUp8(width)), winH = Math.Min(Window, RoundUp8(height));
-        var input = new float[3 * winW * winH];
+        var xs = Starts(width, winW);
+        var ys = Starts(height, winH);
+        int total = xs.Length * ys.Length, done = 0;
         int plane = winW * winH;
+        var input = new float[3 * plane];
 
-        for (int ty = 0; ty < tilesY; ty++)
-        for (int tx = 0; tx < tilesX; tx++)
+        // Band of rows [bandTop, bandTop + winH) with weighted sums (r, g, b, weight).
+        var band = new float[winH * width * 4];
+        int bandTop = ys[0];
+        for (int r = 0; r < ys.Length; r++)
         {
-            cancel.ThrowIfCancellationRequested();
-            int cx0 = tx * core, cy0 = ty * core;
-            int cx1 = Math.Min(width, cx0 + core), cy1 = Math.Min(height, cy0 + core);
-            // Window around the core, shifted inside the image where possible.
-            int wx = Math.Clamp(cx0 - Margin, 0, Math.Max(0, width - winW));
-            int wy = Math.Clamp(cy0 - Margin, 0, Math.Max(0, height - winH));
-            for (int y = 0; y < winH; y++)
+            int wy = ys[r];
+            if (wy != bandTop)
             {
-                int sy = Mirror(wy + y, height);
-                for (int x = 0; x < winW; x++)
+                // Rows above wy are final: write them out and move the rest of the band up.
+                int shift = wy - bandTop;
+                WriteRows(band, width, bandTop, Math.Min(shift, height - bandTop), src, srcRow, dst);
+                Array.Copy(band, shift * width * 4, band, 0, (winH - shift) * width * 4);
+                Array.Clear(band, (winH - shift) * width * 4, shift * width * 4);
+                bandTop = wy;
+            }
+            for (int c = 0; c < xs.Length; c++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                int wx = xs[c];
+                for (int y = 0; y < winH; y++)
                 {
-                    int sx = Mirror(wx + x, width);
-                    int o = sy * srcRow + sx * 4, i = y * winW + x;
-                    float a = src[o + 3];
-                    float inv = a > 0 ? 1f / a : 0;
-                    input[i] = src[o] * inv;
-                    input[plane + i] = src[o + 1] * inv;
-                    input[2 * plane + i] = src[o + 2] * inv;
+                    int sy = Mirror(wy + y, height);
+                    for (int x = 0; x < winW; x++)
+                    {
+                        int sx = Mirror(wx + x, width);
+                        int o = sy * srcRow + sx * 4, i = y * winW + x;
+                        float a = src[o + 3];
+                        float inv = a > 0 ? 1f / a : 0;
+                        input[i] = src[o] * inv;
+                        input[plane + i] = src[o + 1] * inv;
+                        input[2 * plane + i] = src[o + 2] * inv;
+                    }
                 }
+                var output = run(new Tensor(input, [1, 3, winH, winW])).Data;
+                bool left = c > 0, right = c < xs.Length - 1, top = r > 0, bottom = r < ys.Length - 1;
+                for (int y = 0; y < winH && wy + y < height; y++)
+                {
+                    float fy = Fade(y, winH, top, bottom);
+                    for (int x = 0; x < winW && wx + x < width; x++)
+                    {
+                        float w = fy * Fade(x, winW, left, right);
+                        int i = y * winW + x, b = (y * width + wx + x) * 4;
+                        band[b] += w * output[i];
+                        band[b + 1] += w * output[plane + i];
+                        band[b + 2] += w * output[2 * plane + i];
+                        band[b + 3] += w;
+                    }
+                }
+                progress?.Report(new TileProgress(++done, total));
             }
-            var output = run(new Tensor(input, [1, 3, winH, winW])).Data;
-            for (int y = cy0; y < cy1; y++)
-            for (int x = cx0; x < cx1; x++)
-            {
-                int i = (y - wy) * winW + (x - wx), o = y * srcRow + x * 4, d = y * dstRow + x * 4;
-                float a = src[o + 3] / 255f;
-                dst[d] = ToByte(output[i] * a);
-                dst[d + 1] = ToByte(output[plane + i] * a);
-                dst[d + 2] = ToByte(output[2 * plane + i] * a);
-                dst[d + 3] = src[o + 3];
-            }
-            progress?.Report(new TileProgress(++done, total));
         }
+        WriteRows(band, width, bandTop, Math.Min(winH, height - bandTop), src, srcRow, dst);
+
+        var result = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         System.Runtime.InteropServices.Marshal.Copy(dst, 0, result.GetPixels(), dst.Length);
         return result;
+    }
+
+    /// <summary>Window start positions covering 0..size with at least <see cref="Overlap"/> between neighbours.</summary>
+    private static int[] Starts(int size, int window)
+    {
+        if (size <= window)
+            return [0];
+        int stride = window - Overlap;
+        int count = (size - window + stride - 1) / stride + 1;
+        // Spread the windows evenly so the last one ends exactly at the image edge.
+        return Enumerable.Range(0, count).Select(i => (int)Math.Round((double)i * (size - window) / (count - 1))).ToArray();
+    }
+
+    /// <summary>Cross-fade weight along one axis: ramps up over the overlap where a neighbour exists.</summary>
+    private static float Fade(int position, int window, bool before, bool after)
+    {
+        float w = 1f;
+        if (before && position < Overlap)
+            w = Math.Min(w, (position + 0.5f) / Overlap);
+        if (after && position >= window - Overlap)
+            w = Math.Min(w, (window - position - 0.5f) / Overlap);
+        return w;
+    }
+
+    private static void WriteRows(float[] band, int width, int top, int rows, byte[] src, int srcRow, byte[] dst)
+    {
+        for (int y = 0; y < rows; y++)
+        for (int x = 0; x < width; x++)
+        {
+            int b = (y * width + x) * 4, o = (top + y) * srcRow + x * 4, d = ((top + y) * width + x) * 4;
+            float wsum = band[b + 3];
+            float a = src[o + 3] / 255f;
+            if (wsum <= 0)
+            {
+                dst[d] = src[o]; dst[d + 1] = src[o + 1]; dst[d + 2] = src[o + 2];
+            }
+            else
+            {
+                dst[d] = ToByte(band[b] / wsum * a);
+                dst[d + 1] = ToByte(band[b + 1] / wsum * a);
+                dst[d + 2] = ToByte(band[b + 2] / wsum * a);
+            }
+            dst[d + 3] = src[o + 3];
+        }
     }
 
     private static byte ToByte(float v) => (byte)Math.Clamp((int)(v * 255f + 0.5f), 0, 255);
@@ -145,11 +208,14 @@ public sealed class DenoiseCache(string directory)
 
     public string Directory { get; } = directory;
 
+    /// <summary>Bump when the denoise processing changes, so old results are recomputed.</summary>
+    public const int Version = 2;
+
     /// <summary>Cache file for the photo at <paramref name="imagePath"/> (changes when the photo file changes).</summary>
     public string PathFor(string imagePath)
     {
         var info = new FileInfo(imagePath);
-        var key = $"{Path.GetFullPath(imagePath).ToLowerInvariant()}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{ModelCatalog.DenoiseGraph.Sha256}";
+        var key = $"{Path.GetFullPath(imagePath).ToLowerInvariant()}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{ModelCatalog.DenoiseGraph.Sha256}|v{Version}";
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..32];
         return Path.Combine(Directory, hash + ".png");
     }
