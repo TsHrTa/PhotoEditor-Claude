@@ -15,14 +15,25 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(Key.O, KeyModifiers.Control), Command = new AsyncRelayCommand(OpenAsync) });
+        AddKeyBinding(Key.O, new AsyncRelayCommand(OpenAsync));
+        AddKeyBinding(Key.D0, new RelayCommand(Viewer.ZoomToFit));
+        AddKeyBinding(Key.NumPad0, new RelayCommand(Viewer.ZoomToFit));
+        AddKeyBinding(Key.D1, new RelayCommand(Viewer.ZoomToActualSize));
+        AddKeyBinding(Key.NumPad1, new RelayCommand(Viewer.ZoomToActualSize));
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
     }
 
+    private void AddKeyBinding(Key key, System.Windows.Input.ICommand command) =>
+        KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(key, KeyModifiers.Control), Command = command });
+
     private MainViewModel? ViewModel => DataContext as MainViewModel;
 
     private async void OnOpenClick(object? sender, RoutedEventArgs e) => await OpenAsync();
+
+    private void OnFitClick(object? sender, RoutedEventArgs e) => Viewer.ZoomToFit();
+
+    private void OnActualSizeClick(object? sender, RoutedEventArgs e) => Viewer.ZoomToActualSize();
 
     private async Task OpenAsync()
     {

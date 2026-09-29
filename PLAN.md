@@ -21,7 +21,7 @@ Each item is meant to be one small, self-contained step.
 ### Phase 1 – Viewer, adjustments, export
 - [x] Project setup (Avalonia MVVM, git)
 - [x] Open image (file dialog + drag & drop), show in viewer
-- [ ] Zoom (fit / 100% / mouse wheel) and pan
+- [x] Zoom (fit / 100% / mouse wheel) and pan
 - [ ] Adjustment pipeline: settings model + SkSL shader rendering on a preview-sized image
 - [ ] Light: exposure, contrast, highlights, shadows, whites, blacks
 - [ ] Color: temperature, tint, saturation, vibrance
@@ -55,7 +55,10 @@ Each item is meant to be one small, self-contained step.
 ## Where I left off
 - 2026-09-29: Open image done. New `PhotoEditor.Core` library (UI-free: `ImageLoader` decodes via SkiaSharp and applies EXIF orientation) + `tests/PhotoEditor.Tests` (xUnit). `ImageViewer` control draws an SKImage through Avalonia's Skia lease (custom draw op), fit-to-window. Open via button / Ctrl+O / drag & drop / command-line arg. Dark theme. Screenshots under Xvfb on Linux work (apt `xvfb x11-apps imagemagick`). Next: zoom & pan.
 
+- 2026-09-29: Zoom & pan done. `Core/Viewing/ViewTransform` (tested) holds scale/offset; viewer: wheel zooms at cursor, left/middle drag pans, double-click toggles fit/100%, Fit/100% buttons, Ctrl+0 / Ctrl+1; zoom % in status bar. Verified under Xvfb. Next: adjustment pipeline (settings model + SkSL shader on preview-sized image).
+
 ### To check visually (Windows)
+- Mouse-wheel zoom step feels right with a real wheel / precision touchpad (1.25x per notch).
 - File dialog filter and drag & drop of a JPEG from Explorer.
 - A portrait phone JPEG (EXIF rotated) shows upright.
 

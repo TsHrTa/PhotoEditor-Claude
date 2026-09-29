@@ -19,14 +19,18 @@
     <DockPanel>
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8">
             <Button Content="Open…" Click="OnOpenClick" ToolTip.Tip="Open image (Ctrl+O)" />
+            <Button Content="Fit" Click="OnFitClick" ToolTip.Tip="Fit to window (Ctrl+0)" IsEnabled="{Binding HasImage}" />
+            <Button Content="100%" Click="OnActualSizeClick" ToolTip.Tip="Actual pixels (Ctrl+1)" IsEnabled="{Binding HasImage}" />
         </StackPanel>
 
-        <Border DockPanel.Dock="Bottom" Padding="8,4">
+        <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto" Margin="8,4">
             <TextBlock Text="{Binding Status}" />
-        </Border>
+            <TextBlock Grid.Column="1" IsVisible="{Binding HasImage}"
+                       Text="{Binding #Viewer.Zoom, StringFormat='{}{0:P0}'}" />
+        </Grid>
 
         <Panel Background="#202020">
-            <controls:ImageViewer Source="{Binding Image}" />
+            <controls:ImageViewer x:Name="Viewer" Source="{Binding Image}" />
             <TextBlock Text="Drop an image here"
                        Foreground="Gray"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
