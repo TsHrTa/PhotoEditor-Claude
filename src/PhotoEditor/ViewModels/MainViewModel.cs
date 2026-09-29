@@ -33,6 +33,7 @@ public partial class MainViewModel : ViewModelBase
                 IsGlobalOnly = g.All(p => AdjustmentParameters.GlobalOnly.Contains(p.Parameter)),
             })
             .ToList();
+        LoadPresets();
     }
 
     /// <summary>Full-resolution decoded original (never modified).</summary>
@@ -41,6 +42,7 @@ public partial class MainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(CanExport))]
     [NotifyPropertyChangedFor(nameof(CropSizeText))]
     [NotifyCanExecuteChangedFor(nameof(PasteSettingsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyPresetCommand))]
     public partial SKBitmap? Original { get; private set; }
 
     [ObservableProperty]

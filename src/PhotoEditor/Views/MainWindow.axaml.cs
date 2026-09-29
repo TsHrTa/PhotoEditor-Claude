@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
@@ -159,18 +160,38 @@ public partial class MainWindow : Window
     {
         if (ViewModel is not { HasCopiedSettings: true } vm)
             return;
+        var paths = await PickPhotosAsync("Paste settings into photos");
+        if (paths.Count > 0)
+            await vm.PasteToFilesAsync(paths);
+    }
+
+    private void OnSavePresetClick(object? sender, RoutedEventArgs e)
+    {
+        ViewModel?.SaveEditAsPresetCommand.Execute(null);
+        SavePresetButton.Flyout?.Hide();
+    }
+
+    private async void OnApplyPresetToPhotosClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { HasSelectedPreset: true } vm)
+            return;
+        var paths = await PickPhotosAsync("Apply preset to photos");
+        if (paths.Count > 0)
+            await vm.ApplyPresetToFilesAsync(paths);
+    }
+
+    private async Task<IReadOnlyList<string>> PickPhotosAsync(string title)
+    {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Paste settings into photos",
+            Title = title,
             AllowMultiple = true,
             FileTypeFilter =
             [
                 new FilePickerFileType("Images") { Patterns = ImageLoader.SupportedExtensions.Select(ext => "*" + ext).ToArray() },
             ],
         });
-        var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
-        if (paths.Count > 0)
-            await vm.PasteToFilesAsync(paths);
+        return files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
     }
 
     private void OnFitClick(object? sender, RoutedEventArgs e) => Viewer.ZoomToFit();

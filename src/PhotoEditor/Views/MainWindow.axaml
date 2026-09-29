@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:PhotoEditor.ViewModels"
         xmlns:controls="using:PhotoEditor.Controls"
+        xmlns:presets="using:PhotoEditor.Core.Presets"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
@@ -69,6 +70,50 @@
 
         <ScrollViewer DockPanel.Dock="Right" Width="320" Padding="8,0,16,0" IsEnabled="{Binding HasImage}">
           <StackPanel Spacing="4">
+            <Expander Header="Presets" IsExpanded="True" HorizontalAlignment="Stretch">
+                <StackPanel Spacing="6">
+                    <ListBox ItemsSource="{Binding Presets}" SelectedItem="{Binding SelectedPreset}" MaxHeight="150">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="presets:Preset">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="{Binding Name}" />
+                                    <TextBlock Text="built-in" Foreground="Gray" IsVisible="{Binding IsBuiltIn}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <WrapPanel ItemSpacing="6" LineSpacing="6">
+                        <Button Content="Apply" Command="{Binding ApplyPresetCommand}"
+                                ToolTip.Tip="Run the selected preset on this photo (one undo step)" />
+                        <Button Content="Apply to…" Click="OnApplyPresetToPhotosClick" IsEnabled="{Binding HasSelectedPreset}"
+                                ToolTip.Tip="Run the selected preset on other photos. Only their edit files (.json / .xmp) are written." />
+                        <Button x:Name="SavePresetButton" Content="Save as…" IsEnabled="{Binding HasImage}"
+                                ToolTip.Tip="Save the current edit as a new preset">
+                            <Button.Flyout>
+                                <Flyout Placement="BottomEdgeAlignedLeft">
+                                    <StackPanel Spacing="4" MinWidth="220">
+                                        <TextBlock Text="Preset name:" FontWeight="SemiBold" />
+                                        <TextBox Text="{Binding NewPresetName}" />
+                                        <TextBlock Text="Include:" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                        <CheckBox Content="Light" IsChecked="{Binding CopyLight}" />
+                                        <CheckBox Content="Color" IsChecked="{Binding CopyColor}" />
+                                        <CheckBox Content="HSL" IsChecked="{Binding CopyHsl}" />
+                                        <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />
+                                        <CheckBox Content="Detail (sharpening)" IsChecked="{Binding CopyDetail}" />
+                                        <CheckBox Content="Masks (their shapes and sliders)" IsChecked="{Binding CopyMasks}" />
+                                        <Button Content="Save" HorizontalAlignment="Right" Click="OnSavePresetClick" />
+                                    </StackPanel>
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                        <Button Content="Delete" Command="{Binding DeletePresetCommand}"
+                                ToolTip.Tip="Delete the selected preset (built-in presets cannot be deleted)" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding PresetLog}" TextWrapping="Wrap" Foreground="Gray" FontSize="11"
+                               IsVisible="{Binding HasPresetLog}" />
+                </StackPanel>
+            </Expander>
+
             <Expander Header="Crop" IsExpanded="True" HorizontalAlignment="Stretch">
                 <StackPanel Spacing="6">
                     <StackPanel Orientation="Horizontal" Spacing="6">
