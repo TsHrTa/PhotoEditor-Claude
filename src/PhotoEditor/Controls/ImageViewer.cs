@@ -32,6 +32,15 @@ public class ImageViewer : Control
     public static readonly StyledProperty<Mask?> OverlayMaskProperty =
         AvaloniaProperty.Register<ImageViewer, Mask?>(nameof(OverlayMask));
 
+    public static readonly StyledProperty<bool> IsBrushActiveProperty =
+        AvaloniaProperty.Register<ImageViewer, bool>(nameof(IsBrushActive));
+
+    public static readonly StyledProperty<double> BrushRadiusProperty =
+        AvaloniaProperty.Register<ImageViewer, double>(nameof(BrushRadius), 0.03);
+
+    public static readonly StyledProperty<double> BrushFeatherProperty =
+        AvaloniaProperty.Register<ImageViewer, double>(nameof(BrushFeather), 0.5);
+
     public static readonly DirectProperty<ImageViewer, double> ZoomProperty =
         AvaloniaProperty.RegisterDirect<ImageViewer, double>(nameof(Zoom), v => v.Zoom);
 
@@ -40,11 +49,14 @@ public class ImageViewer : Control
     private readonly ViewTransform _view = new();
     private readonly MaskImageCache _maskCache = new();
     private Point? _panStart;
+    private Point? _pointer;
+    private bool _stroking;
     private double _zoom = 1;
 
     static ImageViewer()
     {
-        AffectsRender<ImageViewer>(SourceProperty, StateProperty, OverlayMaskProperty);
+        AffectsRender<ImageViewer>(SourceProperty, StateProperty, OverlayMaskProperty,
+            IsBrushActiveProperty, BrushRadiusProperty, BrushFeatherProperty);
         ClipToBoundsProperty.OverrideDefaultValue<ImageViewer>(true);
         FocusableProperty.OverrideDefaultValue<ImageViewer>(true);
     }
@@ -69,6 +81,30 @@ public class ImageViewer : Control
         get => GetValue(OverlayMaskProperty);
         set => SetValue(OverlayMaskProperty, value);
     }
+
+    /// <summary>When true, left-drag paints (raises <see cref="BrushStroke"/>); middle/right-drag pans.</summary>
+    public bool IsBrushActive
+    {
+        get => GetValue(IsBrushActiveProperty);
+        set => SetValue(IsBrushActiveProperty, value);
+    }
+
+    /// <summary>Brush radius as a fraction of the image's longer side (for the cursor).</summary>
+    public double BrushRadius
+    {
+        get => GetValue(BrushRadiusProperty);
+        set => SetValue(BrushRadiusProperty, value);
+    }
+
+    /// <summary>0..1, drawn as the inner circle of the cursor.</summary>
+    public double BrushFeather
+    {
+        get => GetValue(BrushFeatherProperty);
+        set => SetValue(BrushFeatherProperty, value);
+    }
+
+    /// <summary>Brush input in normalised image coordinates (0..1).</summary>
+    public event EventHandler<BrushStrokeEventArgs>? BrushStroke;
 
     /// <summary>Current display scale (1 = 100%).</summary>
     public double Zoom
@@ -120,7 +156,16 @@ public class ImageViewer : Control
         if (Source is null)
             return;
         var point = e.GetCurrentPoint(this);
-        if (e.ClickCount == 2 && point.Properties.IsLeftButtonPressed)
+        var props = point.Properties;
+        if (IsBrushActive && props.IsLeftButtonPressed)
+        {
+            _stroking = true;
+            e.Pointer.Capture(this);
+            RaiseStroke(BrushStrokePhase.Begin, point.Position, e.KeyModifiers.HasFlag(KeyModifiers.Alt));
+            e.Handled = true;
+            return;
+        }
+        if (!IsBrushActive && e.ClickCount == 2 && props.IsLeftButtonPressed)
         {
             // Double-click toggles between fit and 100% at the clicked point.
             if (_view.IsFit)
@@ -130,7 +175,7 @@ public class ImageViewer : Control
             e.Handled = true;
             return;
         }
-        if (point.Properties.IsLeftButtonPressed || point.Properties.IsMiddleButtonPressed)
+        if ((props.IsLeftButtonPressed && !IsBrushActive) || props.IsMiddleButtonPressed || props.IsRightButtonPressed)
         {
             _panStart = point.Position;
             e.Pointer.Capture(this);
@@ -142,24 +187,59 @@ public class ImageViewer : Control
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        if (_panStart is not { } start)
-            return;
         var p = e.GetPosition(this);
-        _panStart = p;
-        Update(() => _view.Pan(p.X - start.X, p.Y - start.Y));
+        _pointer = p;
+        if (_stroking)
+        {
+            RaiseStroke(BrushStrokePhase.Move, p, false);
+        }
+        else if (_panStart is { } start)
+        {
+            _panStart = p;
+            Update(() => _view.Pan(p.X - start.X, p.Y - start.Y));
+            return;
+        }
+        if (IsBrushActive)
+            InvalidateVisual(); // move the brush cursor
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        _pointer = null;
+        if (IsBrushActive)
+            InvalidateVisual();
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
+        if (_stroking)
+        {
+            _stroking = false;
+            e.Pointer.Capture(null);
+            RaiseStroke(BrushStrokePhase.End, e.GetPosition(this), false);
+            return;
+        }
         EndPan(e.Pointer);
     }
 
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         base.OnPointerCaptureLost(e);
+        if (_stroking)
+        {
+            _stroking = false;
+            BrushStroke?.Invoke(this, new BrushStrokeEventArgs(BrushStrokePhase.End, 0, 0, false));
+        }
         _panStart = null;
         Cursor = null;
+    }
+
+    private void RaiseStroke(BrushStrokePhase phase, Point viewPoint, bool erase)
+    {
+        var (ix, iy) = _view.ViewToImage(viewPoint.X, viewPoint.Y);
+        BrushStroke?.Invoke(this, new BrushStrokeEventArgs(phase, ix / _view.ImageWidth, iy / _view.ImageHeight, erase));
     }
 
     private void EndPan(IPointer pointer)
@@ -185,11 +265,25 @@ public class ImageViewer : Control
         var image = _view.Scale > source.PreviewScale * 1.01 ? source.Full : source.Preview;
         // Masks are rasterised at preview resolution on the UI thread (cached until they change).
         var state = State;
+        var (mw, mh) = MaskImageCache.MaskSize(source.Preview.Width, source.Preview.Height);
         var maskImages = state.Masks.Where(m => m.IsActive)
-            .ToDictionary(m => m.Id, m => _maskCache.Get(m, source.Preview.Width, source.Preview.Height));
-        var overlay = OverlayMask is { } om ? _maskCache.Get(om, source.Preview.Width, source.Preview.Height) : null;
+            .ToDictionary(m => m.Id, m => _maskCache.Get(m, mw, mh));
+        var overlay = OverlayMask is { } om ? _maskCache.Get(om, mw, mh) : null;
         _maskCache.Retain(OverlayMask is { } keep ? state.Masks.Add(keep) : state.Masks);
         context.Custom(new ImageDrawOperation(bounds, image, dest, _view.Scale, state, maskImages, overlay));
+
+        if (IsBrushActive && _pointer is { } p)
+        {
+            // Brush cursor: outer circle = radius, inner = where the feather starts.
+            double r = BrushRadius * Math.Max(_view.ImageWidth, _view.ImageHeight) * _view.Scale;
+            var dark = new Pen(new SolidColorBrush(Color.FromArgb(160, 0, 0, 0)), 3);
+            var light = new Pen(Brushes.White, 1);
+            context.DrawEllipse(null, dark, p, r, r);
+            context.DrawEllipse(null, light, p, r, r);
+            double inner = r * (1 - Math.Clamp(BrushFeather, 0, 1));
+            if (inner > 1 && inner < r - 1)
+                context.DrawEllipse(null, new Pen(new SolidColorBrush(Color.FromArgb(160, 255, 255, 255)), 1), p, inner, inner);
+        }
     }
 
     private sealed class ImageDrawOperation(

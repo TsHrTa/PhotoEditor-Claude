@@ -91,15 +91,13 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>Mask the viewer tints red (the selected one, when the overlay is on).</summary>
     public Mask? OverlayMask =>
-        ShowMaskOverlay && !ShowOriginal && SelectedMask is { } item ? State.FindMask(item.Id) : null;
+        ShowMaskOverlay && !ShowOriginal && (_strokeMaskId ?? SelectedMask?.Id) is { } id ? State.FindMask(id) : null;
 
     public string EditingLabel => SelectedMask is { } m ? $"Editing mask: {m.Name}" : "Editing: whole image";
 
     partial void OnSelectedMaskChanged(MaskItemViewModel? value)
     {
-        OnPropertyChanged(nameof(CurrentAdjustments));
-        foreach (var p in Parameters)
-            p.Refresh();
+        RefreshSliders();
         SyncComponents();
     }
 
@@ -123,6 +121,99 @@ public partial class MainViewModel : ViewModelBase
 
     [RelayCommand]
     private void ToggleMaskOverlay() => ShowMaskOverlay = !ShowMaskOverlay;
+
+    // ---- Brush ----
+
+    /// <summary>When on, left-dragging on the image paints into the selected mask.</summary>
+    [ObservableProperty]
+    public partial bool IsBrushActive { get; set; }
+
+    /// <summary>1..100; radius = size × 0.2% of the image's longer side.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BrushRadius))]
+    public partial double BrushSize { get; set; } = 15;
+
+    /// <summary>0..100 (%).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BrushFeatherFraction))]
+    public partial double BrushFeather { get; set; } = 50;
+
+    /// <summary>1..100 (%).</summary>
+    [ObservableProperty]
+    public partial double BrushFlow { get; set; } = 100;
+
+    [ObservableProperty]
+    public partial bool BrushErase { get; set; }
+
+    /// <summary>Brush radius as a fraction of the image's longer side.</summary>
+    public double BrushRadius => BrushSize * 0.002;
+
+    public double BrushFeatherFraction => BrushFeather / 100;
+
+    private string? _strokeKey;
+    private Guid? _strokeMaskId;
+    private BrushPoint _lastStrokePoint;
+
+    /// <summary>Starts a brush stroke at normalised image coordinates; creates a mask if none is selected.</summary>
+    public void BeginStroke(double x, double y, bool invertErase)
+    {
+        if (!HasImage)
+            return;
+        Guid maskId;
+        if (SelectedMask is { } selected)
+        {
+            maskId = selected.Id;
+        }
+        else
+        {
+            // New mask; it is selected when the stroke ends (changing the list selection while the
+            // viewer holds the pointer capture broke later clicks).
+            var created = new Mask { Name = State.NextMaskName() };
+            ApplyEdit(State.AddMask(created));
+            maskId = created.Id;
+        }
+        _strokeMaskId = maskId;
+
+        var point = new BrushPoint((float)x, (float)y);
+        var stroke = new BrushStroke
+        {
+            Radius = (float)BrushRadius,
+            Feather = (float)BrushFeatherFraction,
+            Flow = (float)(BrushFlow / 100),
+            Erase = BrushErase ^ invertErase,
+            Points = [point],
+        };
+        _strokeKey = $"stroke:{Guid.NewGuid()}";
+        _lastStrokePoint = point;
+        EditMask(maskId, m => m.Components.Count > 0 && m.Components[^1] is BrushComponent brush
+            ? m.ReplaceComponent(m.Components.Count - 1, brush.AddStroke(stroke))
+            : m.AddComponent(new BrushComponent().AddStroke(stroke)), _strokeKey);
+    }
+
+    public void ContinueStroke(double x, double y)
+    {
+        if (_strokeKey is null || _strokeMaskId is not { } maskId)
+            return;
+        var point = new BrushPoint((float)x, (float)y);
+        // Skip points closer than a tenth of the radius; the rasteriser interpolates between points.
+        float dx = point.X - _lastStrokePoint.X, dy = point.Y - _lastStrokePoint.Y;
+        double minStep = BrushRadius * 0.1;
+        if (dx * dx + dy * dy < minStep * minStep)
+            return;
+        _lastStrokePoint = point;
+        EditMask(maskId, m => m.Components.Count > 0 && m.Components[^1] is BrushComponent brush
+            ? m.ReplaceComponent(m.Components.Count - 1, brush.ExtendLastStroke(point))
+            : m, _strokeKey);
+    }
+
+    public void EndStroke()
+    {
+        _strokeKey = null;
+        if (_strokeMaskId is { } id && SelectedMask?.Id != id)
+            SelectedMask = Masks.FirstOrDefault(m => m.Id == id);
+        _strokeMaskId = null;
+        OnPropertyChanged(nameof(OverlayMask));
+    }
 
     private void EditMask(Guid id, Func<Mask, Mask> update, string? key) => ApplyEdit(State.UpdateMask(id, update), key);
 
@@ -162,12 +253,15 @@ public partial class MainViewModel : ViewModelBase
 
     private void SyncComponents()
     {
+        var components = SelectedMask is { } item && State.FindMask(item.Id) is { } mask ? mask.Components : [];
+        // Rebuild only when something shown in the list changed (not when a brush stroke grows).
+        bool same = components.Count == SelectedMaskComponents.Count
+            && components.Select((c, i) => (c, i)).All(x => SelectedMaskComponents[x.i].Shows(x.c));
+        if (same)
+            return;
         SelectedMaskComponents.Clear();
-        if (SelectedMask is { } item && State.FindMask(item.Id) is { } mask)
-        {
-            for (int i = 0; i < mask.Components.Count; i++)
-                SelectedMaskComponents.Add(new ComponentItemViewModel(i, mask.Components[i], EditSelectedComponent, DeleteSelectedComponent));
-        }
+        for (int i = 0; i < components.Count; i++)
+            SelectedMaskComponents.Add(new ComponentItemViewModel(i, components[i], EditSelectedComponent, DeleteSelectedComponent));
         OnPropertyChanged(nameof(SelectedMaskHasNoComponents));
     }
 
@@ -197,9 +291,21 @@ public partial class MainViewModel : ViewModelBase
 
     partial void OnFilePathChanged(string? value) => OnPropertyChanged(nameof(Title));
 
+    private AdjustmentSettings? _shownAdjustments;
+
     partial void OnStateChanged(EditState value)
     {
         SyncMasks();
+        RefreshSliders();
+    }
+
+    /// <summary>Updates the sliders if the edited adjustment set changed (not on every brush point).</summary>
+    private void RefreshSliders()
+    {
+        var current = CurrentAdjustments;
+        if (current == _shownAdjustments)
+            return;
+        _shownAdjustments = current;
         OnPropertyChanged(nameof(CurrentAdjustments));
         foreach (var p in Parameters)
             p.Refresh();

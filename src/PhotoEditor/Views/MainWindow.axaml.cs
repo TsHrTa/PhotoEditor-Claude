@@ -8,6 +8,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.Input;
+using PhotoEditor.Controls;
 using PhotoEditor.Core.Imaging;
 using PhotoEditor.ViewModels;
 
@@ -37,6 +38,8 @@ public partial class MainWindow : Window
         AddPlainKeyBinding(Key.O, () => ViewModel?.ToggleMaskOverlayCommand.Execute(null));
         // handledEventsToo: the slider thumb handles the pointer itself.
         AddHandler(DoubleTappedEvent, OnDoubleTapped, RoutingStrategies.Bubble, handledEventsToo: true);
+        Viewer.BrushStroke += OnBrushStroke;
+        AddPlainKeyBinding(Key.B, () => { if (ViewModel is { } vm) vm.IsBrushActive = !vm.IsBrushActive; });
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
     }
@@ -100,6 +103,24 @@ public partial class MainWindow : Window
         });
         if (file?.TryGetLocalPath() is { } path)
             await vm.ExportAsync(path);
+    }
+
+    private void OnBrushStroke(object? sender, BrushStrokeEventArgs e)
+    {
+        if (ViewModel is not { } vm)
+            return;
+        switch (e.Phase)
+        {
+            case BrushStrokePhase.Begin:
+                vm.BeginStroke(e.X, e.Y, e.Erase);
+                break;
+            case BrushStrokePhase.Move:
+                vm.ContinueStroke(e.X, e.Y);
+                break;
+            default:
+                vm.EndStroke();
+                break;
+        }
     }
 
     private void OnFitClick(object? sender, RoutedEventArgs e) => Viewer.ZoomToFit();

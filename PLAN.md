@@ -36,7 +36,7 @@ Each item is meant to be one small, self-contained step.
 ### Phase 3 – Masks
 - [x] Mask model: list of masks, each with its own adjustment set; add/subtract/intersect components
 - [x] Mask overlay display (red tint) and mask list panel
-- [ ] Brush (size, feather, flow, erase)
+- [x] Brush (size, feather, flow, erase)
 - [ ] Linear gradient (on-canvas handles)
 - [ ] Radial gradient (ellipse, feather, invert)
 - [ ] Vignette (amount, midpoint, roundness, feather)
@@ -77,7 +77,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Mask panel + overlay done. Right panel "Masks": New mask / Delete / Whole image, list with enable checkbox, name box, "Show overlay (O)", component list (mode combo — disabled for the first component, Invert, ✕). Selecting a mask makes all sliders edit that mask's adjustments ("Editing mask: …" label). Overlay: `Core/Masks/MaskOverlay` SkSL draws the selected mask as 50% red over the image. Mask ops are pure functions in `Core/Editing/EditStateOperations` (tested). Plain-key shortcuts (\, O) are ignored while a TextBox has focus. "New mask" creates an empty mask for now; the brush/gradient items will add "New brush/linear/radial" buttons. Next: brush.
 
+- 2026-09-29: Brush done. `Core/Masks/BrushComponent` (first real component, registered for polymorphic JSON as "brush"): strokes with radius (fraction of the long side), feather, flow, erase and normalised points; each stroke = round brush swept along the polyline (distance to segment, max within a stroke), composited with flow (strokes build up; erase multiplies down). Preview masks are rasterised at ≤ 1600 px (`MaskImageCache.MaxPreviewMaskSize`, ~11 ms per update), export at full resolution. UI: "Brush (B)" toggle with Size/Feather/Flow/Erase, left-drag paints (Alt = erase), middle/right-drag pans, circle cursor; the first stroke without a selected mask creates one (selected when the stroke ends). One stroke = one undo step (coalesced). Sliders/component list only refresh when what they show changes. Found under Xvfb: software rendering of the shader chain is slow (seconds of lag after painting); expected to be fine with a GPU but not verified. Next: linear gradient.
+
 ### To check visually (Windows)
+- Brush painting is smooth (no lag) on a real GPU with a 24 MP image; cursor circle size matches the painted stroke; Alt-erase works (Alt might trigger access keys).
 - Mask panel layout and ListBox selection; red overlay visible and aligned with the image at all zoom levels (verified under Xvfb only once a component type exists).
 - Export… save dialog: JPEG/PNG type choice, suggested name, overwrite prompt; exported JPEG opens in Windows Photos with EXIF (camera, date) intact and correct orientation.
 - `\` key toggles before/after on a Windows keyboard layout (bound to OemPipe and OemBackslash).

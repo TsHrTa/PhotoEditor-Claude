@@ -23,6 +23,8 @@ public enum MaskMode
 /// Serialised polymorphically with a "type" discriminator; every concrete component must be
 /// registered here with [JsonDerivedType] (System.Text.Json requires at least one).
 /// </remarks>
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonDerivedType(typeof(BrushComponent), "brush")]
 public abstract record MaskComponent
 {
     public MaskMode Mode { get; init; } = MaskMode.Add;

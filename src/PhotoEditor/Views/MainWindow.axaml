@@ -52,6 +52,26 @@
                         <Button Content="Whole image" Command="{Binding EditWholeImageCommand}"
                                 ToolTip.Tip="Deselect the mask; sliders edit the whole image" />
                     </StackPanel>
+                    <ToggleButton Content="Brush (B)" IsChecked="{Binding IsBrushActive}"
+                                  ToolTip.Tip="Paint the selected mask (a new mask is created if none is selected). Alt = erase. Middle/right-drag pans." />
+                    <StackPanel Spacing="2" IsVisible="{Binding IsBrushActive}">
+                        <Grid ColumnDefinitions="70,*,40">
+                            <TextBlock Text="Size" VerticalAlignment="Center" />
+                            <Slider Grid.Column="1" Minimum="1" Maximum="100" Value="{Binding BrushSize}" />
+                            <TextBlock Grid.Column="2" Text="{Binding BrushSize, StringFormat='{}{0:0}'}" VerticalAlignment="Center" HorizontalAlignment="Right" />
+                        </Grid>
+                        <Grid ColumnDefinitions="70,*,40">
+                            <TextBlock Text="Feather" VerticalAlignment="Center" />
+                            <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding BrushFeather}" />
+                            <TextBlock Grid.Column="2" Text="{Binding BrushFeather, StringFormat='{}{0:0}'}" VerticalAlignment="Center" HorizontalAlignment="Right" />
+                        </Grid>
+                        <Grid ColumnDefinitions="70,*,40">
+                            <TextBlock Text="Flow" VerticalAlignment="Center" />
+                            <Slider Grid.Column="1" Minimum="1" Maximum="100" Value="{Binding BrushFlow}" />
+                            <TextBlock Grid.Column="2" Text="{Binding BrushFlow, StringFormat='{}{0:0}'}" VerticalAlignment="Center" HorizontalAlignment="Right" />
+                        </Grid>
+                        <CheckBox Content="Erase (or hold Alt)" IsChecked="{Binding BrushErase}" />
+                    </StackPanel>
                     <ListBox ItemsSource="{Binding Masks}" SelectedItem="{Binding SelectedMask}" MaxHeight="160">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:MaskItemViewModel">
@@ -63,7 +83,7 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
                     <StackPanel Spacing="6" IsVisible="{Binding HasSelectedMask}">
-                        <TextBox Text="{Binding SelectedMask.Name}" Watermark="Mask name" />
+                        <TextBox Text="{Binding SelectedMask.Name}" PlaceholderText="Mask name" />
                         <CheckBox Content="Show overlay (O)" IsChecked="{Binding ShowMaskOverlay}" />
                         <TextBlock Text="Components" FontWeight="SemiBold" />
                         <TextBlock Text="No components yet." Foreground="Gray"
@@ -116,7 +136,10 @@
 
         <Panel Background="#202020">
             <controls:ImageViewer x:Name="Viewer" Source="{Binding Preview}" State="{Binding DisplayState}"
-                                  OverlayMask="{Binding OverlayMask}" />
+                                  OverlayMask="{Binding OverlayMask}"
+                                  IsBrushActive="{Binding IsBrushActive}"
+                                  BrushRadius="{Binding BrushRadius}"
+                                  BrushFeather="{Binding BrushFeatherFraction}" />
             <TextBlock Text="Drop an image here"
                        Foreground="Gray"
                        HorizontalAlignment="Center" VerticalAlignment="Center"

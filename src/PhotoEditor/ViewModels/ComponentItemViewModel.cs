@@ -54,4 +54,8 @@ public partial class ComponentItemViewModel : ViewModelBase
 
     [RelayCommand]
     private void Delete() => _delete(Index);
+
+    /// <summary>True if this row already displays <paramref name="component"/> correctly.</summary>
+    public bool Shows(MaskComponent component) =>
+        component.DisplayName == Title && component.Mode == Mode && component.Invert == Invert;
 }

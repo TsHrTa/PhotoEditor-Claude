@@ -8,7 +8,14 @@ namespace PhotoEditor.Core.Masks;
 /// </summary>
 public sealed class MaskImageCache
 {
+    /// <summary>Preview masks are smooth, so they are rasterised at most this large (long side).</summary>
+    public const int MaxPreviewMaskSize = 1600;
+
     private readonly Dictionary<Guid, Entry> _entries = [];
+
+    /// <summary>Mask raster size for an image of the given size (capped at <see cref="MaxPreviewMaskSize"/>).</summary>
+    public static (int Width, int Height) MaskSize(int imageWidth, int imageHeight) =>
+        Imaging.PreviewImage.PreviewSize(imageWidth, imageHeight, MaxPreviewMaskSize);
 
     private sealed record Entry(object Components, int Width, int Height, SKImage Image);
 
