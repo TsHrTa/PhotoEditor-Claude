@@ -1,4 +1,5 @@
 using PhotoEditor.Core.Adjustments;
+using PhotoEditor.Core.Editing;
 using PhotoEditor.Core.Imaging;
 using SkiaSharp;
 
@@ -20,9 +21,12 @@ public sealed record ExportOptions(ExportFormat Format = ExportFormat.Jpeg, int 
 /// <summary>Renders the full-resolution image with the CPU pipeline and writes it, keeping the source's EXIF.</summary>
 public static class ImageExporter
 {
-    public static void Export(SKBitmap original, AdjustmentSettings settings, string? sourcePath, string destinationPath, ExportOptions options)
+    public static void Export(SKBitmap original, AdjustmentSettings settings, string? sourcePath, string destinationPath, ExportOptions options) =>
+        Export(original, new EditState { Adjustments = settings }, sourcePath, destinationPath, options);
+
+    public static void Export(SKBitmap original, EditState state, string? sourcePath, string destinationPath, ExportOptions options)
     {
-        using var rendered = CpuAdjustmentRenderer.Render(original, settings);
+        using var rendered = CpuAdjustmentRenderer.Render(original, state);
         var bytes = Encode(rendered, options);
 
         var exif = sourcePath is null ? null : ExifMetadata.Read(sourcePath);

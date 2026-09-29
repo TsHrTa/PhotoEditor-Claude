@@ -34,7 +34,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Save/load edit settings as sidecar file (.json next to the image)
 
 ### Phase 3 – Masks
-- [ ] Mask model: list of masks, each with its own adjustment set; add/subtract/intersect components
+- [x] Mask model: list of masks, each with its own adjustment set; add/subtract/intersect components
 - [ ] Mask overlay display (red tint) and mask list panel
 - [ ] Brush (size, feather, flow, erase)
 - [ ] Linear gradient (on-canvas handles)
@@ -72,6 +72,8 @@ Each item is meant to be one small, self-contained step.
 - 2026-09-29: Undo/redo done. Generic `Core/Editing/EditHistory<T>` over immutable states; changes with the same key within 1 s coalesce (one slider drag = one step), capacity 500. All edits go through `MainViewModel.ApplyEdit(settings, key)`; opening an image resets history. Undo/Redo buttons, Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z. When masks arrive, the history type should become a combined edit-state record. Next: sidecar .json save/load.
 
 - 2026-09-29: Sidecar done (Phase 2 complete). `Core/Editing/SidecarFile`: `photo.jpg` → `photo.jpg.json`, camelCase JSON `{ version: 1, adjustments: {...} }` via System.Text.Json; unknown fields ignored, missing = default, out-of-range values clamped; atomic write via temp file. Auto-save 500 ms after the last edit / undo / redo, flushed on opening another image and on window close; Ctrl+S saves now. No file is created for an unedited image. Loaded on open (status shows "edits loaded"). Next: Phase 3 mask model.
+
+- 2026-09-29: Mask model done. `Core/Masks`: `Mask` record (Id, Name, Enabled, own `AdjustmentSettings`, `ImmutableList<MaskComponent>`), abstract `MaskComponent` (Mode Add=max / Subtract=×(1−c) / Intersect=×c, Invert; renders coverage from normalised coords), `MaskRasterizer` (→ float / Gray8), `MaskImageCache` (preview masks re-rasterised only when the component list instance changes). `Core/Editing/EditState` (global adjustments + masks) is now what history, sidecar (`masks` array), export and viewer use. Rendering: global pass, then per active mask a second shader pass `mix(prev, adjust(prev), mask)` chained as nested SkSL shaders; CPU renderer mirrors it (parity tests with masks). No concrete component types yet (tests use their own), so no mask UI; `[JsonPolymorphic]` + `[JsonDerivedType]` must be added on `MaskComponent` together with the first real component. Next: mask overlay (red tint) and mask list panel.
 
 ### To check visually (Windows)
 - Export… save dialog: JPEG/PNG type choice, suggested name, overwrite prompt; exported JPEG opens in Windows Photos with EXIF (camera, date) intact and correct orientation.

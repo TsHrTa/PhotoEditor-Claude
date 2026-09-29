@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -7,6 +9,8 @@ using Avalonia.Platform;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
 using PhotoEditor.Core.Adjustments;
+using PhotoEditor.Core.Editing;
+using PhotoEditor.Core.Masks;
 using PhotoEditor.Core.Imaging;
 using PhotoEditor.Core.Viewing;
 using SkiaSharp;
@@ -22,8 +26,8 @@ public class ImageViewer : Control
     public static readonly StyledProperty<PreviewImage?> SourceProperty =
         AvaloniaProperty.Register<ImageViewer, PreviewImage?>(nameof(Source));
 
-    public static readonly StyledProperty<AdjustmentSettings> SettingsProperty =
-        AvaloniaProperty.Register<ImageViewer, AdjustmentSettings>(nameof(Settings), AdjustmentSettings.Default);
+    public static readonly StyledProperty<EditState> StateProperty =
+        AvaloniaProperty.Register<ImageViewer, EditState>(nameof(State), EditState.Default);
 
     public static readonly DirectProperty<ImageViewer, double> ZoomProperty =
         AvaloniaProperty.RegisterDirect<ImageViewer, double>(nameof(Zoom), v => v.Zoom);
@@ -31,12 +35,13 @@ public class ImageViewer : Control
     private const double WheelZoomStep = 1.25;
 
     private readonly ViewTransform _view = new();
+    private readonly MaskImageCache _maskCache = new();
     private Point? _panStart;
     private double _zoom = 1;
 
     static ImageViewer()
     {
-        AffectsRender<ImageViewer>(SourceProperty, SettingsProperty);
+        AffectsRender<ImageViewer>(SourceProperty, StateProperty);
         ClipToBoundsProperty.OverrideDefaultValue<ImageViewer>(true);
         FocusableProperty.OverrideDefaultValue<ImageViewer>(true);
     }
@@ -48,11 +53,11 @@ public class ImageViewer : Control
         set => SetValue(SourceProperty, value);
     }
 
-    /// <summary>Adjustments applied live by the GPU shader.</summary>
-    public AdjustmentSettings Settings
+    /// <summary>Edit applied live by the GPU shader.</summary>
+    public EditState State
     {
-        get => GetValue(SettingsProperty);
-        set => SetValue(SettingsProperty, value);
+        get => GetValue(StateProperty);
+        set => SetValue(StateProperty, value);
     }
 
     /// <summary>Current display scale (1 = 100%).</summary>
@@ -168,10 +173,16 @@ public class ImageViewer : Control
         var dest = new SKRect((float)x0, (float)y0, (float)x1, (float)y1);
         // Use the full-resolution image only when the preview would be magnified.
         var image = _view.Scale > source.PreviewScale * 1.01 ? source.Full : source.Preview;
-        context.Custom(new ImageDrawOperation(bounds, image, dest, _view.Scale, Settings));
+        // Masks are rasterised at preview resolution on the UI thread (cached until they change).
+        var state = State;
+        var maskImages = state.Masks.Where(m => m.IsActive)
+            .ToDictionary(m => m.Id, m => _maskCache.Get(m, source.Preview.Width, source.Preview.Height));
+        _maskCache.Retain(state.Masks);
+        context.Custom(new ImageDrawOperation(bounds, image, dest, _view.Scale, state, maskImages));
     }
 
-    private sealed class ImageDrawOperation(Rect bounds, SKImage image, SKRect dest, double scale, AdjustmentSettings settings)
+    private sealed class ImageDrawOperation(
+        Rect bounds, SKImage image, SKRect dest, double scale, EditState state, Dictionary<Guid, SKImage> maskImages)
         : ICustomDrawOperation
     {
         public Rect Bounds => bounds;
@@ -190,7 +201,7 @@ public class ImageViewer : Control
                 ? new SKSamplingOptions(SKFilterMode.Nearest)
                 : new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear);
             var canvas = lease.SkCanvas;
-            using var shader = AdjustmentShader.CreateShader(image, settings, sampling);
+            using var shader = AdjustmentShader.CreateShader(image, state, sampling, m => maskImages.GetValueOrDefault(m.Id));
             using var paint = new SKPaint { Shader = shader };
             canvas.Save();
             canvas.Translate(dest.Left, dest.Top);

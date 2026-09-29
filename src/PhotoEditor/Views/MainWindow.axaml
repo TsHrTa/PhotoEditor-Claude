@@ -69,7 +69,7 @@
         </ScrollViewer>
 
         <Panel Background="#202020">
-            <controls:ImageViewer x:Name="Viewer" Source="{Binding Preview}" Settings="{Binding DisplaySettings}" />
+            <controls:ImageViewer x:Name="Viewer" Source="{Binding Preview}" State="{Binding DisplayState}" />
             <TextBlock Text="Drop an image here"
                        Foreground="Gray"
                        HorizontalAlignment="Center" VerticalAlignment="Center"

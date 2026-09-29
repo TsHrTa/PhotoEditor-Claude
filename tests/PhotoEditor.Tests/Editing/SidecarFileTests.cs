@@ -79,3 +79,18 @@ public sealed class SidecarFileTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_dir, "photo.jpg.json.tmp")));
     }
 }
+
+public class SidecarMaskTests
+{
+    [Fact]
+    public void MasksWithoutKnownComponents_RoundTrip()
+    {
+        var doc = new EditDocument
+        {
+            Masks = [new PhotoEditor.Core.Masks.Mask { Name = "Sky", Adjustments = new AdjustmentSettings { Exposure = -0.5 } }],
+        };
+        var back = SidecarFile.Deserialize(SidecarFile.Serialize(doc));
+        Assert.Equal(doc, back);
+        Assert.Equal("Sky", back.Masks[0].Name);
+    }
+}

@@ -1,3 +1,5 @@
+using PhotoEditor.Core.Editing;
+using PhotoEditor.Core.Masks;
 using SkiaSharp;
 
 namespace PhotoEditor.Core.Adjustments;
@@ -10,6 +12,8 @@ public static class AdjustmentShader
 {
     public const string Source = """
         uniform shader image;
+        // Where to apply this pass (red channel, 0..1); the global pass uses solid white.
+        uniform shader mask;
         uniform float exposureGain;
         uniform float contrastGamma;
         uniform float highlightsAmount;
@@ -97,10 +101,10 @@ public static class AdjustmentShader
             half4 src = image.eval(coord);
             float a = src.a;
             if (a <= 0.0) return half4(0);
-            float3 c = float3(src.rgb) / a;
+            float3 s = float3(src.rgb) / a;
 
             // Linear light
-            c = float3(srgbToLinear(c.r), srgbToLinear(c.g), srgbToLinear(c.b));
+            float3 c = float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b));
             c *= whiteBalance * exposureGain;
 
             // Tone curve on perceptual luminance, applied as a ratio
@@ -120,6 +124,7 @@ public static class AdjustmentShader
 
             c = clamp(c, 0.0, 1.0);
             c = float3(linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b));
+            c = mix(s, c, float(mask.eval(coord).r));
             return half4(half3(c * a), half(a));
         }
         """;
@@ -133,7 +138,41 @@ public static class AdjustmentShader
     public static SKRuntimeEffect Effect => LazyEffect.Value;
 
     /// <summary>Creates the adjustment shader for <paramref name="image"/> in the image's pixel coordinates.</summary>
-    public static SKShader CreateShader(SKImage image, AdjustmentSettings settings, SKSamplingOptions sampling)
+    public static SKShader CreateShader(SKImage image, AdjustmentSettings settings, SKSamplingOptions sampling) =>
+        CreateShader(image, new EditState { Adjustments = settings }, sampling, _ => null);
+
+    /// <summary>
+    /// Creates the full pipeline: a global pass, then one pass per active mask, each blending its
+    /// adjusted result with the previous one by the mask. <paramref name="maskImage"/> supplies the
+    /// rasterised mask (any resolution; it is stretched over the image); null skips that mask.
+    /// </summary>
+    public static SKShader CreateShader(SKImage image, EditState state, SKSamplingOptions sampling, Func<Mask, SKImage?> maskImage)
+    {
+        using var imageShader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
+        using var white = SKShader.CreateColor(SKColors.White);
+        var current = CreatePass(imageShader, white, state.Adjustments);
+
+        foreach (var mask in state.Masks)
+        {
+            if (!mask.IsActive || maskImage(mask) is not { } maskImg)
+                continue;
+            var toImage = SKMatrix.CreateScale((float)image.Width / maskImg.Width, (float)image.Height / maskImg.Height);
+            using var maskShader = maskImg.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
+                MaskSampling(maskImg, image), toImage);
+            var next = CreatePass(current, maskShader, mask.Adjustments);
+            current.Dispose();
+            current = next;
+        }
+        return current;
+    }
+
+    // Exact pixels when the mask matches the image (tests, export); smooth when it is stretched.
+    private static SKSamplingOptions MaskSampling(SKImage mask, SKImage image) =>
+        mask.Width == image.Width && mask.Height == image.Height
+            ? new SKSamplingOptions(SKFilterMode.Nearest)
+            : new SKSamplingOptions(SKFilterMode.Linear);
+
+    private static SKShader CreatePass(SKShader input, SKShader mask, AdjustmentSettings settings)
     {
         var effect = Effect;
         var p = PreparedAdjustments.From(settings);
@@ -151,10 +190,10 @@ public static class AdjustmentShader
             ["hsl"] = p.Hsl,
             ["hslCenters"] = HslCentersUniform,
         };
-        using var imageShader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
         var children = new SKRuntimeEffectChildren(effect)
         {
-            ["image"] = imageShader,
+            ["image"] = input,
+            ["mask"] = mask,
         };
         return effect.ToShader(uniforms, children);
     }
@@ -163,16 +202,24 @@ public static class AdjustmentShader
     /// Runs the shader on Skia's CPU raster backend. Used by tests to compare the shader
     /// with <see cref="CpuAdjustmentRenderer"/> without a GPU.
     /// </summary>
-    public static SKBitmap RenderRaster(SKBitmap source, AdjustmentSettings settings)
+    public static SKBitmap RenderRaster(SKBitmap source, AdjustmentSettings settings) =>
+        RenderRaster(source, new EditState { Adjustments = settings });
+
+    /// <summary>As above, with masks rasterised at the image size.</summary>
+    public static SKBitmap RenderRaster(SKBitmap source, EditState state)
     {
         var info = new SKImageInfo(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
         using var image = SKImage.FromBitmap(source);
         using var surface = SKSurface.Create(info);
-        using var shader = CreateShader(image, settings, new SKSamplingOptions(SKFilterMode.Nearest));
+        var masks = state.Masks.Where(m => m.IsActive).ToDictionary(
+            m => m.Id, m => SKImage.FromBitmap(MaskRasterizer.RasterizeToBitmap(m, source.Width, source.Height)));
+        using var shader = CreateShader(image, state, new SKSamplingOptions(SKFilterMode.Nearest), m => masks[m.Id]);
         using var paint = new SKPaint { Shader = shader, BlendMode = SKBlendMode.Src };
         surface.Canvas.DrawRect(0, 0, source.Width, source.Height, paint);
         var result = new SKBitmap(info);
         surface.ReadPixels(info, result.GetPixels(), result.RowBytes, 0, 0);
+        foreach (var m in masks.Values)
+            m.Dispose();
         return result;
     }
 }

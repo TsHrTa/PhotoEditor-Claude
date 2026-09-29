@@ -1,3 +1,5 @@
+using PhotoEditor.Core.Editing;
+using PhotoEditor.Core.Masks;
 using SkiaSharp;
 
 namespace PhotoEditor.Core.Adjustments;
@@ -9,7 +11,11 @@ namespace PhotoEditor.Core.Adjustments;
 public static class CpuAdjustmentRenderer
 {
     /// <summary>Returns a new RGBA8888 premultiplied bitmap with <paramref name="settings"/> applied.</summary>
-    public static SKBitmap Render(SKBitmap source, AdjustmentSettings settings)
+    public static SKBitmap Render(SKBitmap source, AdjustmentSettings settings) =>
+        Render(source, new EditState { Adjustments = settings });
+
+    /// <summary>Returns a new RGBA8888 premultiplied bitmap with the global adjustments and all masks applied.</summary>
+    public static SKBitmap Render(SKBitmap source, EditState state)
     {
         using var src = source.ColorType == SKColorType.Rgba8888 && source.AlphaType == SKAlphaType.Premul
             ? null
@@ -18,26 +24,36 @@ public static class CpuAdjustmentRenderer
         if (input.AlphaType != SKAlphaType.Premul && input.AlphaType != SKAlphaType.Opaque)
             throw new NotSupportedException($"Unsupported alpha type {input.AlphaType}");
 
-        var result = new SKBitmap(new SKImageInfo(input.Width, input.Height, SKColorType.Rgba8888, SKAlphaType.Premul));
-        var p = PreparedAdjustments.From(settings);
-        int width = input.Width;
+        int width = input.Width, height = input.Height;
+        var layers = state.Masks
+            .Where(m => m.IsActive)
+            .Select(m => new MaskLayer(PreparedAdjustments.From(m.Adjustments), MaskRasterizer.RasterizeToBytes(m, width, height)))
+            .ToArray();
+        var result = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var p = PreparedAdjustments.From(state.Adjustments);
         int rowBytesIn = input.RowBytes, rowBytesOut = result.RowBytes;
         nint inPtr = input.GetPixels(), outPtr = result.GetPixels();
 
-        Parallel.For(0, input.Height, y =>
+        Parallel.For(0, height, y =>
         {
             unsafe
             {
                 var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
                 var outRow = new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
-                ProcessRow(inRow, outRow, p);
+                ProcessRow(inRow, outRow, p, layers, y);
             }
         });
         return result;
     }
 
+    /// <summary>A mask's prepared adjustments and its 8-bit coverage at output resolution.</summary>
+    private sealed record MaskLayer(PreparedAdjustments Adjustments, byte[] Mask);
+
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
-    public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p)
+    public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
+        ProcessRow(input, output, p, [], 0);
+
+    private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y)
     {
         for (int i = 0; i < input.Length; i += 4)
         {
@@ -64,14 +80,35 @@ public static class CpuAdjustmentRenderer
             }
 
             ApplyLinear(ref r, ref g, ref b, p);
+            // Result of the global pass as unpremultiplied sRGB, like the shader hands to the next pass.
+            float sr = ColorMath.LinearToSrgb(Math.Clamp(r, 0f, 1f));
+            float sg = ColorMath.LinearToSrgb(Math.Clamp(g, 0f, 1f));
+            float sb = ColorMath.LinearToSrgb(Math.Clamp(b, 0f, 1f));
+
+            foreach (var layer in layers)
+            {
+                float m = layer.Mask[y * (input.Length / 4) + i / 4] / 255f;
+                if (m <= 0f)
+                    continue;
+                r = ColorMath.SrgbToLinear(sr);
+                g = ColorMath.SrgbToLinear(sg);
+                b = ColorMath.SrgbToLinear(sb);
+                ApplyLinear(ref r, ref g, ref b, layer.Adjustments);
+                sr = Mix(sr, ColorMath.LinearToSrgb(Math.Clamp(r, 0f, 1f)), m);
+                sg = Mix(sg, ColorMath.LinearToSrgb(Math.Clamp(g, 0f, 1f)), m);
+                sb = Mix(sb, ColorMath.LinearToSrgb(Math.Clamp(b, 0f, 1f)), m);
+            }
 
             float a = a8 / 255f;
-            output[i] = ColorMath.ToByte(ColorMath.LinearToSrgb(Math.Clamp(r, 0f, 1f)) * a);
-            output[i + 1] = ColorMath.ToByte(ColorMath.LinearToSrgb(Math.Clamp(g, 0f, 1f)) * a);
-            output[i + 2] = ColorMath.ToByte(ColorMath.LinearToSrgb(Math.Clamp(b, 0f, 1f)) * a);
+            output[i] = ColorMath.ToByte(sr * a);
+            output[i + 1] = ColorMath.ToByte(sg * a);
+            output[i + 2] = ColorMath.ToByte(sb * a);
             output[i + 3] = a8;
         }
     }
+
+    /// <summary>Same formula as SkSL <c>mix</c>.</summary>
+    private static float Mix(float x, float y, float t) => x * (1f - t) + y * t;
 
     /// <summary>The per-pixel adjustment math on linear-light RGB.</summary>
     public static void ApplyLinear(ref float r, ref float g, ref float b, in PreparedAdjustments p)

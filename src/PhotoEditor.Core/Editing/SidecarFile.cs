@@ -1,6 +1,8 @@
+using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PhotoEditor.Core.Adjustments;
+using PhotoEditor.Core.Masks;
 
 namespace PhotoEditor.Core.Editing;
 
@@ -11,6 +13,16 @@ public sealed record EditDocument
 
     public int Version { get; init; } = CurrentVersion;
     public AdjustmentSettings Adjustments { get; init; } = AdjustmentSettings.Default;
+    public ImmutableList<Mask> Masks { get; init; } = [];
+
+    public static EditDocument From(EditState state) => new() { Adjustments = state.Adjustments, Masks = state.Masks };
+
+    public EditState ToState() => new() { Adjustments = Adjustments, Masks = Masks };
+
+    public bool Equals(EditDocument? other) =>
+        other is not null && Version == other.Version && ToState() == other.ToState();
+
+    public override int GetHashCode() => HashCode.Combine(Version, Adjustments, Masks.Count);
 }
 
 /// <summary>
@@ -37,7 +49,15 @@ public static class SidecarFile
     public static EditDocument Deserialize(string json)
     {
         var doc = JsonSerializer.Deserialize<EditDocument>(json, Options) ?? new EditDocument();
-        return doc with { Adjustments = Normalize(doc.Adjustments ?? AdjustmentSettings.Default) };
+        var masks = (doc.Masks ?? [])
+            .Where(m => m is not null)
+            .Select(m => m with
+            {
+                Adjustments = Normalize(m.Adjustments ?? AdjustmentSettings.Default),
+                Components = (m.Components ?? []).RemoveAll(c => c is null),
+            })
+            .ToImmutableList();
+        return doc with { Adjustments = Normalize(doc.Adjustments ?? AdjustmentSettings.Default), Masks = masks };
     }
 
     /// <summary>Writes the sidecar for <paramref name="imagePath"/> (atomically via a temp file).</summary>

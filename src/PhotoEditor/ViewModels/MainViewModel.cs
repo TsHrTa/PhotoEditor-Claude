@@ -20,7 +20,7 @@ public partial class MainViewModel : ViewModelBase
     public MainViewModel()
     {
         var parameters = AdjustmentParameters.All
-            .Select(p => new ParameterViewModel(p, () => Settings, s => ApplyEdit(s, p.ToString())))
+            .Select(p => new ParameterViewModel(p, () => CurrentAdjustments, s => ApplyEdit(WithCurrentAdjustments(s), p.ToString())))
             .ToList();
         Parameters = parameters;
         Groups = parameters
@@ -39,21 +39,26 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     public partial PreviewImage? Preview { get; private set; }
 
-    private readonly EditHistory<AdjustmentSettings> _history = new(AdjustmentSettings.Default);
+    private readonly EditHistory<EditState> _history = new(EditState.Default);
 
-    /// <summary>Current adjustments. Set through <see cref="ApplyEdit"/> so the change is undoable.</summary>
+    /// <summary>The whole edit (global adjustments + masks). Set through <see cref="ApplyEdit"/> so the change is undoable.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(DisplaySettings))]
+    [NotifyPropertyChangedFor(nameof(DisplayState))]
     [NotifyCanExecuteChangedFor(nameof(ResetAllCommand))]
-    public partial AdjustmentSettings Settings { get; private set; } = AdjustmentSettings.Default;
+    public partial EditState State { get; private set; } = EditState.Default;
 
     /// <summary>When true the viewer shows the unedited original ("before").</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(DisplaySettings))]
+    [NotifyPropertyChangedFor(nameof(DisplayState))]
     public partial bool ShowOriginal { get; set; }
 
-    /// <summary>Settings the viewer renders with (respects the before/after toggle).</summary>
-    public AdjustmentSettings DisplaySettings => ShowOriginal ? AdjustmentSettings.Default : Settings;
+    /// <summary>What the viewer renders (respects the before/after toggle).</summary>
+    public EditState DisplayState => ShowOriginal ? EditState.Default : State;
+
+    /// <summary>The adjustment set the sliders currently edit.</summary>
+    public AdjustmentSettings CurrentAdjustments => State.Adjustments;
+
+    private EditState WithCurrentAdjustments(AdjustmentSettings settings) => State with { Adjustments = settings };
 
     [ObservableProperty]
     public partial string? FilePath { get; set; }
@@ -81,8 +86,9 @@ public partial class MainViewModel : ViewModelBase
 
     partial void OnFilePathChanged(string? value) => OnPropertyChanged(nameof(Title));
 
-    partial void OnSettingsChanged(AdjustmentSettings value)
+    partial void OnStateChanged(EditState value)
     {
+        OnPropertyChanged(nameof(CurrentAdjustments));
         foreach (var p in Parameters)
             p.Refresh();
     }
@@ -91,10 +97,10 @@ public partial class MainViewModel : ViewModelBase
     /// Applies an edit and records it for undo. Edits with the same <paramref name="coalesceKey"/>
     /// in quick succession (a slider drag) form one undo step.
     /// </summary>
-    public void ApplyEdit(AdjustmentSettings settings, string? coalesceKey = null)
+    public void ApplyEdit(EditState state, string? coalesceKey = null)
     {
-        _history.Record(settings, coalesceKey);
-        Settings = settings;
+        _history.Record(state, coalesceKey);
+        State = state;
         UpdateHistoryCommands();
         ScheduleSave();
     }
@@ -131,11 +137,11 @@ public partial class MainViewModel : ViewModelBase
     {
         _pendingSave?.Cancel();
         _pendingSave = null;
-        if (FilePath is not { } path || (Settings.IsDefault && !SidecarFile.Exists(path)))
+        if (FilePath is not { } path || (State.IsDefault && !SidecarFile.Exists(path)))
             return;
         try
         {
-            SidecarFile.Save(path, new EditDocument { Adjustments = Settings });
+            SidecarFile.Save(path, EditDocument.From(State));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -146,7 +152,7 @@ public partial class MainViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanUndo))]
     private void Undo()
     {
-        Settings = _history.Undo();
+        State = _history.Undo();
         UpdateHistoryCommands();
         ScheduleSave();
     }
@@ -156,7 +162,7 @@ public partial class MainViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanRedo))]
     private void Redo()
     {
-        Settings = _history.Redo();
+        State = _history.Redo();
         UpdateHistoryCommands();
         ScheduleSave();
     }
@@ -173,9 +179,9 @@ public partial class MainViewModel : ViewModelBase
     private void ToggleBeforeAfter() => ShowOriginal = !ShowOriginal;
 
     [RelayCommand(CanExecute = nameof(CanResetAll))]
-    private void ResetAll() => ApplyEdit(AdjustmentSettings.Default);
+    private void ResetAll() => ApplyEdit(EditState.Default);
 
-    private bool CanResetAll() => !Settings.IsDefault;
+    private bool CanResetAll() => !State.IsDefault;
 
     /// <summary>Suggested export file name, e.g. "IMG_0001-edited.jpg".</summary>
     public string SuggestedExportName =>
@@ -186,7 +192,7 @@ public partial class MainViewModel : ViewModelBase
     {
         if (Original is not { } original || IsExporting)
             return;
-        var settings = Settings;
+        var state = State;
         var source = FilePath;
         var options = new ExportOptions(ExportOptions.FormatFromPath(path), JpegQuality);
         IsExporting = true;
@@ -194,7 +200,7 @@ public partial class MainViewModel : ViewModelBase
         try
         {
             var watch = Stopwatch.StartNew();
-            await Task.Run(() => ImageExporter.Export(original, settings, source, path, options));
+            await Task.Run(() => ImageExporter.Export(original, state, source, path, options));
             Status = $"Exported {Path.GetFileName(path)} ({watch.Elapsed.TotalSeconds:0.0} s)";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -207,17 +213,17 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    private static (AdjustmentSettings Settings, string Note) LoadSidecar(string imagePath)
+    private static (EditState State, string Note) LoadSidecar(string imagePath)
     {
         try
         {
             return SidecarFile.Load(imagePath) is { } doc
-                ? (doc.Adjustments, " – edits loaded")
-                : (AdjustmentSettings.Default, "");
+                ? (doc.ToState(), " – edits loaded")
+                : (EditState.Default, "");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
         {
-            return (AdjustmentSettings.Default, $" – could not read saved edits: {ex.Message}");
+            return (EditState.Default, $" – could not read saved edits: {ex.Message}");
         }
     }
 
@@ -229,11 +235,11 @@ public partial class MainViewModel : ViewModelBase
             var bitmap = ImageLoader.Load(path);
             var preview = PreviewImage.Create(bitmap);
             SaveEdits(); // flush edits of the previous image
-            var (settings, sidecarNote) = LoadSidecar(path);
+            var (state, sidecarNote) = LoadSidecar(path);
             Original = bitmap;
             Preview = preview;
-            _history.Reset(settings);
-            Settings = settings;
+            _history.Reset(state);
+            State = state;
             UpdateHistoryCommands();
             ShowOriginal = false;
             FilePath = path;
