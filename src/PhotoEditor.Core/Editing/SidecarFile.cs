@@ -16,6 +16,9 @@ public sealed record EditDocument
     public ImmutableList<Mask> Masks { get; init; } = [];
     public Crop Crop { get; init; } = Crop.None;
 
+    /// <summary>Star rating and pick / reject flag (not part of the edit; null when never set).</summary>
+    public PhotoLabels? Labels { get; init; }
+
     public static EditDocument From(EditState state) =>
         new() { Adjustments = state.Adjustments, Masks = state.Masks, Crop = state.Crop };
 

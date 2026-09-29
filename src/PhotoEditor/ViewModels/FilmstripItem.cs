@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using CommunityToolkit.Mvvm.ComponentModel;
+using PhotoEditor.Core.Editing;
 using SkiaSharp;
 
 namespace PhotoEditor.ViewModels;
@@ -21,6 +22,21 @@ public partial class FilmstripItem(string path) : ViewModelBase
     /// <summary>The photo has an edit (JSON or XMP sidecar).</summary>
     [ObservableProperty]
     public partial bool HasEdits { get; set; }
+
+    /// <summary>Star rating and pick / reject flag.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Stars), nameof(IsPicked), nameof(IsRejected), nameof(LabelText))]
+    public partial PhotoLabels Labels { get; set; } = PhotoLabels.None;
+
+    /// <summary>"★★★" (empty when unrated).</summary>
+    public string Stars => new('★', Labels.Rating);
+
+    public bool IsPicked => Labels.Flag == PhotoFlag.Pick;
+    public bool IsRejected => Labels.Flag == PhotoFlag.Reject;
+
+    /// <summary>E.g. "★★★☆☆ · Picked".</summary>
+    public string LabelText => new string('★', Labels.Rating) + new string('☆', 5 - Labels.Rating)
+        + Labels.Flag switch { PhotoFlag.Pick => " · Picked", PhotoFlag.Reject => " · Rejected", _ => "" };
 
     public bool IsSamePath(string? other) =>
         other is not null && string.Equals(System.IO.Path.GetFullPath(other), System.IO.Path.GetFullPath(Path),

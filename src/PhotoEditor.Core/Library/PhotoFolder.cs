@@ -36,9 +36,23 @@ public static class PhotoFolder
     private static bool IsJpeg(string path) =>
         Path.GetExtension(path).ToLowerInvariant() is ".jpg" or ".jpeg";
 
-    /// <summary>True when the photo has edits: the app's sidecar or an XMP sidecar (e.g. from Lightroom).</summary>
-    public static bool HasEdits(string imagePath) =>
-        SidecarFile.Exists(imagePath) || File.Exists(LightroomXmp.PathFor(imagePath));
+    /// <summary>
+    /// True when the photo has an edit: in the app's sidecar, or Camera Raw settings in the XMP (e.g. from
+    /// Lightroom). A sidecar holding only a rating or flag does not count.
+    /// </summary>
+    public static bool HasEdits(string imagePath)
+    {
+        try
+        {
+            if (SidecarFile.Load(imagePath) is { } document)
+                return !document.ToState().IsDefault;
+            return LightroomXmp.HasSettings(imagePath);
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
+        {
+            return true; // something is there, even if it can't be read
+        }
+    }
 
     /// <summary>
     /// The photo's thumbnail with its saved edit applied (adjustments, masks, crop; not AI denoise / deblur,

@@ -67,7 +67,22 @@ public partial class MainWindow : Window
         AddPlainKeyBinding(Key.L, () => { if (ViewModel is { } vm) vm.IsLinearGradientActive = !vm.IsLinearGradientActive; });
         AddPlainKeyBinding(Key.R, () => { if (ViewModel is { } vm) vm.IsRadialGradientActive = !vm.IsRadialGradientActive; });
         AddPlainKeyBinding(Key.C, () => { if (ViewModel is { } vm) vm.IsCropActive = !vm.IsCropActive; });
-        AddPlainKeyBinding(Key.X, () => { if (ViewModel is { IsCropActive: true } vm) vm.SwapCropOrientationCommand.Execute(null); });
+        // X swaps the crop orientation while cropping, otherwise rejects the photo (as in Lightroom).
+        AddPlainKeyBinding(Key.X, () =>
+        {
+            if (ViewModel is { IsCropActive: true } vm)
+                vm.SwapCropOrientationCommand.Execute(null);
+            else
+                ViewModel?.SetFlag(PhotoFlag.Reject);
+        });
+        AddPlainKeyBinding(Key.P, () => ViewModel?.SetFlag(PhotoFlag.Pick));
+        AddPlainKeyBinding(Key.U, () => ViewModel?.SetFlag(PhotoFlag.None));
+        for (int stars = 0; stars <= 5; stars++)
+        {
+            int rating = stars;
+            AddPlainKeyBinding(Key.D0 + stars, () => ViewModel?.SetRating(rating));
+            AddPlainKeyBinding(Key.NumPad0 + stars, () => ViewModel?.SetRating(rating));
+        }
         AddPlainKeyBinding(Key.Enter, () => { if (ViewModel is { IsCropActive: true } vm) vm.ActiveTool = EditTool.None; });
         AddPlainKeyBinding(Key.Escape, () => { if (ViewModel is { } vm) vm.ActiveTool = EditTool.None; });
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
@@ -116,6 +131,17 @@ public partial class MainWindow : Window
     private async void OnOpenClick(object? sender, RoutedEventArgs e) => await OpenAsync();
 
     private async void OnOpenFolderClick(object? sender, RoutedEventArgs e) => await OpenFolderAsync();
+
+    /// <summary>A star button: sets that many stars, or clears the rating when it is already set.</summary>
+    private void OnStarClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag } && int.TryParse(tag, out int stars) && ViewModel is { } vm)
+            vm.SetRating(vm.CurrentPhoto?.Labels.Rating == stars ? 0 : stars);
+    }
+
+    private void OnPickClick(object? sender, RoutedEventArgs e) => ViewModel?.SetFlag(PhotoFlag.Pick);
+
+    private void OnRejectClick(object? sender, RoutedEventArgs e) => ViewModel?.SetFlag(PhotoFlag.Reject);
 
     private async Task OpenFolderAsync()
     {

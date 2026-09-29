@@ -62,6 +62,7 @@ public static class LightroomXmp
     private static readonly XNamespace X = "adobe:ns:meta/";
     private static readonly XNamespace Rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
     private static readonly XNamespace Crs = "http://ns.adobe.com/camera-raw-settings/1.0/";
+    private static readonly XNamespace Xmp = "http://ns.adobe.com/xap/1.0/";
 
     private const string LinearCorrections = "GradientBasedCorrections";
     private const string RadialCorrections = "CircularGradientBasedCorrections";
@@ -171,6 +172,11 @@ public static class LightroomXmp
         WriteMasks(state.Masks, geometry, description, notes);
 
         skipped = notes;
+        return Serialize(doc);
+    }
+
+    private static string Serialize(XDocument doc)
+    {
         using var writer = new StringWriter(CultureInfo.InvariantCulture);
         doc.Save(writer, SaveOptions.None);
         // Drop the XML declaration; XMP sidecars start with <x:xmpmeta>.
@@ -516,6 +522,50 @@ public static class LightroomXmp
         File.WriteAllText(temp, xml);
         File.Move(temp, path, overwrite: true);
         return skipped;
+    }
+
+    /// <summary>True when the XMP sidecar holds Camera Raw settings (an edit), not just e.g. a rating.</summary>
+    public static bool HasSettings(string imagePath)
+    {
+        var path = PathFor(imagePath);
+        if (!File.Exists(path) || TryParse(File.ReadAllText(path)) is not { } doc)
+            return false;
+        return doc.Descendants(Rdf + "Description").Any(d =>
+            d.Attributes().Any(a => a.Name.Namespace == Crs) || d.Elements().Any(e => e.Name.Namespace == Crs));
+    }
+
+    /// <summary>The xmp:Rating of the sidecar (−1 = rejected, 0–5 stars); null if there is none.</summary>
+    public static int? ReadRating(string imagePath)
+    {
+        var path = PathFor(imagePath);
+        if (!File.Exists(path) || TryParse(File.ReadAllText(path)) is not { } doc)
+            return null;
+        var text = doc.Descendants(Rdf + "Description")
+            .Select(d => d.Attribute(Xmp + "Rating")?.Value ?? d.Element(Xmp + "Rating")?.Value)
+            .FirstOrDefault(v => v is not null);
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? (int)Math.Round(value)
+            : null;
+    }
+
+    /// <summary>Sets xmp:Rating in the sidecar (created if needed, other content kept); 0 removes it.</summary>
+    public static void SaveRating(string imagePath, int rating)
+    {
+        var path = PathFor(imagePath);
+        var existing = File.Exists(path) ? File.ReadAllText(path) : null;
+        if (existing is null && rating == 0)
+            return;
+        var doc = (existing is not null ? TryParse(existing) : null) ?? NewDocument();
+        doc.Nodes().OfType<XProcessingInstruction>().Where(pi => pi.Target == "xpacket").Remove();
+        var description = FindDescription(doc) ?? AddDescription(doc);
+        foreach (var d in doc.Descendants(Rdf + "Description"))
+            d.Elements(Xmp + "Rating").Remove();
+        if (description.GetNamespaceOfPrefix("xmp") is null)
+            description.SetAttributeValue(XNamespace.Xmlns + "xmp", Xmp.NamespaceName);
+        description.SetAttributeValue(Xmp + "Rating", rating == 0 ? null : rating.ToString(CultureInfo.InvariantCulture));
+        var temp = path + ".tmp";
+        File.WriteAllText(temp, Serialize(doc));
+        File.Move(temp, path, overwrite: true);
     }
 
     /// <summary>Reads the sidecar of <paramref name="imagePath"/>; null if there is none or it has no Camera Raw settings.</summary>

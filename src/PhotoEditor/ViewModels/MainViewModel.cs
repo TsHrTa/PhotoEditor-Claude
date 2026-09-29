@@ -34,6 +34,7 @@ public partial class MainViewModel : ViewModelBase
             })
             .ToList();
         LoadPresets();
+        SelectedFilter = FilterOptions[0];
     }
 
     /// <summary>Full-resolution decoded original (never modified).</summary>

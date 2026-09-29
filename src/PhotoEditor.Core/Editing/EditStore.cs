@@ -25,7 +25,8 @@ public static class EditStore
     /// <summary>The app's JSON sidecar if there is one, otherwise Camera Raw settings from an XMP sidecar.</summary>
     public static (EditState State, EditSource Source) Load(string imagePath, ImageGeometry geometry)
     {
-        if (SidecarFile.Load(imagePath) is { } doc)
+        // A JSON holding only a rating / flag is not an edit: then look at the XMP (e.g. edited in Lightroom).
+        if (SidecarFile.Load(imagePath) is { } doc && !doc.ToState().IsDefault)
             return (doc.ToState(), EditSource.Json);
         if (LightroomXmp.Load(imagePath, geometry) is { IsDefault: false } imported)
             return (imported, EditSource.Xmp);
@@ -39,10 +40,62 @@ public static class EditStore
     public static IReadOnlyList<string> Save(string imagePath, EditState state, ImageGeometry geometry)
     {
         if (!state.IsDefault || SidecarFile.Exists(imagePath))
-            SidecarFile.Save(imagePath, EditDocument.From(state));
+            SidecarFile.Save(imagePath, EditDocument.From(state) with { Labels = ExistingLabels(imagePath) });
         if (!state.IsDefault || File.Exists(LightroomXmp.PathFor(imagePath)))
             return LightroomXmp.Save(imagePath, state, geometry);
         return [];
+    }
+
+    /// <summary>The labels in the existing JSON sidecar (kept when the edit is saved); null if none or unreadable.</summary>
+    private static PhotoLabels? ExistingLabels(string imagePath)
+    {
+        try
+        {
+            return SidecarFile.Load(imagePath)?.Labels;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The photo's rating and flag: from the JSON sidecar, else the rating in the XMP (e.g. set in Lightroom).</summary>
+    public static PhotoLabels LoadLabels(string imagePath)
+    {
+        try
+        {
+            if (SidecarFile.Load(imagePath)?.Labels is { } labels)
+                return labels;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // fall back to the XMP
+        }
+        return LightroomXmp.ReadRating(imagePath) switch
+        {
+            < 0 => new PhotoLabels(0, PhotoFlag.Reject),
+            int stars => new PhotoLabels(Math.Clamp(stars, 0, 5)),
+            null => PhotoLabels.None,
+        };
+    }
+
+    /// <summary>
+    /// Saves the rating and flag into the JSON sidecar (keeping the edit) and the rating into the XMP, which
+    /// Lightroom reads (a reject is written as rating −1, Adobe's convention).
+    /// </summary>
+    public static void SaveLabels(string imagePath, PhotoLabels labels)
+    {
+        EditDocument document;
+        try
+        {
+            document = SidecarFile.Load(imagePath) ?? new EditDocument();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            throw new InvalidDataException($"The edit file {Path.GetFileName(SidecarFile.PathFor(imagePath))} is damaged; not overwriting it.");
+        }
+        SidecarFile.Save(imagePath, document with { Labels = labels });
+        LightroomXmp.SaveRating(imagePath, labels.Flag == PhotoFlag.Reject ? -1 : labels.Rating);
     }
 
     /// <summary>Size (upright, as the editor shows it) and orientation of a photo, read without decoding the pixels.</summary>

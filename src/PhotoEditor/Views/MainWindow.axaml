@@ -3,6 +3,7 @@
         xmlns:vm="using:PhotoEditor.ViewModels"
         xmlns:controls="using:PhotoEditor.Controls"
         xmlns:presets="using:PhotoEditor.Core.Presets"
+        xmlns:conv="using:PhotoEditor.Converters"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
@@ -12,6 +13,15 @@
         Icon="/Assets/avalonia-logo.ico"
         Title="{Binding Title}"
         DragDrop.AllowDrop="True">
+
+    <Window.Styles>
+        <Style Selector="Button.star">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#F0C040" />
+            <Setter Property="Padding" Value="2,0" />
+            <Setter Property="FontSize" Value="16" />
+        </Style>
+    </Window.Styles>
 
     <Design.DataContext>
         <vm:MainViewModel />
@@ -74,6 +84,29 @@
         </Grid>
 
         <Border DockPanel.Dock="Bottom" IsVisible="{Binding HasFolder}" Background="#181818">
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="8,4">
+                <TextBlock Text="Show" VerticalAlignment="Center" />
+                <ComboBox ItemsSource="{Binding FilterOptions}" SelectedItem="{Binding SelectedFilter}" Width="160"
+                          ToolTip.Tip="Which photos the filmstrip shows" />
+                <TextBlock Text="{Binding FolderCountText}" Foreground="Gray" VerticalAlignment="Center" Margin="4,0,16,0" />
+                <StackPanel Orientation="Horizontal" IsVisible="{Binding CurrentPhoto, Converter={x:Static ObjectConverters.IsNotNull}}">
+                    <Button Classes="star" Content="{Binding CurrentPhoto.Labels.Rating, Converter={x:Static conv:StarConverter.Instance}, ConverterParameter=1}"
+                            Click="OnStarClick" Tag="1" ToolTip.Tip="1 star (key 1; click the same star again or press 0 to clear)" />
+                    <Button Classes="star" Content="{Binding CurrentPhoto.Labels.Rating, Converter={x:Static conv:StarConverter.Instance}, ConverterParameter=2}"
+                            Click="OnStarClick" Tag="2" ToolTip.Tip="2 stars (key 2)" />
+                    <Button Classes="star" Content="{Binding CurrentPhoto.Labels.Rating, Converter={x:Static conv:StarConverter.Instance}, ConverterParameter=3}"
+                            Click="OnStarClick" Tag="3" ToolTip.Tip="3 stars (key 3)" />
+                    <Button Classes="star" Content="{Binding CurrentPhoto.Labels.Rating, Converter={x:Static conv:StarConverter.Instance}, ConverterParameter=4}"
+                            Click="OnStarClick" Tag="4" ToolTip.Tip="4 stars (key 4)" />
+                    <Button Classes="star" Content="{Binding CurrentPhoto.Labels.Rating, Converter={x:Static conv:StarConverter.Instance}, ConverterParameter=5}"
+                            Click="OnStarClick" Tag="5" ToolTip.Tip="5 stars (key 5)" />
+                    <ToggleButton Content="✓ Pick" IsChecked="{Binding CurrentPhoto.IsPicked, Mode=OneWay}" Click="OnPickClick"
+                                  Margin="12,0,0,0" Padding="8,2" ToolTip.Tip="Pick (P); U clears the flag" />
+                    <ToggleButton Content="✕ Reject" IsChecked="{Binding CurrentPhoto.IsRejected, Mode=OneWay}" Click="OnRejectClick"
+                                  Margin="6,0,0,0" Padding="8,2" ToolTip.Tip="Reject (X); U clears the flag. Stored for Lightroom as rating −1." />
+                </StackPanel>
+            </StackPanel>
             <ListBox x:Name="Filmstrip" ItemsSource="{Binding Photos}" SelectedItem="{Binding CurrentPhoto}"
                      Height="132" Background="Transparent"
                      ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
@@ -85,7 +118,17 @@
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:FilmstripItem">
                         <Grid Width="116" RowDefinitions="92,Auto" ToolTip.Tip="{Binding Path}">
-                            <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
+                            <Image Source="{Binding Thumbnail}" Stretch="Uniform">
+                                <Image.Opacity>
+                                    <Binding Path="IsRejected" Converter="{x:Static conv:BoolToOpacity.Instance}" />
+                                </Image.Opacity>
+                            </Image>
+                            <TextBlock Text="{Binding Stars}" FontSize="11" Foreground="#F0C040" Margin="3,0,0,1"
+                                       HorizontalAlignment="Left" VerticalAlignment="Bottom" />
+                            <TextBlock Text="✓" IsVisible="{Binding IsPicked}" Foreground="#60D060" FontWeight="Bold"
+                                       HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3,0,0,0" ToolTip.Tip="Picked" />
+                            <TextBlock Text="✕" IsVisible="{Binding IsRejected}" Foreground="#E05050" FontWeight="Bold"
+                                       HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3,0,0,0" ToolTip.Tip="Rejected" />
                             <Border Width="10" Height="10" CornerRadius="5" Background="#E0A030"
                                     BorderBrush="#181818" BorderThickness="1"
                                     HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,2,0"
@@ -96,6 +139,7 @@
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
+          </DockPanel>
         </Border>
 
         <ScrollViewer DockPanel.Dock="Right" Width="320" Padding="8,0,16,0" IsEnabled="{Binding HasImage}">
