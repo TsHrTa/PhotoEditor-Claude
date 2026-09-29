@@ -40,6 +40,7 @@ public partial class MainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(HasImage))]
     [NotifyPropertyChangedFor(nameof(CanExport))]
     [NotifyPropertyChangedFor(nameof(CropSizeText))]
+    [NotifyCanExecuteChangedFor(nameof(PasteSettingsCommand))]
     public partial SKBitmap? Original { get; private set; }
 
     [ObservableProperty]
@@ -629,15 +630,10 @@ public partial class MainViewModel : ViewModelBase
             return;
         try
         {
-            if (!State.IsDefault || SidecarFile.Exists(path))
-                SidecarFile.Save(path, EditDocument.From(State));
-            if (!State.IsDefault || File.Exists(LightroomXmp.PathFor(path)))
-            {
-                var skipped = string.Join("; ", LightroomXmp.Save(path, State, _geometry));
-                if (skipped != _lastXmpSkipped && skipped.Length > 0)
-                    Status = $"{Status} — not in the Lightroom XMP: {skipped}";
-                _lastXmpSkipped = skipped;
-            }
+            var skipped = string.Join("; ", EditStore.Save(path, State, _geometry));
+            if (skipped != _lastXmpSkipped && skipped.Length > 0)
+                Status = $"{Status} — not in the Lightroom XMP: {skipped}";
+            _lastXmpSkipped = skipped;
             _hasUnsavedEdits = false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -679,6 +675,90 @@ public partial class MainViewModel : ViewModelBase
 
     [RelayCommand(CanExecute = nameof(CanResetAll))]
     private void ResetAll() => ApplyEdit(EditState.Default);
+
+    // ---- Copy / paste settings ----
+
+    [ObservableProperty] public partial bool CopyLight { get; set; } = true;
+    [ObservableProperty] public partial bool CopyColor { get; set; } = true;
+    [ObservableProperty] public partial bool CopyHsl { get; set; } = true;
+    [ObservableProperty] public partial bool CopyVignette { get; set; } = true;
+    [ObservableProperty] public partial bool CopyDetail { get; set; } = true;
+    [ObservableProperty] public partial bool CopyCrop { get; set; }
+    [ObservableProperty] public partial bool CopyMasks { get; set; }
+
+    private SettingsGroups SelectedCopyGroups =>
+        (CopyLight ? SettingsGroups.Light : 0) | (CopyColor ? SettingsGroups.Color : 0) | (CopyHsl ? SettingsGroups.Hsl : 0)
+        | (CopyVignette ? SettingsGroups.Vignette : 0) | (CopyDetail ? SettingsGroups.Detail : 0)
+        | (CopyCrop ? SettingsGroups.Crop : 0) | (CopyMasks ? SettingsGroups.Masks : 0);
+
+    private EditState? _copiedState;
+    private SettingsGroups _copiedGroups;
+
+    /// <summary>True once settings were copied (they stay available when another photo is opened).</summary>
+    public bool HasCopiedSettings => _copiedState is not null;
+
+    /// <summary>Remembers the chosen parts of this photo's edit for pasting.</summary>
+    [RelayCommand]
+    private void CopySettings()
+    {
+        if (!HasImage)
+            return;
+        _copiedState = State;
+        _copiedGroups = SelectedCopyGroups;
+        OnPropertyChanged(nameof(HasCopiedSettings));
+        PasteSettingsCommand.NotifyCanExecuteChanged();
+        Status = _copiedGroups == SettingsGroups.None ? "Nothing selected to copy." : $"Copied: {Describe(_copiedGroups)}";
+    }
+
+    /// <summary>Pastes the copied settings onto the open photo (one undo step).</summary>
+    [RelayCommand(CanExecute = nameof(CanPaste))]
+    private void PasteSettings()
+    {
+        if (_copiedState is not { } copied || Original is not { } image)
+            return;
+        if (_copiedGroups.HasFlag(SettingsGroups.Masks))
+            SelectedMask = null;
+        ApplyEdit(SettingsTransfer.Apply(State, copied, _copiedGroups, image.Width, image.Height));
+        Status = $"Pasted: {Describe(_copiedGroups)}";
+    }
+
+    private bool CanPaste() => HasCopiedSettings && HasImage;
+
+    /// <summary>"Light, Color, HSL" for the status bar.</summary>
+    private static string Describe(SettingsGroups groups) => string.Join(", ",
+        new (SettingsGroups Flag, string Name)[]
+        {
+            (SettingsGroups.Light, "Light"), (SettingsGroups.Color, "Color"), (SettingsGroups.Hsl, "HSL"),
+            (SettingsGroups.Vignette, "Vignette"), (SettingsGroups.Detail, "Detail"), (SettingsGroups.Crop, "Crop"),
+            (SettingsGroups.Masks, "Masks"),
+        }.Where(g => groups.HasFlag(g.Flag)).Select(g => g.Name));
+
+    /// <summary>
+    /// Pastes the copied settings into other photos without opening them: their JSON and Lightroom XMP
+    /// sidecars are updated; the photos themselves are not changed. The open photo is updated in place.
+    /// </summary>
+    public async Task PasteToFilesAsync(IReadOnlyList<string> paths)
+    {
+        if (_copiedState is not { } copied || paths.Count == 0)
+            return;
+        var groups = _copiedGroups;
+        var others = paths.Where(p => !ImageExporter.IsSameFile(p, FilePath)).ToList();
+        if (others.Count < paths.Count)
+            PasteSettings();
+
+        var failed = new List<string>();
+        for (int i = 0; i < others.Count; i++)
+        {
+            Status = $"Pasting settings… {i + 1} / {others.Count}";
+            var result = await Task.Run(() => SettingsTransfer.PasteToFile(others[i], copied, groups));
+            if (result.Error is not null)
+                failed.Add($"{Path.GetFileName(result.ImagePath)} ({result.Error})");
+        }
+        int done = paths.Count - failed.Count;
+        Status = failed.Count == 0
+            ? $"Pasted settings into {done} photo{(done == 1 ? "" : "s")}."
+            : $"Pasted into {done} of {paths.Count}; failed: {string.Join(", ", failed)}";
+    }
 
     /// <summary>Sets the global Light sliders, white balance and vibrance from the photo's statistics (one undo step).</summary>
     [RelayCommand]
@@ -731,11 +811,13 @@ public partial class MainViewModel : ViewModelBase
     {
         try
         {
-            if (SidecarFile.Load(imagePath) is { } doc)
-                return (doc.ToState(), " – edits loaded");
-            if (LightroomXmp.Load(imagePath, geometry) is { IsDefault: false } imported)
-                return (imported, " – edits imported from Lightroom (.xmp)");
-            return (EditState.Default, "");
+            var (state, source) = EditStore.Load(imagePath, geometry);
+            return (state, source switch
+            {
+                EditSource.Json => " – edits loaded",
+                EditSource.Xmp => " – edits imported from Lightroom (.xmp)",
+                _ => "",
+            });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)
         {

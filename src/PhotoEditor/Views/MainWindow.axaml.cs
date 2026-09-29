@@ -24,6 +24,16 @@ public partial class MainWindow : Window
         AddKeyBinding(Key.E, new AsyncRelayCommand(ExportAsync));
         AddKeyBinding(Key.S, new RelayCommand(() => ViewModel?.SaveEdits()));
         AddKeyBinding(Key.U, new RelayCommand(() => ViewModel?.AutoCommand.Execute(null)));
+        KeyBindings.Add(new KeyBinding
+        {
+            Gesture = new KeyGesture(Key.C, KeyModifiers.Control | KeyModifiers.Shift),
+            Command = new RelayCommand(() => { if (ViewModel?.HasImage == true) CopyButton.Flyout?.ShowAt(CopyButton); }),
+        });
+        KeyBindings.Add(new KeyBinding
+        {
+            Gesture = new KeyGesture(Key.V, KeyModifiers.Control | KeyModifiers.Shift),
+            Command = new RelayCommand(() => ViewModel?.PasteSettingsCommand.Execute(null)),
+        });
         AddKeyBinding(Key.Z, new RelayCommand(() => ViewModel?.UndoCommand.Execute(null)));
         AddKeyBinding(Key.Y, new RelayCommand(() => ViewModel?.RedoCommand.Execute(null)));
         KeyBindings.Add(new KeyBinding
@@ -138,6 +148,30 @@ public partial class MainWindow : Window
 
     private void OnCropEdit(object? sender, CropEditEventArgs e) =>
         ViewModel?.EditCrop(e.Handle, e.From, e.To, e.Phase == EditPhase.Begin);
+
+    private void OnCopySettingsClick(object? sender, RoutedEventArgs e)
+    {
+        ViewModel?.CopySettingsCommand.Execute(null);
+        CopyButton.Flyout?.Hide();
+    }
+
+    private async void OnPasteToPhotosClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { HasCopiedSettings: true } vm)
+            return;
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Paste settings into photos",
+            AllowMultiple = true,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("Images") { Patterns = ImageLoader.SupportedExtensions.Select(ext => "*" + ext).ToArray() },
+            ],
+        });
+        var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
+        if (paths.Count > 0)
+            await vm.PasteToFilesAsync(paths);
+    }
 
     private void OnFitClick(object? sender, RoutedEventArgs e) => Viewer.ZoomToFit();
 

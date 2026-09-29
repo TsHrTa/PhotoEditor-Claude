@@ -47,6 +47,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Lightroom-compatible edits: write/read Adobe Camera Raw XMP (`crs:` settings) so Lightroom can open the edits
 - [x] XMP sidecars for every format (JPEG, PNG, DNG too); originals are never modified, export never overwrites the source
 - [x] Auto button (classic, non-AI): suggest Light sliders, white balance and vibrance from the photo's statistics
+- [x] Copy / paste edit settings (choose groups) to the open photo or to many photos at once
 
 ### Phase 4 – AI masks
 - [x] ONNX Runtime integration (DirectML with CPU fallback), model download on first use
@@ -106,7 +107,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Classic sharpening done (Phase 5 item 3; items 1–2 need models from Hugging Face, still blocked here). "Detail" panel: Sharpening 0–150 (strength 2 × detail at 100), Radius 0.5–3 px (full-resolution pixels), Masking 0–100 (smoothstep on |detail| so flat areas / noise stay unsharpened). Unsharp mask on luminance of the source pixels at the start of the global pass: shader samples a 5×5 Gaussian (sigma = radius) with the image child, radius scaled by `pixelScale` for the preview (so fine sharpening only shows near 100 %, like Lightroom); CPU `Sharpening.Apply` does the same separably in 64-row strips (+0.7 s on a 21 MP export). Whole image only: masks' sharpening is ignored and the Detail panel hides while a mask is selected (`AdjustmentParameters.GlobalOnly`). `RenderRaster` now samples linearly (same as nearest at pixel centres) so parity covers fractional radii. XMP: Sharpness / SharpenRadius / SharpenEdgeMasking (note: Lightroom's own default for RAW is 40; ours is 0). Next: copy / paste settings.
 
+- 2026-09-29: Copy / paste settings done. `Core/Editing/SettingsTransfer.Apply` copies chosen `SettingsGroups` (Light, Color, HSL, Vignette, Detail, Crop, Masks; default = all but Crop and Masks, like Lightroom); a copied crop is refitted if its rotated frame would leave the target photo; pasted masks get new ids. `PasteToFile` updates a photo without opening it: reads size/orientation without decoding (`EditStore.ReadGeometry`: SKCodec for JPEG/PNG, Magick ping for RAW), loads its edit from JSON/XMP, applies, writes JSON + XMP; the photo is never written. Sidecar load/save moved from the view-model to `Core/Editing/EditStore`. UI: toolbar "Copy…" (flyout with checkboxes, Ctrl+Shift+C), "Paste" (Ctrl+Shift+V, one undo step), "Paste to…" (multi-select file dialog; the open photo is updated live, others in the background with progress / failure list). Toolbar is now a WrapPanel. Verified under Xvfb: copy → reset all → paste restores the edit (the multi-file dialog itself not tried under Xvfb; the per-file paste is unit-tested). Next: Phase 4/5 AI items once Hugging Face is reachable.
+
 ### To check visually (Windows)
+- "Paste to…" with several photos selected (JPEG + CR3): each gets its .json / .xmp, opening them shows the pasted edit, Lightroom picks up the CR3 ones.
 - Sharpening at 100 % on a real photo: amount / radius / masking feel right, no strong halos at defaults you would use.
 - (When the first AI model exists) status shows DirectML/GPU being used on your PC, not the CPU fallback.
 - Auto on a range of your own photos (daylight, backlit, night, snow, portraits): too strong / too weak? Tell me which and I'll tune the constants in `AutoAdjust`.
