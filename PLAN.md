@@ -30,7 +30,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Export full resolution (JPEG quality, PNG), keep EXIF
 
 ### Phase 2 – Edit stack
-- [ ] Undo / redo
+- [x] Undo / redo
 - [ ] Save/load edit settings as sidecar file (.json next to the image)
 
 ### Phase 3 – Masks
@@ -68,6 +68,8 @@ Each item is meant to be one small, self-contained step.
 - 2026-09-29: Before/after + resets done. `Before` toggle button and `\` key (viewer renders `DisplaySettings` = Default while on); double-click on a slider or its label resets it (window-level DoubleTapped handler with handledEventsToo, finds the `ParameterViewModel` DataContext); `Reset all` button. Verified under Xvfb. Next: export full resolution (JPEG quality, PNG), keep EXIF.
 
 - 2026-09-29: Export done (Phase 1 complete). `Core/Export/ImageExporter` renders the full-res original with `CpuAdjustmentRenderer` (~1.8 s for 24 MP on 4 cores), encodes JPEG (4:4:4 at quality ≥ 90) or PNG by extension, writes via temp file. `Core/Imaging/ExifMetadata` reads EXIF from JPEG APP1 / PNG eXIf / WebP EXIF, sets orientation to 1 (pixels are already upright) and embeds it into JPEG (APP1) or PNG (eXIf). Not handled: ICC profiles (everything is treated as sRGB), stale EXIF thumbnail / pixel-dimension tags, EXIF blocks > 64 KB in JPEG are dropped. UI: Export… button, Ctrl+E, JPEG quality box; export runs on a background thread. Next: Phase 2 undo/redo.
+
+- 2026-09-29: Undo/redo done. Generic `Core/Editing/EditHistory<T>` over immutable states; changes with the same key within 1 s coalesce (one slider drag = one step), capacity 500. All edits go through `MainViewModel.ApplyEdit(settings, key)`; opening an image resets history. Undo/Redo buttons, Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z. When masks arrive, the history type should become a combined edit-state record. Next: sidecar .json save/load.
 
 ### To check visually (Windows)
 - Export… save dialog: JPEG/PNG type choice, suggested name, overwrite prompt; exported JPEG opens in Windows Photos with EXIF (camera, date) intact and correct orientation.

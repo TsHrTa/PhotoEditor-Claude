@@ -19,6 +19,13 @@ public partial class MainWindow : Window
         InitializeComponent();
         AddKeyBinding(Key.O, new AsyncRelayCommand(OpenAsync));
         AddKeyBinding(Key.E, new AsyncRelayCommand(ExportAsync));
+        AddKeyBinding(Key.Z, new RelayCommand(() => ViewModel?.UndoCommand.Execute(null)));
+        AddKeyBinding(Key.Y, new RelayCommand(() => ViewModel?.RedoCommand.Execute(null)));
+        KeyBindings.Add(new KeyBinding
+        {
+            Gesture = new KeyGesture(Key.Z, KeyModifiers.Control | KeyModifiers.Shift),
+            Command = new RelayCommand(() => ViewModel?.RedoCommand.Execute(null)),
+        });
         AddKeyBinding(Key.D0, new RelayCommand(Viewer.ZoomToFit));
         AddKeyBinding(Key.NumPad0, new RelayCommand(Viewer.ZoomToFit));
         AddKeyBinding(Key.D1, new RelayCommand(Viewer.ZoomToActualSize));

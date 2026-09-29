@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PhotoEditor.Core.Adjustments;
+using PhotoEditor.Core.Editing;
 using PhotoEditor.Core.Export;
 using PhotoEditor.Core.Imaging;
 using SkiaSharp;
@@ -18,7 +19,7 @@ public partial class MainViewModel : ViewModelBase
     public MainViewModel()
     {
         var parameters = AdjustmentParameters.All
-            .Select(p => new ParameterViewModel(p, () => Settings, s => Settings = s))
+            .Select(p => new ParameterViewModel(p, () => Settings, s => ApplyEdit(s, p.ToString())))
             .ToList();
         Parameters = parameters;
         Groups = parameters
@@ -37,10 +38,13 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     public partial PreviewImage? Preview { get; private set; }
 
+    private readonly EditHistory<AdjustmentSettings> _history = new(AdjustmentSettings.Default);
+
+    /// <summary>Current adjustments. Set through <see cref="ApplyEdit"/> so the change is undoable.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DisplaySettings))]
     [NotifyCanExecuteChangedFor(nameof(ResetAllCommand))]
-    public partial AdjustmentSettings Settings { get; set; } = AdjustmentSettings.Default;
+    public partial AdjustmentSettings Settings { get; private set; } = AdjustmentSettings.Default;
 
     /// <summary>When true the viewer shows the unedited original ("before").</summary>
     [ObservableProperty]
@@ -82,11 +86,46 @@ public partial class MainViewModel : ViewModelBase
             p.Refresh();
     }
 
+    /// <summary>
+    /// Applies an edit and records it for undo. Edits with the same <paramref name="coalesceKey"/>
+    /// in quick succession (a slider drag) form one undo step.
+    /// </summary>
+    public void ApplyEdit(AdjustmentSettings settings, string? coalesceKey = null)
+    {
+        _history.Record(settings, coalesceKey);
+        Settings = settings;
+        UpdateHistoryCommands();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanUndo))]
+    private void Undo()
+    {
+        Settings = _history.Undo();
+        UpdateHistoryCommands();
+    }
+
+    private bool CanUndo() => _history.CanUndo;
+
+    [RelayCommand(CanExecute = nameof(CanRedo))]
+    private void Redo()
+    {
+        Settings = _history.Redo();
+        UpdateHistoryCommands();
+    }
+
+    private bool CanRedo() => _history.CanRedo;
+
+    private void UpdateHistoryCommands()
+    {
+        UndoCommand.NotifyCanExecuteChanged();
+        RedoCommand.NotifyCanExecuteChanged();
+    }
+
     [RelayCommand]
     private void ToggleBeforeAfter() => ShowOriginal = !ShowOriginal;
 
     [RelayCommand(CanExecute = nameof(CanResetAll))]
-    private void ResetAll() => Settings = AdjustmentSettings.Default;
+    private void ResetAll() => ApplyEdit(AdjustmentSettings.Default);
 
     private bool CanResetAll() => !Settings.IsDefault;
 
@@ -129,7 +168,9 @@ public partial class MainViewModel : ViewModelBase
             var preview = PreviewImage.Create(bitmap);
             Original = bitmap;
             Preview = preview;
+            _history.Reset(AdjustmentSettings.Default);
             Settings = AdjustmentSettings.Default;
+            UpdateHistoryCommands();
             ShowOriginal = false;
             FilePath = path;
             Status = $"{bitmap.Width} × {bitmap.Height}";
