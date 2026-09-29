@@ -28,6 +28,7 @@ public static class CpuAdjustmentRenderer
         if (input.AlphaType != SKAlphaType.Premul && input.AlphaType != SKAlphaType.Opaque)
             throw new NotSupportedException($"Unsupported alpha type {input.AlphaType}");
         var p = PreparedAdjustments.From(state.Adjustments);
+        var original = input;
         // Sharpening works on the source pixels, before everything else (as the shader's global pass does).
         using var sharpened = p.HasSharpening ? Sharpening.Apply(input, p) : null;
         input = sharpened ?? input;
@@ -41,6 +42,10 @@ public static class CpuAdjustmentRenderer
         var frame = VignetteMath.Frame.From(state.Crop.Frame(width, height));
         int rowBytesIn = input.RowBytes, rowBytesOut = result.RowBytes;
         nint inPtr = input.GetPixels(), outPtr = result.GetPixels();
+        // Soften (global or in a mask) subtracts the original's fine detail.
+        Softening? soften = p.HasSoften || layers.Any(l => l.Adjustments.HasSoften)
+            ? new Softening(original.GetPixels(), original.RowBytes, width, height, PreparedAdjustments.SoftenStepFor(Math.Max(width, height)))
+            : null;
 
         Parallel.For(0, height, y =>
         {
@@ -48,7 +53,7 @@ public static class CpuAdjustmentRenderer
             {
                 var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
                 var outRow = new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
-                ProcessRow(inRow, outRow, p, layers, y, frame);
+                ProcessRow(inRow, outRow, p, layers, y, frame, soften);
             }
         });
         return result;
@@ -59,9 +64,10 @@ public static class CpuAdjustmentRenderer
 
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
     public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
-        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1));
+        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null);
 
-    private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y, in VignetteMath.Frame frame)
+    private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y,
+        in VignetteMath.Frame frame, Softening? soften)
     {
         int width = input.Length / 4;
         for (int i = 0; i < input.Length; i += 4)
@@ -74,7 +80,19 @@ public static class CpuAdjustmentRenderer
             }
 
             float r, g, b;
-            if (a8 == 255)
+            // The original's fine detail at this pixel, computed once when a pass softens.
+            float dr = 0, dg = 0, db = 0;
+            bool hasDetail = false;
+            if (p.HasSoften && soften is { } sg0)
+            {
+                sg0.Detail(i / 4, y, out dr, out dg, out db);
+                hasDetail = true;
+                float inv = 1f / a8;
+                r = ColorMath.SrgbToLinear(Math.Clamp(input[i] * inv - p.SoftenAmount * dr, 0f, 1f));
+                g = ColorMath.SrgbToLinear(Math.Clamp(input[i + 1] * inv - p.SoftenAmount * dg, 0f, 1f));
+                b = ColorMath.SrgbToLinear(Math.Clamp(input[i + 2] * inv - p.SoftenAmount * db, 0f, 1f));
+            }
+            else if (a8 == 255)
             {
                 r = ColorMath.SrgbByteToLinear(input[i]);
                 g = ColorMath.SrgbByteToLinear(input[i + 1]);
@@ -101,9 +119,24 @@ public static class CpuAdjustmentRenderer
                 float m = layer.Mask[y * width + i / 4] / 255f;
                 if (m <= 0f)
                     continue;
-                r = ColorMath.SrgbToLinear(sr);
-                g = ColorMath.SrgbToLinear(sg);
-                b = ColorMath.SrgbToLinear(sb);
+                if (layer.Adjustments.HasSoften && soften is { } s1)
+                {
+                    if (!hasDetail)
+                    {
+                        s1.Detail(i / 4, y, out dr, out dg, out db);
+                        hasDetail = true;
+                    }
+                    float k = layer.Adjustments.SoftenAmount;
+                    r = ColorMath.SrgbToLinear(Math.Clamp(sr - k * dr, 0f, 1f));
+                    g = ColorMath.SrgbToLinear(Math.Clamp(sg - k * dg, 0f, 1f));
+                    b = ColorMath.SrgbToLinear(Math.Clamp(sb - k * db, 0f, 1f));
+                }
+                else
+                {
+                    r = ColorMath.SrgbToLinear(sr);
+                    g = ColorMath.SrgbToLinear(sg);
+                    b = ColorMath.SrgbToLinear(sb);
+                }
                 ApplyLinear(ref r, ref g, ref b, layer.Adjustments);
                 if (layer.Adjustments.HasVignette)
                     VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, layer.Adjustments);

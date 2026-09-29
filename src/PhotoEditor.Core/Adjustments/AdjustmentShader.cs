@@ -12,6 +12,8 @@ public static class AdjustmentShader
 {
     public const string Source = """
         uniform shader image;
+        // The original photo (all passes): Soften removes its fine detail.
+        uniform shader source;
         // Where to apply this pass (red channel, 0..1); the global pass uses solid white.
         uniform shader mask;
         uniform float exposureGain;
@@ -45,6 +47,10 @@ public static class AdjustmentShader
         uniform float sharpenAmount;
         uniform float sharpenStep;
         uniform float sharpenMasking;
+        // Soften: amount 0..1 and blur tap spacing in image pixels.
+        uniform float softenAmount;
+        uniform float softenStep;
+        const float softenRangeSigma = 0.1;
 
         const float perceptualGamma = 2.2;
 
@@ -159,12 +165,39 @@ public static class AdjustmentShader
             return clamp(s + sharpenAmount * detail * weight, 0.0, 1.0);
         }
 
+        // Fine detail of the original: the pixel minus an edge-preserving (bilateral) 7 × 7 blur around it
+        // (spatial sigma 1.5 taps, range sigma on luminance), so strong edges keep their contrast.
+        float3 softDetail(float2 coord) {
+            half4 c0 = source.eval(coord);
+            if (c0.a <= 0.0) return float3(0);
+            float3 center = float3(c0.rgb) / c0.a;
+            float yc = dot(center, float3(0.2126, 0.7152, 0.0722));
+            float3 sum = float3(0);
+            float wsum = 0.0;
+            for (int j = -3; j <= 3; j++) {
+                for (int i = -3; i <= 3; i++) {
+                    half4 t = source.eval(coord + float2(float(i), float(j)) * softenStep);
+                    float3 c = t.a > 0.0 ? float3(t.rgb) / t.a : center;
+                    float d = dot(c, float3(0.2126, 0.7152, 0.0722)) - yc;
+                    float w = t.a > 0.0
+                        ? exp(-float(i * i + j * j) / 4.5) * exp(-d * d / (2.0 * softenRangeSigma * softenRangeSigma))
+                        : 0.0;
+                    sum += w * c;
+                    wsum += w;
+                }
+            }
+            return center - sum / wsum;
+        }
+
         half4 main(float2 coord) {
             half4 src = image.eval(coord);
             float a = src.a;
             if (a <= 0.0) return half4(0);
             float3 s = float3(src.rgb) / a;
+            // What this pass leaves outside its mask.
+            float3 s0 = s;
             if (sharpenAmount > 0.0) s = sharpen(s, coord);
+            if (softenAmount > 0.0) s = clamp(s - softenAmount * softDetail(coord), 0.0, 1.0);
 
             // Linear light
             float3 c = float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b));
@@ -194,7 +227,7 @@ public static class AdjustmentShader
 
             c = clamp(c, 0.0, 1.0);
             c = float3(linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b));
-            c = mix(s, c, float(mask.eval(coord).r));
+            c = mix(s0, c, float(mask.eval(coord).r));
             return half4(half3(c * a), half(a));
         }
         """;
@@ -226,7 +259,10 @@ public static class AdjustmentShader
         using var imageShader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
         using var white = SKShader.CreateColor(SKColors.White);
         var frame = VignetteMath.Frame.From(state.Crop.Frame(image.Width, image.Height));
-        var current = CreatePass(imageShader, white, state.Adjustments, frame, (float)pixelScale, sharpen: true);
+        // Soften taps are a whole number of full-resolution pixels apart (as on the CPU at export).
+        int fullLongSide = (int)Math.Round(Math.Max(image.Width, image.Height) / pixelScale);
+        float softenStep = (float)(PreparedAdjustments.SoftenStepFor(fullLongSide) * pixelScale);
+        var current = CreatePass(imageShader, imageShader, white, state.Adjustments, frame, (float)pixelScale, softenStep, sharpen: true);
 
         foreach (var mask in state.Masks)
         {
@@ -235,7 +271,7 @@ public static class AdjustmentShader
             var toImage = SKMatrix.CreateScale((float)image.Width / maskImg.Width, (float)image.Height / maskImg.Height);
             using var maskShader = maskImg.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
                 MaskSampling(maskImg, image), toImage);
-            var next = CreatePass(current, maskShader, mask.Adjustments, frame, (float)pixelScale, sharpen: false);
+            var next = CreatePass(current, imageShader, maskShader, mask.Adjustments, frame, (float)pixelScale, softenStep, sharpen: false);
             current.Dispose();
             current = next;
         }
@@ -248,8 +284,8 @@ public static class AdjustmentShader
             ? new SKSamplingOptions(SKFilterMode.Nearest)
             : new SKSamplingOptions(SKFilterMode.Linear);
 
-    private static SKShader CreatePass(SKShader input, SKShader mask, AdjustmentSettings settings, VignetteMath.Frame frame,
-        float pixelScale, bool sharpen)
+    private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, AdjustmentSettings settings, VignetteMath.Frame frame,
+        float pixelScale, float softenStep, bool sharpen)
     {
         var effect = Effect;
         var p = PreparedAdjustments.From(settings);
@@ -280,10 +316,13 @@ public static class AdjustmentShader
             ["sharpenAmount"] = sharpen ? p.SharpenAmount : 0f,
             ["sharpenStep"] = p.SharpenRadius * pixelScale,
             ["sharpenMasking"] = p.SharpenMasking,
+            ["softenAmount"] = p.SoftenAmount,
+            ["softenStep"] = softenStep,
         };
         var children = new SKRuntimeEffectChildren(effect)
         {
             ["image"] = input,
+            ["source"] = source,
             ["mask"] = mask,
         };
         return effect.ToShader(uniforms, children);

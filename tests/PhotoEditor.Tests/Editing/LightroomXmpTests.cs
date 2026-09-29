@@ -318,4 +318,13 @@ public class LightroomXmpTests
         Assert.Equal("150", d.Attribute(Crs + "Sharpness")!.Value);
         Assert.Contains(skipped, n => n.Contains("exposure") && n.Contains("Lightroom's range"));
     }
+
+    [Fact]
+    public void Soften_RoundTripsAsNegativeTexture()
+    {
+        var state = new EditState { Adjustments = new AdjustmentSettings { Soften = 40 } };
+        var xml = LightroomXmp.Write(state, Landscape, null, out _);
+        Assert.Contains("crs:Texture=\"-40\"", xml);
+        Assert.Equal(40, LightroomXmp.Read(xml, Landscape).Adjustments.Soften);
+    }
 }

@@ -44,6 +44,7 @@ public static class AdjustmentParameters
     public const string Color = "Color";
     public const string Vignette = "Vignette";
     public const string Detail = "Detail";
+    public const string Effects = "Effects";
     public const string HslHue = "HSL · Hue";
     public const string HslSaturation = "HSL · Saturation";
     public const string HslLuminance = "HSL · Luminance";
@@ -105,6 +106,9 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter DeblurAmount =
         new(Detail, "Deblur (AI)", 0, 100, s => s.DeblurAmount, (s, v) => s with { DeblurAmount = v }, id: "deblurAmount");
 
+    public static readonly AdjustmentParameter Soften =
+        new(Effects, "Soften", 0, 100, s => s.Soften, (s, v) => s with { Soften = v }, id: "soften");
+
     /// <summary>Parameters that only apply to the whole image (not inside masks).</summary>
     public static readonly IReadOnlyList<AdjustmentParameter> GlobalOnly = [DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking];
 
@@ -116,6 +120,7 @@ public static class AdjustmentParameters
         Temperature, Tint, Vibrance, Saturation,
         .. Hsl,
         VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
+        Soften,
         DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking,
     ];
 

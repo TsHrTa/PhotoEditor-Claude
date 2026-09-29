@@ -25,8 +25,20 @@ public readonly record struct PreparedAdjustments(
     float VignetteRoundness,
     float SharpenAmount,
     float SharpenRadius,
-    float SharpenMasking)
+    float SharpenMasking,
+    float SoftenAmount)
 {
+    /// <summary>
+    /// Tap spacing of the soften blur in pixels of an image with this long side: 6 px at 6000 px (the blur
+    /// reaches ±3 taps with sigma 1.5 taps, i.e. ±18 px), at least 1. A whole number, so the CPU taps hit pixel centres.
+    /// </summary>
+    public static int SoftenStepFor(int longSide) => Math.Max(1, (int)Math.Round(longSide / 1000.0));
+
+    /// <summary>Range sigma of the edge-preserving soften blur, on sRGB luminance (0..1).</summary>
+    public const float SoftenRangeSigma = 0.1f;
+
+    public bool HasSoften => SoftenAmount > 0f;
+
     /// <summary>Unsharp-mask strength at slider 100 (detail added = strength × (pixel − blurred)).</summary>
     public const float SharpenStrengthAt100 = 2f;
 
@@ -75,7 +87,8 @@ public readonly record struct PreparedAdjustments(
             VignetteRoundness: (float)s.VignetteRoundness / 100f,
             SharpenAmount: (float)s.SharpenAmount / 100f * SharpenStrengthAt100,
             SharpenRadius: (float)s.SharpenRadius,
-            SharpenMasking: (float)s.SharpenMasking / 100f);
+            SharpenMasking: (float)s.SharpenMasking / 100f,
+            SoftenAmount: (float)Math.Clamp(s.Soften, 0, 100) / 100f);
     }
 
     /// <summary>

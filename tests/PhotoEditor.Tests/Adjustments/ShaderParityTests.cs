@@ -41,6 +41,8 @@ public class ShaderParityTests
         { "extreme colour", new AdjustmentSettings { Temperature = 200, Tint = -200, Saturation = 200, Vibrance = 200 } },
         { "extreme hsl", new AdjustmentSettings { Reds = new HslBand(200, 200, -200), Blues = new HslBand(-200, -100, 200) } },
         { "extreme vignette + sharpen", new AdjustmentSettings { VignetteAmount = -200, SharpenAmount = 300 } },
+        { "soften", new AdjustmentSettings { Soften = 100 } },
+        { "soften + sharpen + light", new AdjustmentSettings { Soften = 60, SharpenAmount = 80, Exposure = 0.3, Contrast = 20 } },
     };
 
     [Theory]

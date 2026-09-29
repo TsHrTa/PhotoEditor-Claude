@@ -66,6 +66,12 @@ public sealed record AdjustmentSettings
     /// </summary>
     public double DeblurAmount { get; init; }
 
+    /// <summary>
+    /// Soften 0..100: removes fine detail and texture (skin, noise) with an edge-preserving blur of the original
+    /// photo; strong edges stay. Also works in masks.
+    /// </summary>
+    public double Soften { get; init; }
+
     // HSL panel, one entry per colour band (see HslBands).
     public HslBand Reds { get; init; } = HslBand.Zero;
     public HslBand Oranges { get; init; } = HslBand.Zero;
