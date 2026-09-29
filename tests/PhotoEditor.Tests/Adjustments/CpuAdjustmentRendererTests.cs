@@ -49,4 +49,11 @@ public class CpuAdjustmentRendererTests
         Assert.Equal(5, s.Exposure);
         Assert.Equal(5, AdjustmentParameters.Exposure.Get(s));
     }
+
+    [Fact]
+    public void Parameter_SetRoundsToStep()
+    {
+        Assert.Equal(1.23, AdjustmentParameters.Exposure.Set(AdjustmentSettings.Default, 1.2345).Exposure, 9);
+        Assert.Equal(42, AdjustmentParameters.Contrast.Set(AdjustmentSettings.Default, 41.7).Contrast);
+    }
 }

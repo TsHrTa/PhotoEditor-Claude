@@ -79,5 +79,22 @@ public static class CpuAdjustmentRenderer
         r *= p.ExposureGain;
         g *= p.ExposureGain;
         b *= p.ExposureGain;
+
+        // Tone: curve on perceptual luminance, applied to RGB as a ratio (keeps hue).
+        float y = ToneCurve.Luminance(r, g, b);
+        float yp = MathF.Pow(MathF.Max(y, 0f), 1f / ToneCurve.PerceptualGamma);
+        float yp2 = ToneCurve.Apply(yp, p);
+        float y2 = MathF.Pow(yp2, ToneCurve.PerceptualGamma);
+        if (y > 1e-6f)
+        {
+            float ratio = y2 / y;
+            r *= ratio;
+            g *= ratio;
+            b *= ratio;
+        }
+        else
+        {
+            r = g = b = y2;
+        }
     }
 }

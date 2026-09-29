@@ -12,5 +12,12 @@ public sealed record AdjustmentSettings
     /// <summary>Exposure in stops (EV), -5..+5.</summary>
     public double Exposure { get; init; }
 
+    /// <summary>-100..+100 for this and the following tone values.</summary>
+    public double Contrast { get; init; }
+    public double Highlights { get; init; }
+    public double Shadows { get; init; }
+    public double Whites { get; init; }
+    public double Blacks { get; init; }
+
     public bool IsDefault => this == Default;
 }

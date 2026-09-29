@@ -23,7 +23,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Open image (file dialog + drag & drop), show in viewer
 - [x] Zoom (fit / 100% / mouse wheel) and pan
 - [x] Adjustment pipeline: settings model + SkSL shader rendering on a preview-sized image
-- [ ] Light: exposure, contrast, highlights, shadows, whites, blacks
+- [x] Light: exposure, contrast, highlights, shadows, whites, blacks
 - [ ] Color: temperature, tint, saturation, vibrance
 - [ ] HSL panel: hue / saturation / luminance per color band (reds, oranges, yellows, greens, aquas, blues, purples, magentas)
 - [ ] Before/after toggle, reset per slider (double-click) and reset all
@@ -59,7 +59,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Adjustment pipeline done. `Core/Adjustments`: immutable `AdjustmentSettings` record, `AdjustmentParameter` descriptors (UI sliders are generated from `AdjustmentParameters.All`), `PreparedAdjustments` (derived constants), `AdjustmentShader` (SkSL, works in linear light: sRGB decode → adjust → sRGB encode) and `CpuAdjustmentRenderer` (same math in C#, parallel rows, for export). `ShaderParityTests` run the SkSL on Skia's raster backend and compare with the C# output (≤2/255). `PreviewImage` holds full-res + ≤2560px preview; the viewer uses the full image only when zoomed past the preview's resolution. Only Exposure exists so far. Next: Light sliders.
 
+- 2026-09-29: Light sliders done. After exposure (linear), a tone curve (`Core/Adjustments/ToneCurve`) runs on perceptual luminance (Y^(1/2.2)) and is applied to RGB as a ratio so hue is kept: contrast = S-curve around 0.5, highlights = shift weighted by smoothstep(0.35..1) (negative recovers over-exposed values), shadows = bump peaking at 1/3, whites/blacks = x⁴ / (1-x)⁴ end shifts. Tests check monotonicity and shader parity. Strengths are my own guesses, not calibrated to Lightroom. Next: Color (temperature, tint, saturation, vibrance).
+
 ### To check visually (Windows)
+- Light slider strengths feel reasonable on real photos (constants in `PreparedAdjustments.From`).
 - Live preview is GPU-accelerated and smooth while dragging sliders on a 24MP JPEG (Xvfb here renders in software).
 - Mouse-wheel zoom step feels right with a real wheel / precision touchpad (1.25x per notch).
 - File dialog filter and drag & drop of a JPEG from Explorer.
