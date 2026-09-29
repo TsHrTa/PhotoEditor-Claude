@@ -4,9 +4,10 @@ A simple Lightroom-style photo editor: light and color adjustments, masks (brush
 
 ## Stack
 - .NET 10, Avalonia 12, CommunityToolkit.Mvvm
-- SkiaSharp (display, JPEG/PNG/WebP, GPU runtime shaders for live preview)
+- SkiaSharp 3.119 (display, JPEG/PNG/WebP, GPU runtime shaders for live preview); same version Avalonia.Skia uses
 - Magick.NET (TIFF, HEIC, RAW) – later
 - ONNX Runtime + DirectML (AI models) – later
+- xUnit test project (`tests/PhotoEditor.Tests`) for the image math in `src/PhotoEditor.Core` (UI-free library)
 - Avoid ImageSharp (commercial license restrictions) and Ultralytics YOLO (AGPL)
 
 ## Principles
@@ -19,7 +20,7 @@ Each item is meant to be one small, self-contained step.
 
 ### Phase 1 – Viewer, adjustments, export
 - [x] Project setup (Avalonia MVVM, git)
-- [ ] Open image (file dialog + drag & drop), show in viewer
+- [x] Open image (file dialog + drag & drop), show in viewer
 - [ ] Zoom (fit / 100% / mouse wheel) and pan
 - [ ] Adjustment pipeline: settings model + SkSL shader rendering on a preview-sized image
 - [ ] Light: exposure, contrast, highlights, shadows, whites, blacks
@@ -52,4 +53,10 @@ Each item is meant to be one small, self-contained step.
 - [ ] Classic sharpening (unsharp mask) in the normal pipeline
 
 ## Where I left off
+- 2026-09-29: Open image done. New `PhotoEditor.Core` library (UI-free: `ImageLoader` decodes via SkiaSharp and applies EXIF orientation) + `tests/PhotoEditor.Tests` (xUnit). `ImageViewer` control draws an SKImage through Avalonia's Skia lease (custom draw op), fit-to-window. Open via button / Ctrl+O / drag & drop / command-line arg. Dark theme. Screenshots under Xvfb on Linux work (apt `xvfb x11-apps imagemagick`). Next: zoom & pan.
+
+### To check visually (Windows)
+- File dialog filter and drag & drop of a JPEG from Explorer.
+- A portrait phone JPEG (EXIF rotated) shows upright.
+
 - 2026-09-29: Project created with the Avalonia MVVM template; builds cleanly. Next: open image + viewer.

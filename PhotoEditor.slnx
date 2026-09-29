@@ -1,5 +1,9 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/PhotoEditor.Core/PhotoEditor.Core.csproj" />
     <Project Path="src/PhotoEditor/PhotoEditor.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PhotoEditor.Tests/PhotoEditor.Tests.csproj" />
   </Folder>
 </Solution>

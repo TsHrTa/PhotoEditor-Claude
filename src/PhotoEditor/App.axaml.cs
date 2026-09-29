@@ -17,9 +17,13 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            var viewModel = new MainViewModel();
+            // Allow "PhotoEditor.exe image.jpg" (e.g. "Open with" on Windows).
+            if (desktop.Args is [var path, ..])
+                viewModel.OpenFile(path);
             desktop.MainWindow = new MainWindow
             {
-                DataContext = new MainViewModel(),
+                DataContext = viewModel,
             };
         }
 
