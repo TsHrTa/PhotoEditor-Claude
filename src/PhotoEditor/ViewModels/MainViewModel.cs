@@ -572,6 +572,7 @@ public partial class MainViewModel : ViewModelBase
         _history.Record(state, coalesceKey);
         State = state;
         UpdateHistoryCommands();
+        _hasUnsavedEdits = true;
         ScheduleSave();
     }
 
@@ -601,17 +602,38 @@ public partial class MainViewModel : ViewModelBase
         SaveEdits();
     }
 
-    /// <summary>Writes the sidecar now (cancels a pending auto-save). No file is created for an unedited image.</summary>
+    /// <summary>True when the edit changed since it was loaded or last saved.</summary>
+    private bool _hasUnsavedEdits;
+
+    /// <summary>Upright size and EXIF orientation of the open image (for Lightroom's sensor-oriented coordinates).</summary>
+    private ImageGeometry _geometry;
+
+    /// <summary>What the last Lightroom XMP write could not include (reported when it changes).</summary>
+    private string _lastXmpSkipped = "";
+
+    /// <summary>
+    /// Writes the sidecar(s) now if anything changed (cancels a pending auto-save): the app's JSON and, for
+    /// RAW files, a Lightroom-compatible XMP. No file is created for an unedited image.
+    /// </summary>
     [RelayCommand]
     public void SaveEdits()
     {
         _pendingSave?.Cancel();
         _pendingSave = null;
-        if (FilePath is not { } path || (State.IsDefault && !SidecarFile.Exists(path)))
+        if (FilePath is not { } path || !_hasUnsavedEdits)
             return;
         try
         {
-            SidecarFile.Save(path, EditDocument.From(State));
+            if (!State.IsDefault || SidecarFile.Exists(path))
+                SidecarFile.Save(path, EditDocument.From(State));
+            if (LightroomXmp.AppliesTo(path) && (!State.IsDefault || File.Exists(LightroomXmp.PathFor(path))))
+            {
+                var skipped = string.Join("; ", LightroomXmp.Save(path, State, _geometry));
+                if (skipped != _lastXmpSkipped && skipped.Length > 0)
+                    Status = $"Saved. Not in the Lightroom XMP: {skipped}";
+                _lastXmpSkipped = skipped;
+            }
+            _hasUnsavedEdits = false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -624,6 +646,7 @@ public partial class MainViewModel : ViewModelBase
     {
         State = _history.Undo();
         UpdateHistoryCommands();
+        _hasUnsavedEdits = true;
         ScheduleSave();
     }
 
@@ -634,6 +657,7 @@ public partial class MainViewModel : ViewModelBase
     {
         State = _history.Redo();
         UpdateHistoryCommands();
+        _hasUnsavedEdits = true;
         ScheduleSave();
     }
 
@@ -683,15 +707,18 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    private static (EditState State, string Note) LoadSidecar(string imagePath)
+    /// <summary>The app's own sidecar if there is one, otherwise Lightroom / Camera Raw edits from an XMP sidecar.</summary>
+    private static (EditState State, string Note) LoadSidecar(string imagePath, ImageGeometry geometry)
     {
         try
         {
-            return SidecarFile.Load(imagePath) is { } doc
-                ? (doc.ToState(), " – edits loaded")
-                : (EditState.Default, "");
+            if (SidecarFile.Load(imagePath) is { } doc)
+                return (doc.ToState(), " – edits loaded");
+            if (LightroomXmp.AppliesTo(imagePath) && LightroomXmp.Load(imagePath, geometry) is { IsDefault: false } imported)
+                return (imported, " – edits imported from Lightroom (.xmp)");
+            return (EditState.Default, "");
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)
         {
             return (EditState.Default, $" – could not read saved edits: {ex.Message}");
         }
@@ -712,18 +739,22 @@ public partial class MainViewModel : ViewModelBase
         Status = $"Opening {Path.GetFileName(path)}…";
         try
         {
-            var (bitmap, preview) = await Task.Run(() =>
+            var (bitmap, preview, orientation) = await Task.Run(() =>
             {
                 var b = ImageLoader.Load(path);
-                return (b, PreviewImage.Create(b));
+                var o = RawImageLoader.IsRaw(path) ? RawImageLoader.ReadOrientation(path) : SKEncodedOrigin.TopLeft;
+                return (b, PreviewImage.Create(b), o);
             });
             SaveEdits(); // flush edits of the previous image
-            var (state, sidecarNote) = LoadSidecar(path);
+            _geometry = new ImageGeometry(bitmap.Width, bitmap.Height, orientation);
+            _lastXmpSkipped = "";
+            var (state, sidecarNote) = LoadSidecar(path, _geometry);
             Original = bitmap;
             Preview = preview;
             SelectedMask = null;
             _history.Reset(state);
             State = state;
+            _hasUnsavedEdits = false;
             UpdateHistoryCommands();
             ShowOriginal = false;
             FilePath = path;

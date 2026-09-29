@@ -59,6 +59,41 @@ public static class RawImageLoader
         return bitmap;
     }
 
+    /// <summary>
+    /// The EXIF orientation of a RAW file (how the sensor image is turned to be upright; LibRaw applies it
+    /// when decoding). Reads IFD0 of TIFF-based files (CR2, NEF, ARW, DNG, …) and the CMT1 box of CR3.
+    /// Returns <see cref="SKEncodedOrigin.TopLeft"/> when unknown.
+    /// </summary>
+    public static SKEncodedOrigin ReadOrientation(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            var head = new byte[(int)Math.Min(stream.Length, 512 * 1024)];
+            stream.ReadExactly(head);
+            return OrientationFromHeader(head);
+        }
+        catch (IOException)
+        {
+            return SKEncodedOrigin.TopLeft;
+        }
+    }
+
+    public static SKEncodedOrigin OrientationFromHeader(ReadOnlySpan<byte> head)
+    {
+        ReadOnlySpan<byte> tiff = head;
+        if (head.Length > 12 && head.Slice(4, 4).SequenceEqual("ftyp"u8))
+        {
+            // CR3 (ISO base media): IFD0 is a TIFF structure in the "CMT1" box.
+            int box = head.IndexOf("CMT1"u8);
+            if (box < 0)
+                return SKEncodedOrigin.TopLeft;
+            tiff = head[(box + 4)..];
+        }
+        var value = ExifMetadata.GetOrientation(tiff.ToArray());
+        return value is >= 1 and <= 8 ? (SKEncodedOrigin)value.Value : SKEncodedOrigin.TopLeft;
+    }
+
     /// <summary>Reads the camera metadata without decoding the pixels; null if the file can't be read.</summary>
     public static RawMetadata? ReadMetadata(string path)
     {
