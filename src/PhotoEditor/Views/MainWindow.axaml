@@ -21,6 +21,10 @@
             <Button Content="Open…" Click="OnOpenClick" ToolTip.Tip="Open image (Ctrl+O)" />
             <Button Content="Fit" Click="OnFitClick" ToolTip.Tip="Fit to window (Ctrl+0)" IsEnabled="{Binding HasImage}" />
             <Button Content="100%" Click="OnActualSizeClick" ToolTip.Tip="Actual pixels (Ctrl+1)" IsEnabled="{Binding HasImage}" />
+            <ToggleButton Content="Before" IsChecked="{Binding ShowOriginal}" IsEnabled="{Binding HasImage}"
+                          ToolTip.Tip="Show the original image (\)" />
+            <Button Content="Reset all" Command="{Binding ResetAllCommand}"
+                    ToolTip.Tip="Reset all adjustments. Double-click a slider to reset just that one." />
         </StackPanel>
 
         <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto" Margin="8,4">
@@ -38,7 +42,8 @@
                             <ItemsControl ItemsSource="{Binding Parameters}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:ParameterViewModel">
-                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" Background="Transparent"
+                                              ToolTip.Tip="Double-click to reset" ToolTip.ShowDelay="1000">
                                             <TextBlock Text="{Binding Label}" VerticalAlignment="Bottom" />
                                             <TextBlock Grid.Column="1" Text="{Binding DisplayValue}" VerticalAlignment="Bottom" />
                                             <Slider Grid.Row="1" Grid.ColumnSpan="2"
@@ -55,7 +60,7 @@
         </ScrollViewer>
 
         <Panel Background="#202020">
-            <controls:ImageViewer x:Name="Viewer" Source="{Binding Preview}" Settings="{Binding Settings}" />
+            <controls:ImageViewer x:Name="Viewer" Source="{Binding Preview}" Settings="{Binding DisplaySettings}" />
             <TextBlock Text="Drop an image here"
                        Foreground="Gray"
                        HorizontalAlignment="Center" VerticalAlignment="Center"

@@ -35,6 +35,8 @@ public partial class ParameterViewModel : ViewModelBase
 
     public string DisplayValue => Value.ToString(Parameter.Format);
 
+    public void Reset() => Value = Parameter.DefaultValue;
+
     /// <summary>Called when the settings changed from anywhere (slider, reset, undo…).</summary>
     public void Refresh()
     {

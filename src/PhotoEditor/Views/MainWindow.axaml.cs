@@ -1,9 +1,11 @@
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.Input;
 using PhotoEditor.Core.Imaging;
 using PhotoEditor.ViewModels;
@@ -20,6 +22,10 @@ public partial class MainWindow : Window
         AddKeyBinding(Key.NumPad0, new RelayCommand(Viewer.ZoomToFit));
         AddKeyBinding(Key.D1, new RelayCommand(Viewer.ZoomToActualSize));
         AddKeyBinding(Key.NumPad1, new RelayCommand(Viewer.ZoomToActualSize));
+        KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(Key.OemPipe), Command = new RelayCommand(() => ViewModel?.ToggleBeforeAfterCommand.Execute(null)) });
+        KeyBindings.Add(new KeyBinding { Gesture = new KeyGesture(Key.OemBackslash), Command = new RelayCommand(() => ViewModel?.ToggleBeforeAfterCommand.Execute(null)) });
+        // handledEventsToo: the slider thumb handles the pointer itself.
+        AddHandler(DoubleTappedEvent, OnDoubleTapped, RoutingStrategies.Bubble, handledEventsToo: true);
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
     }
@@ -30,6 +36,20 @@ public partial class MainWindow : Window
     private MainViewModel? ViewModel => DataContext as MainViewModel;
 
     private async void OnOpenClick(object? sender, RoutedEventArgs e) => await OpenAsync();
+
+    /// <summary>Double-clicking a slider (or its label) resets that adjustment.</summary>
+    private static void OnDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        for (var v = e.Source as Visual; v is not null; v = v.GetVisualParent())
+        {
+            if (v is StyledElement { DataContext: ParameterViewModel parameter })
+            {
+                parameter.Reset();
+                e.Handled = true;
+                return;
+            }
+        }
+    }
 
     private void OnFitClick(object? sender, RoutedEventArgs e) => Viewer.ZoomToFit();
 

@@ -26,7 +26,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Light: exposure, contrast, highlights, shadows, whites, blacks
 - [x] Color: temperature, tint, saturation, vibrance
 - [x] HSL panel: hue / saturation / luminance per color band (reds, oranges, yellows, greens, aquas, blues, purples, magentas)
-- [ ] Before/after toggle, reset per slider (double-click) and reset all
+- [x] Before/after toggle, reset per slider (double-click) and reset all
 - [ ] Export full resolution (JPEG quality, PNG), keep EXIF
 
 ### Phase 2 – Edit stack
@@ -65,7 +65,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: HSL panel done. `HslBand` record per band (8 properties on `AdjustmentSettings`), `HslMath` (C#) / `applyHsl` (SkSL, uniform arrays): HSV on gamma-2.2-encoded values, band adjustments blended with smoothstep between band centres (0,30,60,120,180,240,270,300°); hue ±30°, saturation ×(1±1), luminance ±1.5 stops scaled by saturation (greys unaffected). Panel groups are now Expanders (HSL collapsed by default). Next: before/after toggle, per-slider reset, reset all.
 
+- 2026-09-29: Before/after + resets done. `Before` toggle button and `\` key (viewer renders `DisplaySettings` = Default while on); double-click on a slider or its label resets it (window-level DoubleTapped handler with handledEventsToo, finds the `ParameterViewModel` DataContext); `Reset all` button. Verified under Xvfb. Next: export full resolution (JPEG quality, PNG), keep EXIF.
+
 ### To check visually (Windows)
+- `\` key toggles before/after on a Windows keyboard layout (bound to OemPipe and OemBackslash).
 - HSL sliders on a real photo: sky (Blues luminance −), foliage (Greens/Yellows hue), skin (Oranges) behave as expected, no banding/artefacts at band borders.
 - Temperature/tint direction and strength look natural (±100 = exp(±0.35) red/blue gain).
 - Light slider strengths feel reasonable on real photos (constants in `PreparedAdjustments.From`).

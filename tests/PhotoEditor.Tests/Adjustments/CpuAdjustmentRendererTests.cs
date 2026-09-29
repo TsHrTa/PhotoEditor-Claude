@@ -57,3 +57,29 @@ public class CpuAdjustmentRendererTests
         Assert.Equal(42, AdjustmentParameters.Contrast.Set(AdjustmentSettings.Default, 41.7).Contrast);
     }
 }
+
+public class AdjustmentParameterTests
+{
+    [Fact]
+    public void ResettingEveryParameter_GivesDefaultSettings()
+    {
+        var s = AdjustmentSettings.Default;
+        foreach (var p in AdjustmentParameters.All)
+            s = p.Set(s, p.Maximum);
+        Assert.False(s.IsDefault);
+        foreach (var p in AdjustmentParameters.All)
+            s = p.Set(s, p.DefaultValue);
+        Assert.True(s.IsDefault);
+    }
+
+    [Fact]
+    public void EveryParameter_ChangesOnlyItsOwnValue()
+    {
+        foreach (var p in AdjustmentParameters.All)
+        {
+            var s = p.Set(AdjustmentSettings.Default, p.Maximum);
+            foreach (var other in AdjustmentParameters.All)
+                Assert.Equal(other == p ? p.Maximum : other.DefaultValue, other.Get(s));
+        }
+    }
+}

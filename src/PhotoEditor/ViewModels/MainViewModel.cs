@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using PhotoEditor.Core.Adjustments;
 using PhotoEditor.Core.Imaging;
 using SkiaSharp;
@@ -33,7 +34,17 @@ public partial class MainViewModel : ViewModelBase
     public partial PreviewImage? Preview { get; private set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplaySettings))]
+    [NotifyCanExecuteChangedFor(nameof(ResetAllCommand))]
     public partial AdjustmentSettings Settings { get; set; } = AdjustmentSettings.Default;
+
+    /// <summary>When true the viewer shows the unedited original ("before").</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DisplaySettings))]
+    public partial bool ShowOriginal { get; set; }
+
+    /// <summary>Settings the viewer renders with (respects the before/after toggle).</summary>
+    public AdjustmentSettings DisplaySettings => ShowOriginal ? AdjustmentSettings.Default : Settings;
 
     [ObservableProperty]
     public partial string? FilePath { get; set; }
@@ -57,6 +68,14 @@ public partial class MainViewModel : ViewModelBase
             p.Refresh();
     }
 
+    [RelayCommand]
+    private void ToggleBeforeAfter() => ShowOriginal = !ShowOriginal;
+
+    [RelayCommand(CanExecute = nameof(CanResetAll))]
+    private void ResetAll() => Settings = AdjustmentSettings.Default;
+
+    private bool CanResetAll() => !Settings.IsDefault;
+
     /// <summary>Loads the image at <paramref name="path"/>; reports failures in <see cref="Status"/>.</summary>
     public bool OpenFile(string path)
     {
@@ -67,6 +86,7 @@ public partial class MainViewModel : ViewModelBase
             Original = bitmap;
             Preview = preview;
             Settings = AdjustmentSettings.Default;
+            ShowOriginal = false;
             FilePath = path;
             Status = $"{bitmap.Width} × {bitmap.Height}";
             return true;
