@@ -37,6 +37,7 @@ public static class AdjustmentParameters
 {
     public const string Light = "Light";
     public const string Color = "Color";
+    public const string Vignette = "Vignette";
     public const string HslHue = "HSL · Hue";
     public const string HslSaturation = "HSL · Saturation";
     public const string HslLuminance = "HSL · Luminance";
@@ -71,6 +72,18 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter Saturation =
         new(Color, "Saturation", -100, 100, s => s.Saturation, (s, v) => s with { Saturation = v });
 
+    public static readonly AdjustmentParameter VignetteAmount =
+        new(Vignette, "Amount", -100, 100, s => s.VignetteAmount, (s, v) => s with { VignetteAmount = v });
+
+    public static readonly AdjustmentParameter VignetteMidpoint =
+        new(Vignette, "Midpoint", 0, 100, s => s.VignetteMidpoint, (s, v) => s with { VignetteMidpoint = v }, defaultValue: 50);
+
+    public static readonly AdjustmentParameter VignetteRoundness =
+        new(Vignette, "Roundness", -100, 100, s => s.VignetteRoundness, (s, v) => s with { VignetteRoundness = v });
+
+    public static readonly AdjustmentParameter VignetteFeather =
+        new(Vignette, "Feather", 0, 100, s => s.VignetteFeather, (s, v) => s with { VignetteFeather = v }, defaultValue: 50);
+
     public static readonly IReadOnlyList<AdjustmentParameter> Hsl = CreateHsl();
 
     public static readonly IReadOnlyList<AdjustmentParameter> All =
@@ -78,6 +91,7 @@ public static class AdjustmentParameters
         Exposure, Contrast, Highlights, Shadows, Whites, Blacks,
         Temperature, Tint, Vibrance, Saturation,
         .. Hsl,
+        VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
     ];
 
     private static List<AdjustmentParameter> CreateHsl()

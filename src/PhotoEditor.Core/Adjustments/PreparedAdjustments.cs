@@ -14,14 +14,24 @@ public readonly record struct PreparedAdjustments(
     float SaturationFactor,
     float VibranceAmount,
     float[] Hsl,
-    bool HasHsl)
+    bool HasHsl,
+    float VignetteStops,
+    float VignetteLow,
+    float VignetteHigh,
+    float VignetteRoundness)
 {
+    /// <summary>Exposure change (stops) at full vignette weight for amount ±100.</summary>
+    public const float MaxVignetteStops = 2f;
+
+    public bool HasVignette => VignetteStops != 0f;
+
     /// <summary>Largest shift (in perceptual units) the highlights slider applies at ±100.</summary>
     public const float MaxHighlightsShift = 0.3f;
 
     public static PreparedAdjustments From(AdjustmentSettings s)
     {
         var (wbR, wbG, wbB) = WhiteBalanceGains(s.Temperature, s.Tint);
+        var (vLow, vHigh) = VignetteBand(s);
         return new(
             ExposureGain: MathF.Pow(2f, (float)s.Exposure),
             ContrastGamma: MathF.Exp((float)s.Contrast / 100f * 0.9f),
@@ -36,7 +46,20 @@ public readonly record struct PreparedAdjustments(
             SaturationFactor: 1f + (float)s.Saturation / 100f,
             VibranceAmount: (float)s.Vibrance / 100f,
             Hsl: PrepareHsl(s, out bool hasHsl),
-            HasHsl: hasHsl);
+            HasHsl: hasHsl,
+            VignetteStops: (float)s.VignetteAmount / 100f * MaxVignetteStops,
+            VignetteLow: vLow,
+            VignetteHigh: vHigh,
+            VignetteRoundness: (float)s.VignetteRoundness / 100f);
+    }
+
+    /// <summary>Transition band of the vignette weight (distance 0 = centre, 1 = corner).</summary>
+    private static (float Low, float High) VignetteBand(AdjustmentSettings s)
+    {
+        float mid = (float)s.VignetteMidpoint / 100f;
+        float half = (float)s.VignetteFeather / 100f * 0.5f;
+        float low = mid - half, high = mid + half;
+        return (low, MathF.Max(high, low + 1e-3f));
     }
 
     /// <summary>

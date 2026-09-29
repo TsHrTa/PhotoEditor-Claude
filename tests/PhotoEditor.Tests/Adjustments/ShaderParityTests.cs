@@ -29,6 +29,9 @@ public class ShaderParityTests
         { "hsl blues", new AdjustmentSettings { Blues = new HslBand(-100, -100, -100), Aquas = new HslBand(30, 100, 100) } },
         { "hsl magentas", new AdjustmentSettings { Magentas = new HslBand(100, 100, 50), Purples = new HslBand(-50, 20, 0) } },
         { "hsl greens", new AdjustmentSettings { Greens = new HslBand(40, -60, 70), Yellows = new HslBand(-20, 30, -30) } },
+        { "vignette dark", new AdjustmentSettings { VignetteAmount = -80 } },
+        { "vignette light round", new AdjustmentSettings { VignetteAmount = 60, VignetteRoundness = 100, VignetteMidpoint = 20, VignetteFeather = 90 } },
+        { "vignette rect hard", new AdjustmentSettings { VignetteAmount = -100, VignetteRoundness = -70, VignetteMidpoint = 70, VignetteFeather = 0 } },
         { "all light", new AdjustmentSettings { Exposure = 0.4, Contrast = 25, Highlights = -40, Shadows = 35, Whites = 15, Blacks = -10 } },
     };
 

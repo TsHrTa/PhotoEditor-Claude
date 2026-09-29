@@ -27,6 +27,12 @@ public static class AdjustmentShader
         uniform float3 hsl[8];
         // Band centre hues in degrees; hslCenters[8] = 360 closes the circle.
         uniform float hslCenters[9];
+        // Vignette: exposure change at full weight, transition band, roundness; image size in pixels.
+        uniform float vignetteStops;
+        uniform float vignetteLow;
+        uniform float vignetteHigh;
+        uniform float vignetteRoundness;
+        uniform float2 imageSize;
 
         const float perceptualGamma = 2.2;
 
@@ -97,6 +103,17 @@ public static class AdjustmentShader
             return pow(e, float3(perceptualGamma)) * exp2(adj.z * s);
         }
 
+        float vignetteDistance(float2 uv) {
+            if (vignetteRoundness >= 0.0) {
+                float ellipse = sqrt(uv.x * uv.x + uv.y * uv.y) / sqrt(2.0);
+                float2 px = uv * imageSize;
+                float circle = sqrt(px.x * px.x + px.y * px.y) / sqrt(imageSize.x * imageSize.x + imageSize.y * imageSize.y);
+                return ellipse + (circle - ellipse) * vignetteRoundness;
+            }
+            float p = 2.0 - 6.0 * vignetteRoundness;
+            return pow(pow(abs(uv.x), p) + pow(abs(uv.y), p), 1.0 / p) / pow(2.0, 1.0 / p);
+        }
+
         half4 main(float2 coord) {
             half4 src = image.eval(coord);
             float a = src.a;
@@ -121,6 +138,11 @@ public static class AdjustmentShader
             c = max(y + (c - y) * factor, 0.0);
 
             c = applyHsl(c);
+
+            if (vignetteStops != 0.0) {
+                float2 uv = (coord / imageSize - 0.5) * 2.0;
+                c *= exp2(vignetteStops * smoothstep(vignetteLow, vignetteHigh, vignetteDistance(uv)));
+            }
 
             c = clamp(c, 0.0, 1.0);
             c = float3(linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b));
@@ -150,7 +172,7 @@ public static class AdjustmentShader
     {
         using var imageShader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
         using var white = SKShader.CreateColor(SKColors.White);
-        var current = CreatePass(imageShader, white, state.Adjustments);
+        var current = CreatePass(imageShader, white, state.Adjustments, image);
 
         foreach (var mask in state.Masks)
         {
@@ -159,7 +181,7 @@ public static class AdjustmentShader
             var toImage = SKMatrix.CreateScale((float)image.Width / maskImg.Width, (float)image.Height / maskImg.Height);
             using var maskShader = maskImg.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
                 MaskSampling(maskImg, image), toImage);
-            var next = CreatePass(current, maskShader, mask.Adjustments);
+            var next = CreatePass(current, maskShader, mask.Adjustments, image);
             current.Dispose();
             current = next;
         }
@@ -172,7 +194,7 @@ public static class AdjustmentShader
             ? new SKSamplingOptions(SKFilterMode.Nearest)
             : new SKSamplingOptions(SKFilterMode.Linear);
 
-    private static SKShader CreatePass(SKShader input, SKShader mask, AdjustmentSettings settings)
+    private static SKShader CreatePass(SKShader input, SKShader mask, AdjustmentSettings settings, SKImage image)
     {
         var effect = Effect;
         var p = PreparedAdjustments.From(settings);
@@ -189,6 +211,11 @@ public static class AdjustmentShader
             ["vibranceAmount"] = p.VibranceAmount,
             ["hsl"] = p.Hsl,
             ["hslCenters"] = HslCentersUniform,
+            ["vignetteStops"] = p.VignetteStops,
+            ["vignetteLow"] = p.VignetteLow,
+            ["vignetteHigh"] = p.VignetteHigh,
+            ["vignetteRoundness"] = p.VignetteRoundness,
+            ["imageSize"] = new[] { (float)image.Width, (float)image.Height },
         };
         var children = new SKRuntimeEffectChildren(effect)
         {

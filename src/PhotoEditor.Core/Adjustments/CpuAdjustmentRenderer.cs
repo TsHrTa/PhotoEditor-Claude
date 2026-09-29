@@ -40,7 +40,7 @@ public static class CpuAdjustmentRenderer
             {
                 var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
                 var outRow = new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
-                ProcessRow(inRow, outRow, p, layers, y);
+                ProcessRow(inRow, outRow, p, layers, y, height);
             }
         });
         return result;
@@ -51,10 +51,11 @@ public static class CpuAdjustmentRenderer
 
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
     public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
-        ProcessRow(input, output, p, [], 0);
+        ProcessRow(input, output, p, [], 0, 1);
 
-    private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y)
+    private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y, int height)
     {
+        int width = input.Length / 4;
         for (int i = 0; i < input.Length; i += 4)
         {
             byte a8 = input[i + 3];
@@ -80,6 +81,8 @@ public static class CpuAdjustmentRenderer
             }
 
             ApplyLinear(ref r, ref g, ref b, p);
+            if (p.HasVignette)
+                VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, width, height, p);
             // Result of the global pass as unpremultiplied sRGB, like the shader hands to the next pass.
             float sr = ColorMath.LinearToSrgb(Math.Clamp(r, 0f, 1f));
             float sg = ColorMath.LinearToSrgb(Math.Clamp(g, 0f, 1f));
@@ -87,13 +90,15 @@ public static class CpuAdjustmentRenderer
 
             foreach (var layer in layers)
             {
-                float m = layer.Mask[y * (input.Length / 4) + i / 4] / 255f;
+                float m = layer.Mask[y * width + i / 4] / 255f;
                 if (m <= 0f)
                     continue;
                 r = ColorMath.SrgbToLinear(sr);
                 g = ColorMath.SrgbToLinear(sg);
                 b = ColorMath.SrgbToLinear(sb);
                 ApplyLinear(ref r, ref g, ref b, layer.Adjustments);
+                if (layer.Adjustments.HasVignette)
+                    VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, width, height, layer.Adjustments);
                 sr = Mix(sr, ColorMath.LinearToSrgb(Math.Clamp(r, 0f, 1f)), m);
                 sg = Mix(sg, ColorMath.LinearToSrgb(Math.Clamp(g, 0f, 1f)), m);
                 sb = Mix(sb, ColorMath.LinearToSrgb(Math.Clamp(b, 0f, 1f)), m);

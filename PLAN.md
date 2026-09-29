@@ -39,7 +39,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Brush (size, feather, flow, erase)
 - [x] Linear gradient (on-canvas handles)
 - [x] Radial gradient (ellipse, feather, invert)
-- [ ] Vignette (amount, midpoint, roundness, feather)
+- [x] Vignette (amount, midpoint, roundness, feather)
 
 ### Phase 4 – AI masks
 - [ ] ONNX Runtime integration (DirectML with CPU fallback), model download on first use
@@ -83,7 +83,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Radial gradient done. `Core/Masks/RadialGradientComponent` (JSON "radial"): centre + RadiusX/RadiusY (fractions of image width → equal radii = circle), feather (smoothstep from inner radius), effect inside (Invert = outside); handles: centre (move) + left/right/top/bottom (resize one radius); drag-to-create sets both radii from the centre, a click gives 0.2 × 0.15. "Radial (R)" toggle; per-component Feather slider in the component list. No rotation (Lightroom can rotate the ellipse) — possible later. Next: vignette.
 
+- 2026-09-29: Vignette done — Phases 1–3 complete. Vignette is part of `AdjustmentSettings` ("Vignette" panel group: Amount ±100 = ±2 stops at full weight, Midpoint 0–100 (default 50), Roundness −100 rectangular / 0 follows frame / +100 circle, Feather 0–100 (default 50)); `Core/Adjustments/VignetteMath` + shader (`imageSize` uniform), parity-tested. It is relative to the full image (there is no crop yet). Because masks reuse `AdjustmentSettings`, a mask can also carry a vignette (applied inside the mask) — harmless but maybe hide that group when a mask is selected. Next: Phase 4 (AI masks) — not started, per instructions for this session.
+
 ### To check visually (Windows)
+- Vignette looks natural at defaults on a real photo; roundness extremes.
 - Radial gradient: ellipse guides/handles line up with the red overlay at all zoom levels; feather slider feels right.
 - Linear gradient: creating by drag, handle hit targets (10 px), guide lines readable on bright and dark photos.
 - Brush painting is smooth (no lag) on a real GPU with a 24 MP image; cursor circle size matches the painted stroke; Alt-erase works (Alt might trigger access keys).

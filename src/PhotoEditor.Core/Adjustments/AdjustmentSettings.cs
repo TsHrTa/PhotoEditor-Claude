@@ -33,6 +33,18 @@ public sealed record AdjustmentSettings
     /// <summary>-100..+100; like saturation but affects muted colours more than saturated ones.</summary>
     public double Vibrance { get; init; }
 
+    /// <summary>Vignette: -100 (dark edges) .. +100 (light edges).</summary>
+    public double VignetteAmount { get; init; }
+
+    /// <summary>0..100: where the vignette transition is centred (lower = reaches further in).</summary>
+    public double VignetteMidpoint { get; init; } = 50;
+
+    /// <summary>-100 (rectangular) .. 0 (follows the frame) .. +100 (circular).</summary>
+    public double VignetteRoundness { get; init; }
+
+    /// <summary>0..100: width of the transition.</summary>
+    public double VignetteFeather { get; init; } = 50;
+
     // HSL panel, one entry per colour band (see HslBands).
     public HslBand Reds { get; init; } = HslBand.Zero;
     public HslBand Oranges { get; init; } = HslBand.Zero;
