@@ -30,6 +30,11 @@ public partial class MainWindow : Window
         // Arrow keys move through the folder. Handled before focus navigation (which would take them otherwise).
         AddHandler(KeyDownEvent, OnArrowKey, RoutingStrategies.Tunnel);
         AddKeyBinding(Key.E, new AsyncRelayCommand(ExportAsync));
+        KeyBindings.Add(new KeyBinding
+        {
+            Gesture = new KeyGesture(Key.E, KeyModifiers.Control | KeyModifiers.Shift),
+            Command = new AsyncRelayCommand(BatchExportAsync),
+        });
         AddKeyBinding(Key.S, new RelayCommand(() => ViewModel?.SaveEdits()));
         AddKeyBinding(Key.U, new RelayCommand(() => ViewModel?.AutoCommand.Execute(null)));
         KeyBindings.Add(new KeyBinding
@@ -169,6 +174,17 @@ public partial class MainWindow : Window
     }
 
     private async void OnExportClick(object? sender, RoutedEventArgs e) => await ExportAsync();
+
+    private async void OnBatchExportClick(object? sender, RoutedEventArgs e) => await BatchExportAsync();
+
+    private async Task BatchExportAsync()
+    {
+        if (ViewModel is not { CanBatchExport: true } vm)
+            return;
+        var dialog = vm.CreateBatchExport();
+        if (await new BatchExportWindow { DataContext = dialog }.ShowDialog<bool>(this))
+            vm.StartBatchExport(dialog);
+    }
 
     private async Task ExportAsync()
     {

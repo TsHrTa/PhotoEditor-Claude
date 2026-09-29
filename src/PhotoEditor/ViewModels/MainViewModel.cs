@@ -546,7 +546,11 @@ public partial class MainViewModel : ViewModelBase
 
     public string Title => FilePath is null ? "PhotoEditor" : $"{Path.GetFileName(FilePath)} – PhotoEditor";
 
-    partial void OnFilePathChanged(string? value) => OnPropertyChanged(nameof(Title));
+    partial void OnFilePathChanged(string? value)
+    {
+        OnPropertyChanged(nameof(Title));
+        OnPropertyChanged(nameof(CanBatchExport));
+    }
 
     private AdjustmentSettings? _shownAdjustments;
 

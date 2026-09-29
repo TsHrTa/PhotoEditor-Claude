@@ -33,7 +33,9 @@
             <Button Content="Open folder…" Click="OnOpenFolderClick"
                     ToolTip.Tip="Show all photos of a folder in the filmstrip (Ctrl+Shift+O). ← / → move between them." />
             <Button Content="Export…" Click="OnExportClick" IsEnabled="{Binding CanExport}"
-                    ToolTip.Tip="Export full resolution JPEG or PNG (Ctrl+E)" />
+                    ToolTip.Tip="Export this photo at full resolution as JPEG or PNG (Ctrl+E)" />
+            <Button Content="Export photos…" Click="OnBatchExportClick" IsEnabled="{Binding CanBatchExport}"
+                    ToolTip.Tip="Export several photos of the folder (picked, shown in the filmstrip, all…) with their edits, in the background (Ctrl+Shift+E)" />
             <TextBlock Text="JPEG quality" VerticalAlignment="Center" Margin="4,0,0,0" />
             <NumericUpDown Value="{Binding JpegQuality}" Minimum="1" Maximum="100" Increment="5"
                            FormatString="0" Width="120" VerticalAlignment="Center" />

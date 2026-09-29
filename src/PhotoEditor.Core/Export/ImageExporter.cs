@@ -11,7 +11,8 @@ public enum ExportFormat
     Png,
 }
 
-public sealed record ExportOptions(ExportFormat Format = ExportFormat.Jpeg, int JpegQuality = 90)
+/// <param name="LongEdge">Downscale so the long side is at most this many pixels (null = full size).</param>
+public sealed record ExportOptions(ExportFormat Format = ExportFormat.Jpeg, int JpegQuality = 90, int? LongEdge = null)
 {
     /// <summary>Picks the format from the file extension (.png → PNG, otherwise JPEG).</summary>
     public static ExportFormat FormatFromPath(string path) =>
@@ -30,13 +31,16 @@ public static class ImageExporter
             throw new InvalidOperationException("The export would overwrite the original photo; choose another file name.");
         using var rendered = CpuAdjustmentRenderer.Render(original, state);
         var cropped = CpuAdjustmentRenderer.ApplyCrop(rendered, state.Crop);
+        var sized = options.LongEdge is { } edge ? Resize(cropped, edge) : cropped;
         byte[] bytes;
         try
         {
-            bytes = Encode(cropped, options);
+            bytes = Encode(sized, options);
         }
         finally
         {
+            if (!ReferenceEquals(sized, cropped))
+                sized.Dispose();
             if (!ReferenceEquals(cropped, rendered))
                 cropped.Dispose();
         }
@@ -55,6 +59,17 @@ public static class ImageExporter
         var temp = destinationPath + ".tmp";
         File.WriteAllBytes(temp, bytes);
         File.Move(temp, destinationPath, overwrite: true);
+    }
+
+    /// <summary>Downscales (high quality) so the long side is at most <paramref name="longEdge"/>; returns the input if it fits.</summary>
+    public static SKBitmap Resize(SKBitmap source, int longEdge)
+    {
+        var (w, h) = PreviewImage.PreviewSize(source.Width, source.Height, Math.Max(1, longEdge));
+        if (w == source.Width && h == source.Height)
+            return source;
+        return source.Resize(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul),
+                   new SKSamplingOptions(new SKCubicResampler(1f / 3, 1f / 3)))
+               ?? throw new InvalidOperationException("Could not resize the image.");
     }
 
     public static byte[] Encode(SKBitmap bitmap, ExportOptions options)
