@@ -236,7 +236,14 @@
                         <ComboBox ItemsSource="{Binding CropAspects}" SelectedItem="{Binding SelectedCropAspect}"
                                   Width="100" ToolTip.Tip="Aspect ratio of the crop" />
                         <Button Content="⤾" Command="{Binding SwapCropOrientationCommand}"
-                                ToolTip.Tip="Swap portrait / landscape (X)" />
+                                ToolTip.Tip="Swap the crop between portrait and landscape (X while cropping)" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="Rotate" VerticalAlignment="Center" Width="52" />
+                        <Button Content="⟲" Command="{Binding RotateLeftCommand}" ToolTip.Tip="Rotate 90° left (Ctrl+[)" />
+                        <Button Content="⟳" Command="{Binding RotateRightCommand}" ToolTip.Tip="Rotate 90° right (Ctrl+])" />
+                        <Button Content="⇆" Command="{Binding FlipHorizontalCommand}" ToolTip.Tip="Flip left-right (mirror)" />
+                        <Button Content="⇅" Command="{Binding FlipVerticalCommand}" ToolTip.Tip="Flip upside down" />
                     </StackPanel>
                     <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
                         <TextBlock Text="Straighten" VerticalAlignment="Bottom" />
@@ -248,7 +255,7 @@
                         <TextBlock Text="{Binding CropSizeText, StringFormat='Output: {0} px'}" Foreground="Gray"
                                    VerticalAlignment="Center" IsVisible="{Binding HasImage}" />
                         <Button Grid.Column="1" Content="Reset crop" Command="{Binding ResetCropCommand}"
-                                IsEnabled="{Binding HasCrop}" ToolTip.Tip="Remove the crop and straighten" />
+                                IsEnabled="{Binding HasCrop}" ToolTip.Tip="Remove the crop, straighten and rotation" />
                     </Grid>
                 </StackPanel>
             </Expander>

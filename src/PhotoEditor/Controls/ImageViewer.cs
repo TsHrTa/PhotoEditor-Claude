@@ -72,6 +72,10 @@ public class ImageViewer : Control
 
     // Crop shown in the view (Crop.None while the crop tool is active) and its frame in full-res pixels.
     private Crop _displayCrop = Crop.None;
+    private PhotoOrientation _displayOrientation;
+
+    /// <summary>The picture is shown mirrored left-right (flip); applied in the frame's local coordinates.</summary>
+    private bool _mirror;
     private CropFrame _displayFrame;
 
     // Crop frame drag in progress
@@ -182,8 +186,7 @@ public class ImageViewer : Control
                 InvalidateVisual();
             else if (nearlySame && next is not null)
             {
-                _displayCrop = Tool == EditTool.Crop ? Crop.None : State.Crop;
-                _displayFrame = _displayCrop.Frame(next.Width, next.Height);
+                SetDisplayFrame(Tool == EditTool.Crop ? Crop.None : State.Crop, State.Orientation, next);
                 Update(() => _view.ReplaceImageSize(_displayFrame.HalfWidth * 2, _displayFrame.HalfHeight * 2));
             }
             else
@@ -209,23 +212,45 @@ public class ImageViewer : Control
         if (Source is not { } image)
             return;
         var crop = Tool == EditTool.Crop ? Crop.None : State.Crop;
-        if (!force && crop == _displayCrop)
+        var orientation = State.Orientation;
+        if (!force && crop == _displayCrop && orientation == _displayOrientation)
             return;
         var old = _displayFrame;
-        _displayCrop = crop;
-        _displayFrame = crop.Frame(image.Width, image.Height);
-        if (force || Math.Abs(old.HalfWidth - _displayFrame.HalfWidth) > 1e-6 || Math.Abs(old.HalfHeight - _displayFrame.HalfHeight) > 1e-6)
+        bool turned = orientation.SwapsSides != _displayOrientation.SwapsSides;
+        SetDisplayFrame(crop, orientation, image);
+        if (force || turned || Math.Abs(old.HalfWidth - _displayFrame.HalfWidth) > 1e-6 || Math.Abs(old.HalfHeight - _displayFrame.HalfHeight) > 1e-6)
             Update(() => _view.SetImageSize(_displayFrame.HalfWidth * 2, _displayFrame.HalfHeight * 2));
+        else
+            InvalidateVisual(); // e.g. flipped: same size, mirrored
+    }
+
+    /// <summary>
+    /// The displayed frame: the crop frame, turned by the orientation's quarter turns (local axes turned 90°
+    /// clockwise per turn, width and height swapped for odd turns); a flip mirrors the local x axis.
+    /// </summary>
+    private void SetDisplayFrame(Crop crop, PhotoOrientation orientation, PreviewImage image)
+    {
+        _displayCrop = crop;
+        _displayOrientation = orientation;
+        var f = crop.Frame(image.Width, image.Height);
+        f = f with { Angle = f.Angle - 90 * orientation.Turns };
+        if (orientation.SwapsSides)
+            f = f with { HalfWidth = f.HalfHeight, HalfHeight = f.HalfWidth };
+        _displayFrame = f;
+        _mirror = orientation.Flip;
     }
 
     /// <summary>Display (cropped frame) pixel → full-resolution image pixel.</summary>
-    private (double X, double Y) DisplayToImage(double x, double y) =>
-        _displayFrame.ToImage(x - _displayFrame.HalfWidth, y - _displayFrame.HalfHeight);
+    private (double X, double Y) DisplayToImage(double x, double y)
+    {
+        double u = x - _displayFrame.HalfWidth;
+        return _displayFrame.ToImage(_mirror ? -u : u, y - _displayFrame.HalfHeight);
+    }
 
     private (double X, double Y) ImageToDisplay(double x, double y)
     {
         var (u, v) = _displayFrame.ToLocal(x, y);
-        return (u + _displayFrame.HalfWidth, v + _displayFrame.HalfHeight);
+        return ((_mirror ? -u : u) + _displayFrame.HalfWidth, v + _displayFrame.HalfHeight);
     }
 
     private void Update(Action change)
@@ -494,7 +519,7 @@ public class ImageViewer : Control
     private Point ToView(BrushPoint p) => ImagePixelToView(p.X * ImageWidth, p.Y * ImageHeight);
 
     /// <summary>Degrees by which image axes appear rotated in the view (the crop's straighten angle, reversed).</summary>
-    private double DisplayRotation => -_displayFrame.Angle;
+    private double DisplayRotation => _mirror ? _displayFrame.Angle : -_displayFrame.Angle;
 
     // ---- Crop tool ----
 
@@ -652,6 +677,7 @@ public class ImageViewer : Control
         var toView = SKMatrix.CreateTranslation((float)_view.OffsetX, (float)_view.OffsetY)
             .PreConcat(SKMatrix.CreateScale((float)_view.Scale, (float)_view.Scale))
             .PreConcat(SKMatrix.CreateTranslation((float)f.HalfWidth, (float)f.HalfHeight))
+            .PreConcat(SKMatrix.CreateScale(_mirror ? -1f : 1f, 1f))
             .PreConcat(SKMatrix.CreateRotationDegrees((float)-f.Angle))
             .PreConcat(SKMatrix.CreateTranslation((float)-f.CenterX, (float)-f.CenterY))
             .PreConcat(SKMatrix.CreateScale((float)(ImageWidth / image.Width), (float)(ImageHeight / image.Height)));

@@ -66,7 +66,7 @@ public static class SettingsTransfer
             var crop = source.Crop;
             if (!crop.Frame(targetWidth, targetHeight).IsInside(targetWidth, targetHeight))
                 crop = CropGeometry.WithAngle(crop, crop.Angle, targetWidth, targetHeight);
-            result = result with { Crop = crop };
+            result = result with { Crop = crop, Orientation = source.Orientation };
         }
         if (groups.HasFlag(SettingsGroups.Masks))
             result = result with { Masks = source.Masks.Select(m => m with { Id = Guid.NewGuid() }).ToImmutableList() };

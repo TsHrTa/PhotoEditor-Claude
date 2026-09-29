@@ -289,14 +289,28 @@ public partial class MainViewModel : ViewModelBase
             if (Original is not { } image)
                 return "";
             var (w, h) = State.Crop.OutputSize(image.Width, image.Height);
+            (w, h) = State.Orientation.OutputSize(w, h);
             return $"{w} × {h}";
         }
     }
 
-    public bool HasCrop => !State.Crop.IsDefault;
+    public bool HasCrop => !State.Crop.IsDefault || !State.Orientation.IsNone;
+
+    /// <summary>Removes the crop, straighten angle and rotation / flip.</summary>
+    [RelayCommand]
+    private void ResetCrop() => ApplyEdit(State with { Crop = Crop.None, Orientation = PhotoOrientation.None });
 
     [RelayCommand]
-    private void ResetCrop() => ApplyEdit(State with { Crop = Crop.None });
+    private void RotateLeft() => ApplyEdit(State with { Orientation = State.Orientation.RotatedCounterClockwise() });
+
+    [RelayCommand]
+    private void RotateRight() => ApplyEdit(State with { Orientation = State.Orientation.RotatedClockwise() });
+
+    [RelayCommand]
+    private void FlipHorizontal() => ApplyEdit(State with { Orientation = State.Orientation.FlippedHorizontally() });
+
+    [RelayCommand]
+    private void FlipVertical() => ApplyEdit(State with { Orientation = State.Orientation.FlippedVertically() });
 
     /// <summary>Swaps the crop between landscape and portrait.</summary>
     [RelayCommand]
@@ -598,7 +612,7 @@ public partial class MainViewModel : ViewModelBase
         if (oldValue.Adjustments.DenoiseAmount != newValue.Adjustments.DenoiseAmount
             || oldValue.Adjustments.DeblurAmount != newValue.Adjustments.DeblurAmount)
             ScheduleRestoreUpdate();
-        if (oldValue.Crop != newValue.Crop)
+        if (oldValue.Crop != newValue.Crop || oldValue.Orientation != newValue.Orientation)
         {
             if (!_settingCropAngle)
                 _cropAngleBase = null;

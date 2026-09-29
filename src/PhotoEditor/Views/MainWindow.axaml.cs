@@ -47,6 +47,8 @@ public partial class MainWindow : Window
             Gesture = new KeyGesture(Key.V, KeyModifiers.Control | KeyModifiers.Shift),
             Command = new RelayCommand(() => ViewModel?.PasteSettingsCommand.Execute(null)),
         });
+        AddKeyBinding(Key.OemOpenBrackets, new RelayCommand(() => ViewModel?.RotateLeftCommand.Execute(null)));
+        AddKeyBinding(Key.OemCloseBrackets, new RelayCommand(() => ViewModel?.RotateRightCommand.Execute(null)));
         AddKeyBinding(Key.Z, new RelayCommand(() => ViewModel?.UndoCommand.Execute(null)));
         AddKeyBinding(Key.Y, new RelayCommand(() => ViewModel?.RedoCommand.Execute(null)));
         KeyBindings.Add(new KeyBinding

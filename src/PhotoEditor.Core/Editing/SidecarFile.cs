@@ -16,13 +16,16 @@ public sealed record EditDocument
     public ImmutableList<Mask> Masks { get; init; } = [];
     public Crop Crop { get; init; } = Crop.None;
 
+    /// <summary>Rotation / flip after the crop.</summary>
+    public PhotoOrientation Orientation { get; init; }
+
     /// <summary>Star rating and pick / reject flag (not part of the edit; null when never set).</summary>
     public PhotoLabels? Labels { get; init; }
 
     public static EditDocument From(EditState state) =>
-        new() { Adjustments = state.Adjustments, Masks = state.Masks, Crop = state.Crop };
+        new() { Adjustments = state.Adjustments, Masks = state.Masks, Crop = state.Crop, Orientation = state.Orientation };
 
-    public EditState ToState() => new() { Adjustments = Adjustments, Masks = Masks, Crop = Crop };
+    public EditState ToState() => new() { Adjustments = Adjustments, Masks = Masks, Crop = Crop, Orientation = new(Orientation.Turns, Orientation.Flip) };
 
     public bool Equals(EditDocument? other) =>
         other is not null && Version == other.Version && ToState() == other.ToState();

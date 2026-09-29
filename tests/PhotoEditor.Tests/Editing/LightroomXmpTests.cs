@@ -327,4 +327,19 @@ public class LightroomXmpTests
         Assert.Contains("crs:Texture=\"-40\"", xml);
         Assert.Equal(40, LightroomXmp.Read(xml, Landscape).Adjustments.Soften);
     }
+
+    [Fact]
+    public void Rotation_IsWrittenAsTiffOrientation_AndReadBack()
+    {
+        // A RAW that the camera already stored turned (EXIF 6 = rotate 90° clockwise), rotated once more by the user.
+        var geometry = new ImageGeometry(4000, 6000, SkiaSharp.SKEncodedOrigin.RightTop, IsRaw: true);
+        var state = new EditState { Orientation = new PhotoOrientation(1) };
+        var xml = LightroomXmp.Write(state, geometry, null, out _);
+        Assert.Contains("tiff:Orientation=\"3\"", xml); // 90° + 90° = 180° (EXIF 3)
+        Assert.Equal(new PhotoOrientation(1), LightroomXmp.Read(xml, geometry).Orientation);
+
+        var flipped = new EditState { Orientation = new PhotoOrientation(0, Flip: true) };
+        var back = LightroomXmp.Read(LightroomXmp.Write(flipped, geometry, null, out _), geometry).Orientation;
+        Assert.Equal(new PhotoOrientation(0, true), back);
+    }
 }

@@ -31,7 +31,8 @@ public static class ImageExporter
             throw new InvalidOperationException("The export would overwrite the original photo; choose another file name.");
         using var rendered = CpuAdjustmentRenderer.Render(original, state);
         var cropped = CpuAdjustmentRenderer.ApplyCrop(rendered, state.Crop);
-        var sized = options.LongEdge is { } edge ? Resize(cropped, edge) : cropped;
+        var oriented = state.Orientation.Apply(cropped);
+        var sized = options.LongEdge is { } edge ? Resize(oriented, edge) : oriented;
         byte[] bytes;
         try
         {
@@ -39,8 +40,10 @@ public static class ImageExporter
         }
         finally
         {
-            if (!ReferenceEquals(sized, cropped))
+            if (!ReferenceEquals(sized, oriented))
                 sized.Dispose();
+            if (!ReferenceEquals(oriented, cropped))
+                oriented.Dispose();
             if (!ReferenceEquals(cropped, rendered))
                 cropped.Dispose();
         }

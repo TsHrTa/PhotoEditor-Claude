@@ -17,10 +17,14 @@ public sealed record EditState
     /// <summary>Applied last (after all adjustments); the vignette is relative to the cropped frame.</summary>
     public Crop Crop { get; init; } = Crop.None;
 
+    /// <summary>Rotation / flip of the finished picture (after the crop).</summary>
+    public PhotoOrientation Orientation { get; init; }
+
     public bool IsDefault => Equals(Default);
 
     public bool Equals(EditState? other) =>
-        other is not null && Adjustments == other.Adjustments && Crop == other.Crop && Masks.SequenceEqual(other.Masks);
+        other is not null && Adjustments == other.Adjustments && Crop == other.Crop && Orientation.Turns == other.Orientation.Turns
+        && Orientation.Flip == other.Orientation.Flip && Masks.SequenceEqual(other.Masks);
 
     public override int GetHashCode() => HashCode.Combine(Adjustments, Crop, Masks.Count);
 }

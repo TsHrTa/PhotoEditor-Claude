@@ -74,8 +74,11 @@ public static class PhotoFolder
             var cropped = CpuAdjustmentRenderer.ApplyCrop(rendered, state.Crop);
             if (!ReferenceEquals(cropped, rendered))
                 rendered.Dispose();
+            var oriented = state.Orientation.Apply(cropped);
+            if (!ReferenceEquals(oriented, cropped))
+                cropped.Dispose();
             thumbnail.Dispose();
-            return cropped;
+            return oriented;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException
             or FormatException or System.Xml.XmlException or InvalidDataException)

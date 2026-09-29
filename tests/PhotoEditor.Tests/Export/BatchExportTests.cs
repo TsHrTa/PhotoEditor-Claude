@@ -83,4 +83,16 @@ public sealed class BatchExportTests : IDisposable
         using var exported = SKBitmap.Decode(dest);
         Assert.InRange(exported.GetPixel(10, 10).Red, 195, 205);
     }
+
+    [Fact]
+    public void ExportOne_RotatesAndFlipsAfterTheCrop()
+    {
+        var photo = Photo("R.jpg", gray: 60, width: 400, height: 300);
+        EditStore.Save(photo, new EditState { Orientation = new PhotoOrientation(1, Flip: true) }, new ImageGeometry(400, 300));
+        var dest = Path.Combine(_dir, "R-out.png");
+        using var pipeline = Pipeline();
+        BatchExport.ExportOne(photo, dest, new ExportOptions(ExportFormat.Png), pipeline);
+        using var exported = SKBitmap.Decode(dest);
+        Assert.Equal((300, 400), (exported.Width, exported.Height));
+    }
 }

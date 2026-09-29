@@ -63,6 +63,7 @@ public static class LightroomXmp
     private static readonly XNamespace Rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
     private static readonly XNamespace Crs = "http://ns.adobe.com/camera-raw-settings/1.0/";
     private static readonly XNamespace Xmp = "http://ns.adobe.com/xap/1.0/";
+    private static readonly XNamespace Tiff = "http://ns.adobe.com/tiff/1.0/";
 
     private const string LinearCorrections = "GradientBasedCorrections";
     private const string RadialCorrections = "CircularGradientBasedCorrections";
@@ -183,6 +184,16 @@ public static class LightroomXmp
 
         if (limited.Count > 0)
             notes.Add($"{string.Join(", ", limited)} beyond Lightroom's range (written at Lightroom's limit)");
+
+        // Lightroom keeps a rotation / flip as the picture's orientation: the file's own, then the user's.
+        if (!state.Orientation.IsNone || description.Attribute(Tiff + "Orientation") is not null)
+        {
+            var total = state.Orientation.After(PhotoOrientation.FromOrigin(geometry.Orientation));
+            if (description.GetNamespaceOfPrefix("tiff") is null)
+                description.SetAttributeValue(XNamespace.Xmlns + "tiff", Tiff.NamespaceName);
+            description.Elements(Tiff + "Orientation").Remove();
+            description.SetAttributeValue(Tiff + "Orientation", ((int)total.ToOrigin()).ToString(CultureInfo.InvariantCulture));
+        }
 
         WriteCrop(state.Crop, geometry, Set);
         WriteMasks(state.Masks, geometry, description, notes);
@@ -486,7 +497,15 @@ public static class LightroomXmp
             }
         }
 
-        return new EditState { Adjustments = a, Crop = crop, Masks = masks.ToImmutable() };
+        // tiff:Orientation = the file's orientation, then the user's rotation / flip.
+        var orientation = PhotoOrientation.None;
+        if ((d.Attribute(Tiff + "Orientation")?.Value ?? d.Element(Tiff + "Orientation")?.Value) is { } text
+            && int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int code) && code is >= 1 and <= 8)
+        {
+            var file = PhotoOrientation.FromOrigin(geometry.Orientation);
+            orientation = PhotoOrientation.FromOrigin((SKEncodedOrigin)code).After(file.Inverse());
+        }
+        return new EditState { Adjustments = a, Crop = crop, Masks = masks.ToImmutable(), Orientation = orientation };
     }
 
     private static LinearGradientComponent ReadLinear(XElement m, ImageGeometry g)
