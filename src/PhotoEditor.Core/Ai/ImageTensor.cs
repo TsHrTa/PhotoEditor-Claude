@@ -36,6 +36,38 @@ public static class ImageTensor
     /// </summary>
     public static float[] LogitsToCoverage(ReadOnlySpan<float> logits, int sourceWidth, int sourceHeight, int width, int height)
     {
+        var result = Resample(logits, sourceWidth, sourceHeight, width, height);
+        for (int i = 0; i < result.Length; i++)
+            result[i] = 1f / (1f + MathF.Exp(-result[i]));
+        return result;
+    }
+
+    /// <summary>
+    /// Per-pixel probability of class <paramref name="classIndex"/> from 1 × C × H × W logits (softmax over the
+    /// classes), as an H × W map.
+    /// </summary>
+    public static float[] ClassProbability(Tensor logits, int classIndex)
+    {
+        int classes = (int)logits.Shape[1], h = (int)logits.Shape[2], w = (int)logits.Shape[3], plane = w * h;
+        var data = logits.Data;
+        var result = new float[plane];
+        for (int i = 0; i < plane; i++)
+        {
+            float max = float.MinValue;
+            for (int c = 0; c < classes; c++)
+                max = MathF.Max(max, data[c * plane + i]);
+            float sum = 0;
+            for (int c = 0; c < classes; c++)
+                sum += MathF.Exp(data[c * plane + i] - max);
+            result[i] = MathF.Exp(data[classIndex * plane + i] - max) / sum;
+        }
+        return result;
+    }
+
+    /// <summary>Bilinear resampling of a value map (pixel centres aligned, edges clamped).</summary>
+    public static float[] Resample(ReadOnlySpan<float> values, int sourceWidth, int sourceHeight, int width, int height)
+    {
+        var v0 = values;
         var result = new float[width * height];
         for (int y = 0; y < height; y++)
         {
@@ -47,9 +79,8 @@ public static class ImageTensor
                 float fx = Math.Clamp((x + 0.5f) * sourceWidth / width - 0.5f, 0, sourceWidth - 1);
                 int x0 = (int)fx, x1 = Math.Min(x0 + 1, sourceWidth - 1);
                 float tx = fx - x0;
-                float v = (logits[y0 * sourceWidth + x0] * (1 - tx) + logits[y0 * sourceWidth + x1] * tx) * (1 - ty)
-                        + (logits[y1 * sourceWidth + x0] * (1 - tx) + logits[y1 * sourceWidth + x1] * tx) * ty;
-                result[y * width + x] = 1f / (1f + MathF.Exp(-v));
+                result[y * width + x] = (v0[y0 * sourceWidth + x0] * (1 - tx) + v0[y0 * sourceWidth + x1] * tx) * (1 - ty)
+                                      + (v0[y1 * sourceWidth + x0] * (1 - tx) + v0[y1 * sourceWidth + x1] * tx) * ty;
             }
         }
         return result;

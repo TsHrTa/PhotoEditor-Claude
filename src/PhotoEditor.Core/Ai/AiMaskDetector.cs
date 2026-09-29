@@ -19,11 +19,55 @@ public sealed class AiMaskDetector(ModelStore store, Action<string>? report = nu
     private OnnxModel? _subject;
     private readonly ConditionalWeakTable<SKBitmap, RasterMaskComponent> _subjects = new();
 
+    /// <summary>SegFormer input size.</summary>
+    public const int SceneInputSize = 512;
+
+    private OnnxModel? _scene;
+    private readonly ConditionalWeakTable<SKBitmap, SceneMasks> _scenes = new();
+
+    private sealed record SceneMasks(RasterMaskComponent Sky, RasterMaskComponent People);
+
     public MaskComponent? Detect(MaskSource source, SKBitmap image) => source switch
     {
         MaskSource.Subject => DetectSubject(image),
+        MaskSource.Sky => DetectSky(image),
+        MaskSource.People => DetectPeople(image),
         _ => null,
     };
+
+    /// <summary>The sky as a soft raster mask (SegFormer class probability).</summary>
+    public RasterMaskComponent DetectSky(SKBitmap image) => DetectScene(image).Sky;
+
+    /// <summary>All people as a soft raster mask (SegFormer class probability).</summary>
+    public RasterMaskComponent DetectPeople(SKBitmap image) => DetectScene(image).People;
+
+    private SceneMasks DetectScene(SKBitmap image)
+    {
+        lock (_lock)
+        {
+            if (_scenes.TryGetValue(image, out var cached))
+                return cached;
+            var model = _scene ??= LoadModel(ModelCatalog.SelectScene, "Select Sky / People");
+            report?.Invoke("Finding sky and people…");
+            var logits = model.Run(new Dictionary<string, Tensor>
+            {
+                [model.InputNames[0]] = ImageTensor.Normalized(image, SceneInputSize, SceneInputSize),
+            })[model.OutputNames[0]];
+            int lh = (int)logits.Shape[2], lw = (int)logits.Shape[3];
+            var (w, h) = Imaging.PreviewImage.PreviewSize(image.Width, image.Height, SegmentAnything.MaskSize);
+            // The model's 128 × 128 output is too coarse for sharp edges: snap it to the photo's edges.
+            var guide = GuidedFilter.Guide(image, w, h);
+            RasterMaskComponent Mask(int cls, string source)
+            {
+                var coarse = ImageTensor.Resample(ImageTensor.ClassProbability(logits, cls), lw, lh, w, h);
+                var coverage = GuidedFilter.Apply(coarse, guide, w, h);
+                return new RasterMaskComponent { Source = source, MaskPng = RasterMaskComponent.EncodePng(coverage, w, h) };
+            }
+            var result = new SceneMasks(Mask(ModelCatalog.AdeSky, "sky"), Mask(ModelCatalog.AdePerson, "people"));
+            _scenes.AddOrUpdate(image, result);
+            return result;
+        }
+    }
 
     /// <summary>The main subject of the photo as a soft raster mask (long side <see cref="SegmentAnything.MaskSize"/>).</summary>
     public RasterMaskComponent DetectSubject(SKBitmap image)
@@ -75,6 +119,8 @@ public sealed class AiMaskDetector(ModelStore store, Action<string>? report = nu
         lock (_lock)
         {
             _subject?.Dispose();
+            _scene?.Dispose();
+            _scene = null;
             _subject = null;
         }
     }

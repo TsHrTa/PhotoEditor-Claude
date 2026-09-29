@@ -23,7 +23,17 @@ public partial class MainViewModel
 
     /// <summary>Adds the photo's main subject (AI) to the selected mask, or to a new mask "Subject".</summary>
     [CommunityToolkit.Mvvm.Input.RelayCommand]
-    private async Task SelectSubject()
+    private Task SelectSubject() => AddDetectedAsync("Subject", d => d.DetectSubject, "Subject selected. Tick Invert on the component for the background.");
+
+    /// <summary>Adds the sky (AI) to the selected mask, or to a new mask "Sky".</summary>
+    [CommunityToolkit.Mvvm.Input.RelayCommand]
+    private Task SelectSky() => AddDetectedAsync("Sky", d => d.DetectSky, "Sky selected.");
+
+    /// <summary>Adds all people (AI) to the selected mask, or to a new mask "People".</summary>
+    [CommunityToolkit.Mvvm.Input.RelayCommand]
+    private Task SelectPeople() => AddDetectedAsync("People", d => d.DetectPeople, "People selected.");
+
+    private async Task AddDetectedAsync(string maskName, Func<AiMaskDetector, Func<SKBitmap, RasterMaskComponent>> detect, string done)
     {
         if (Original is not { } image || _selecting)
             return;
@@ -31,7 +41,7 @@ public partial class MainViewModel
         try
         {
             var detector = Detector;
-            var subject = await Task.Run(() => detector.DetectSubject(image));
+            var subject = await Task.Run(() => detect(detector)(image));
             if (!ReferenceEquals(Original, image))
                 return;
             Guid targetId;
@@ -41,7 +51,7 @@ public partial class MainViewModel
             }
             else
             {
-                var created = new Mask { Name = State.Masks.Exists(m => m.Name == "Subject") ? State.NextMaskName() : "Subject" };
+                var created = new Mask { Name = State.Masks.Exists(m => m.Name == maskName) ? State.NextMaskName() : maskName };
                 ApplyEdit(State.AddMask(created));
                 targetId = created.Id;
             }
@@ -49,12 +59,12 @@ public partial class MainViewModel
             if (SelectedMask?.Id != targetId)
                 SelectedMask = Masks.FirstOrDefault(m => m.Id == targetId);
             SelectedComponentIndex = State.FindMask(targetId)!.Components.Count - 1;
-            Status = "Subject selected. Tick Invert on the component for the background.";
+            Status = done;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.IO.IOException
             or System.IO.InvalidDataException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException or UnauthorizedAccessException)
         {
-            Status = $"Select Subject failed: {ex.Message}";
+            Status = $"Select {maskName} failed: {ex.Message}";
         }
         finally
         {

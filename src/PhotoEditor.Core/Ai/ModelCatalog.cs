@@ -34,4 +34,16 @@ public static class ModelCatalog
 
     /// <summary>Files needed for Select Subject (≈ 224 MB).</summary>
     public static IReadOnlyList<ModelInfo> SelectSubject { get; } = [Subject];
+
+    /// <summary>SegFormer-B2 fine-tuned on ADE20K (150 scene classes; used for sky and people), 512 × 512 input.</summary>
+    public static readonly ModelInfo Scene = new("segformer-b2-ade/model.onnx", "Select Sky / People",
+        "https://huggingface.co/Xenova/segformer-b2-finetuned-ade-512-512/resolve/df795789e70f4089c8658907679c6fd2367c89a5/onnx/model.onnx",
+        "819c15e6af8c4de3359c1de7ab0a17d0dde495df1d16f8908a7163f8038e0fa0", 110_445_327,
+        "NVIDIA Source Code License for SegFormer (non-commercial use; fine for this personal app); ONNX conversion by Xenova");
+
+    /// <summary>Files needed for Select Sky / People (≈ 110 MB).</summary>
+    public static IReadOnlyList<ModelInfo> SelectScene { get; } = [Scene];
+
+    /// <summary>ADE20K class indices (0-based, as in the model's output).</summary>
+    public const int AdeSky = 2, AdePerson = 12;
 }

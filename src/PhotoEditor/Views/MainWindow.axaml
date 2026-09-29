@@ -161,6 +161,10 @@
                                       ToolTip.Tip="AI: click on an object to select it (Alt+click removes parts, drag a box around it). Downloads the model (~155 MB) the first time." />
                         <Button Content="Subject" Command="{Binding SelectSubjectCommand}"
                                 ToolTip.Tip="AI: select the main subject (people, animal, object in focus) into the selected mask or a new one. Downloads the model (~224 MB) the first time." />
+                        <Button Content="Sky" Command="{Binding SelectSkyCommand}"
+                                ToolTip.Tip="AI: select the sky into the selected mask or a new one. Downloads the model (~110 MB) the first time." />
+                        <Button Content="People" Command="{Binding SelectPeopleCommand}"
+                                ToolTip.Tip="AI: select all people into the selected mask or a new one. Uses the same model as Sky." />
                     </WrapPanel>
                     <StackPanel Spacing="2" IsVisible="{Binding IsBrushActive}">
                         <Grid ColumnDefinitions="70,*,40">

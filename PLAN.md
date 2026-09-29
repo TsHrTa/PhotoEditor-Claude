@@ -55,13 +55,13 @@ Each item is meant to be one small, self-contained step.
 - [x] Recipe model + engine: steps Auto / set values / add mask / goal ("region metric ≥ reference + X %", corrected only when not met, within a max change), measuring on a small rendered copy
 - [x] Presets panel: list (built-in + user), apply, apply to many photos, save current edit as preset, delete
 - [x] Preset editor window: add / remove / reorder steps, edit fields
-- [ ] AI mask sources in presets: Subject + Background done; Sky / People follow with SegFormer
+- [x] AI mask sources in presets (Subject, Background, Sky, People)
 
 ### Phase 4 – AI masks
 - [x] ONNX Runtime integration (DirectML with CPU fallback), model download on first use
 - [x] Click / box to select (SAM 2.1 tiny instead of MobileSAM / EfficientSAM: newer, more accurate)
 - [x] Select Subject (BiRefNet-lite)
-- [ ] Select Sky / People (SegFormer)
+- [x] Select Sky / People (SegFormer)
 
 ### Phase 5 – AI enhance
 - [ ] Denoise (NAFNet or SCUNet), tiled processing with progress
@@ -127,7 +127,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Select Subject done (Phase 4 item 3). BiRefNet-lite ONNX by onnx-community (MIT), one 224 MB fp32 file (fp16 exists but may not run on the CPU fallback), pinned revision de15b22b + SHA-256. Input 1024² squashed, ImageNet normalisation (shared `Core/Ai/ImageTensor`, also used by SAM now), output 1024² logits → sigmoid → raster (long side 1024) in a `RasterMaskComponent` with Source "subject". `Core/Ai/AiMaskDetector` implements `IMaskDetector` for presets: downloads / loads on first use (status messages), caches the result per photo bitmap, thread-safe. Presets' Subject and Background steps now work; the built-in "Portrait – subject pops (AI)" was verified end to end (real-model test + in the app: subject 20 vs background 47.9 → +1.5 EV on the subject, limited by the max change). UI: "Subject" button in the Masks panel (adds to the selected mask or a new "Subject" mask; Invert gives the background). Speed: ~20 s per photo on this 4-core cloud CPU, expected well under 1 s with DirectML. Next: Sky / People (SegFormer).
 
+- 2026-09-29: Select Sky / People done (Phase 4 complete). SegFormer-B2 fine-tuned on ADE20K, ONNX by Xenova (NVIDIA licence, non-commercial; fine for this personal app), 110 MB, pinned revision df795789 + SHA-256; input 512² squashed with ImageNet normalisation, output 150 × 128² logits → softmax probability of class 2 (sky) / 12 (person) → resampled to the mask size and refined with a guided filter (`Core/Ai/GuidedFilter`, radius 8, ε 1e-3, guide = photo luminance) so edges follow the photo (the coarse output left a light halo along roofs when the sky was darkened). One model run gives both masks (cached per photo). "Sky" and "People" buttons in the Masks panel; presets' Sky and People sources now work, so all three built-in presets run fully. Verified: real-model tests with PHOTOEDITOR_MODELS + PHOTOEDITOR_SAMPLES (ADE_val_00000001.jpg from hf-internal-testing/fixtures_ade20k, not committed: sky / lawn / wall classified right, the dramatic-sky preset runs without skips), and in the app (sky darkened, house untouched). Synthetic drawings are unsuitable for testing SegFormer (flat areas read as sky). ~0.6 s on this CPU. Next: Phase 5 AI denoise.
+
 ### To check visually (Windows)
+- Sky / People buttons and the AI presets on your landscapes and group photos: edges (trees, hair, roofs), any halo left after darkening the sky.
 - Subject button and the portrait preset on real portraits: edge quality (hair), speed with DirectML.
 - Select (S): first-use download, speed on your GPU (status says whether DirectML is used), click / Alt+click / box on real photos, edge quality at 100 %.
 - Preset editor: build "Auto → gradient from top named Sky → Goal Sky brightness at most whole image +10 % via Sky exposure" and try it on a real landscape; check the log reads sensibly.
