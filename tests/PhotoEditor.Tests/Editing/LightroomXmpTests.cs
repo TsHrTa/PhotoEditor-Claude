@@ -211,11 +211,11 @@ public class LightroomXmpTests
         const string xml = """
             <x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
               <rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
-                 crs:Exposure2012="+9.00" crs:Clarity2012="+30" crs:Shadows2012="+12" crs:HasCrop="False" crs:CropLeft="0.3" />
+                 crs:Exposure2012="+19.00" crs:Clarity2012="+30" crs:Shadows2012="+12" crs:HasCrop="False" crs:CropLeft="0.3" />
             </rdf:RDF></x:xmpmeta>
             """;
         var state = LightroomXmp.Read(xml, Landscape);
-        Assert.Equal(5, state.Adjustments.Exposure);
+        Assert.Equal(10, state.Adjustments.Exposure);
         Assert.Equal(12, state.Adjustments.Shadows);
         Assert.True(state.Crop.IsDefault);
     }
@@ -302,4 +302,20 @@ public class LightroomXmpTests
     [Fact]
     public void RawOrientation_Unknown_IsTopLeft() =>
         Assert.Equal(SKEncodedOrigin.TopLeft, RawImageLoader.OrientationFromHeader("garbage"u8));
+
+    [Fact]
+    public void Write_LimitsValuesToLightroomsRanges()
+    {
+        var state = new EditState
+        {
+            Adjustments = new AdjustmentSettings { Exposure = 8, Shadows = -180, Saturation = 150, SharpenAmount = 250 },
+        };
+        var xml = LightroomXmp.Write(state, Landscape, null, out var skipped);
+        var d = XDocument.Parse(xml).Descendants().First(e => e.Attribute(Crs + "Exposure2012") is not null);
+        Assert.Equal("+5.00", d.Attribute(Crs + "Exposure2012")!.Value);
+        Assert.Equal("-100", d.Attribute(Crs + "Shadows2012")!.Value);
+        Assert.Equal("+100", d.Attribute(Crs + "Saturation")!.Value);
+        Assert.Equal("150", d.Attribute(Crs + "Sharpness")!.Value);
+        Assert.Contains(skipped, n => n.Contains("exposure") && n.Contains("Lightroom's range"));
+    }
 }

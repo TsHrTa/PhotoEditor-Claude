@@ -20,6 +20,11 @@ public static class AdjustmentShader
         uniform float shadowsAmount;
         uniform float whitesAmount;
         uniform float blacksAmount;
+        // Second passes: the part of each slider beyond ±100 (0 otherwise).
+        uniform float highlightsAmount2;
+        uniform float shadowsAmount2;
+        uniform float whitesAmount2;
+        uniform float blacksAmount2;
         uniform float3 whiteBalance;
         uniform float saturationFactor;
         uniform float vibranceAmount;
@@ -55,15 +60,26 @@ public static class AdjustmentShader
             return x < 0.5 ? 0.5 * pow(2.0 * x, g) : 1.0 - 0.5 * pow(2.0 - 2.0 * x, g);
         }
 
+        float highlightsStep(float x, float a) { return x + a * smoothstep(0.35, 1.0, x); }
+        float shadowsStep(float x, float a) {
+            float xs = clamp(x, 0.0, 1.0);
+            return x + a * 6.75 * xs * (1.0 - xs) * (1.0 - xs);
+        }
+        float whitesStep(float x, float a) {
+            float xs = clamp(x, 0.0, 1.0);
+            return x + a * xs * xs * xs * xs;
+        }
+        float blacksStep(float x, float a) {
+            float inv = 1.0 - clamp(x, 0.0, 1.0);
+            return x + a * inv * inv * inv * inv;
+        }
+
         float toneCurve(float x) {
             x = contrastCurve(x, contrastGamma);
-            x += highlightsAmount * smoothstep(0.35, 1.0, x);
-            float xs = clamp(x, 0.0, 1.0);
-            x += shadowsAmount * 6.75 * xs * (1.0 - xs) * (1.0 - xs);
-            xs = clamp(x, 0.0, 1.0);
-            x += whitesAmount * xs * xs * xs * xs;
-            float inv = 1.0 - xs;
-            x += blacksAmount * inv * inv * inv * inv;
+            x = highlightsStep(highlightsStep(x, highlightsAmount), highlightsAmount2);
+            x = shadowsStep(shadowsStep(x, shadowsAmount), shadowsAmount2);
+            x = whitesStep(whitesStep(x, whitesAmount), whitesAmount2);
+            x = blacksStep(blacksStep(x, blacksAmount), blacksAmount2);
             return max(x, 0.0);
         }
 
@@ -245,6 +261,10 @@ public static class AdjustmentShader
             ["shadowsAmount"] = p.ShadowsAmount,
             ["whitesAmount"] = p.WhitesAmount,
             ["blacksAmount"] = p.BlacksAmount,
+            ["highlightsAmount2"] = p.HighlightsAmount2,
+            ["shadowsAmount2"] = p.ShadowsAmount2,
+            ["whitesAmount2"] = p.WhitesAmount2,
+            ["blacksAmount2"] = p.BlacksAmount2,
             ["whiteBalance"] = new[] { p.WhiteBalanceR, p.WhiteBalanceG, p.WhiteBalanceB },
             ["saturationFactor"] = p.SaturationFactor,
             ["vibranceAmount"] = p.VibranceAmount,

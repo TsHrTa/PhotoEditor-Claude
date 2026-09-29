@@ -150,11 +150,11 @@ public sealed class PresetEngineTests : IDisposable
         var start = new EditState { Adjustments = new AdjustmentSettings { Contrast = 10, Shadows = 5 } };
         var preset = Recipe(
             new SetValuesStep { Values = ImmutableSortedDictionary<string, double>.Empty.Add("contrast", 30).Add("bogus", 1) },
-            new SetValuesStep { Relative = true, Values = ImmutableSortedDictionary<string, double>.Empty.Add("shadows", 20).Add("exposure", 9) });
+            new SetValuesStep { Relative = true, Values = ImmutableSortedDictionary<string, double>.Empty.Add("shadows", 20).Add("exposure", 19) });
         var r = PresetEngine.Apply(preset, start, img);
         Assert.Equal(30, r.State.Adjustments.Contrast);
         Assert.Equal(25, r.State.Adjustments.Shadows);
-        Assert.Equal(5, r.State.Adjustments.Exposure); // clamped to the slider range
+        Assert.Equal(10, r.State.Adjustments.Exposure); // clamped to the slider range
         Assert.Contains("unknown slider", r.Log[0]);
     }
 

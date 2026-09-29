@@ -36,6 +36,11 @@ public class ShaderParityTests
         { "sharpen wide masked", new AdjustmentSettings { SharpenAmount = 150, SharpenRadius = 1.7, SharpenMasking = 60 } },
         { "sharpen + light", new AdjustmentSettings { SharpenAmount = 60, SharpenRadius = 2, Exposure = 0.5, Contrast = 30 } },
         { "all light", new AdjustmentSettings { Exposure = 0.4, Contrast = 25, Highlights = -40, Shadows = 35, Whites = 15, Blacks = -10 } },
+        { "extreme light", new AdjustmentSettings { Exposure = -6, Contrast = 200, Highlights = 200, Shadows = -200, Whites = -200, Blacks = 200 } },
+        { "extreme light 2", new AdjustmentSettings { Exposure = 3, Contrast = -200, Highlights = -200, Shadows = 200, Whites = 150, Blacks = -150 } },
+        { "extreme colour", new AdjustmentSettings { Temperature = 200, Tint = -200, Saturation = 200, Vibrance = 200 } },
+        { "extreme hsl", new AdjustmentSettings { Reds = new HslBand(200, 200, -200), Blues = new HslBand(-200, -100, 200) } },
+        { "extreme vignette + sharpen", new AdjustmentSettings { VignetteAmount = -200, SharpenAmount = 300 } },
     };
 
     [Theory]

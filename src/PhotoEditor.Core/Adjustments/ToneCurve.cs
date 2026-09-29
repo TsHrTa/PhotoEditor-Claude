@@ -11,17 +11,36 @@ public static class ToneCurve
     public static float Apply(float x, in PreparedAdjustments p)
     {
         x = Contrast(x, p.ContrastGamma);
-        // Highlights: shift the upper range, fully at and above white (recovers over-exposure).
-        x += p.HighlightsAmount * SmoothStep(0.35f, 1f, x);
-        // Shadows: bump peaking at x = 1/3, zero at black and white.
-        float xs = Math.Clamp(x, 0f, 1f);
-        x += p.ShadowsAmount * 6.75f * xs * (1f - xs) * (1f - xs);
-        // Whites / blacks: move the ends of the range, little effect on midtones.
-        xs = Math.Clamp(x, 0f, 1f);
-        x += p.WhitesAmount * xs * xs * xs * xs;
-        float inv = 1f - xs;
-        x += p.BlacksAmount * inv * inv * inv * inv;
+        // Each step runs twice: the second pass carries the part of the slider beyond ±100 (0 otherwise).
+        x = Highlights(Highlights(x, p.HighlightsAmount), p.HighlightsAmount2);
+        x = Shadows(Shadows(x, p.ShadowsAmount), p.ShadowsAmount2);
+        x = Whites(Whites(x, p.WhitesAmount), p.WhitesAmount2);
+        x = Blacks(Blacks(x, p.BlacksAmount), p.BlacksAmount2);
         return MathF.Max(x, 0f);
+    }
+
+    /// <summary>Shifts the upper range, fully at and above white (recovers over-exposure).</summary>
+    public static float Highlights(float x, float amount) => x + amount * SmoothStep(0.35f, 1f, x);
+
+    /// <summary>Bump peaking at x = 1/3, zero at black and white.</summary>
+    public static float Shadows(float x, float amount)
+    {
+        float xs = Math.Clamp(x, 0f, 1f);
+        return x + amount * 6.75f * xs * (1f - xs) * (1f - xs);
+    }
+
+    /// <summary>Moves the white end of the range, little effect on midtones.</summary>
+    public static float Whites(float x, float amount)
+    {
+        float xs = Math.Clamp(x, 0f, 1f);
+        return x + amount * xs * xs * xs * xs;
+    }
+
+    /// <summary>Moves the black end of the range, little effect on midtones.</summary>
+    public static float Blacks(float x, float amount)
+    {
+        float inv = 1f - Math.Clamp(x, 0f, 1f);
+        return x + amount * inv * inv * inv * inv;
     }
 
     /// <summary>S-curve pivoting at 0.5; gamma &gt; 1 adds contrast, &lt; 1 removes it. Identity outside [0,1].</summary>

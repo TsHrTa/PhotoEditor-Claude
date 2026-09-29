@@ -25,6 +25,16 @@ public class ToneCurveTests
     [InlineData(0, 0, -100, 0, 0)]
     [InlineData(0, 0, 0, 100, -100)]
     [InlineData(0, 0, 0, -100, 100)]
+    [InlineData(200, 0, 0, 0, 0)]
+    [InlineData(-200, 0, 0, 0, 0)]
+    [InlineData(0, 200, 0, 0, 0)]
+    [InlineData(0, -200, 0, 0, 0)]
+    [InlineData(0, 0, 200, 0, 0)]
+    [InlineData(0, 0, -200, 0, 0)]
+    [InlineData(0, 0, 0, 200, -200)]
+    [InlineData(0, 0, 0, -200, 200)]
+    [InlineData(-200, -200, 200, -200, 200)]
+    [InlineData(200, 200, -200, 200, -200)]
     public void Curve_IsMonotonic(double contrast, double highlights, double shadows, double whites, double blacks)
     {
         var p = P(new AdjustmentSettings { Contrast = contrast, Highlights = highlights, Shadows = shadows, Whites = whites, Blacks = blacks });
@@ -35,6 +45,18 @@ public class ToneCurveTests
             Assert.True(y >= prev - 1e-5f, $"not monotonic at {x}: {y} < {prev}");
             prev = y;
         }
+    }
+
+    [Fact]
+    public void BeyondHundred_GoesFurther()
+    {
+        float x = 0.2f;
+        float at100 = ToneCurve.Apply(x, P(new AdjustmentSettings { Shadows = 100 }));
+        float at200 = ToneCurve.Apply(x, P(new AdjustmentSettings { Shadows = 200 }));
+        Assert.True(at200 > at100 + 0.02f, $"{at100} → {at200}");
+        float dark100 = ToneCurve.Apply(x, P(new AdjustmentSettings { Shadows = -100 }));
+        float dark200 = ToneCurve.Apply(x, P(new AdjustmentSettings { Shadows = -200 }));
+        Assert.True(dark200 < dark100 - 0.01f, $"{dark100} → {dark200}");
     }
 
     [Fact]

@@ -49,37 +49,37 @@ public static class AdjustmentParameters
     public const string HslLuminance = "HSL · Luminance";
 
     public static readonly AdjustmentParameter Exposure =
-        new(Light, "Exposure", -5, 5, s => s.Exposure, (s, v) => s with { Exposure = v }, format: "+0.00;-0.00;0.00", step: 0.01, id: "exposure");
+        new(Light, "Exposure", -10, 10, s => s.Exposure, (s, v) => s with { Exposure = v }, format: "+0.00;-0.00;0.00", step: 0.01, id: "exposure");
 
     public static readonly AdjustmentParameter Contrast =
-        new(Light, "Contrast", -100, 100, s => s.Contrast, (s, v) => s with { Contrast = v }, id: "contrast");
+        new(Light, "Contrast", -200, 200, s => s.Contrast, (s, v) => s with { Contrast = v }, id: "contrast");
 
     public static readonly AdjustmentParameter Highlights =
-        new(Light, "Highlights", -100, 100, s => s.Highlights, (s, v) => s with { Highlights = v }, id: "highlights");
+        new(Light, "Highlights", -200, 200, s => s.Highlights, (s, v) => s with { Highlights = v }, id: "highlights");
 
     public static readonly AdjustmentParameter Shadows =
-        new(Light, "Shadows", -100, 100, s => s.Shadows, (s, v) => s with { Shadows = v }, id: "shadows");
+        new(Light, "Shadows", -200, 200, s => s.Shadows, (s, v) => s with { Shadows = v }, id: "shadows");
 
     public static readonly AdjustmentParameter Whites =
-        new(Light, "Whites", -100, 100, s => s.Whites, (s, v) => s with { Whites = v }, id: "whites");
+        new(Light, "Whites", -200, 200, s => s.Whites, (s, v) => s with { Whites = v }, id: "whites");
 
     public static readonly AdjustmentParameter Blacks =
-        new(Light, "Blacks", -100, 100, s => s.Blacks, (s, v) => s with { Blacks = v }, id: "blacks");
+        new(Light, "Blacks", -200, 200, s => s.Blacks, (s, v) => s with { Blacks = v }, id: "blacks");
 
     public static readonly AdjustmentParameter Temperature =
-        new(Color, "Temperature", -100, 100, s => s.Temperature, (s, v) => s with { Temperature = v }, id: "temperature");
+        new(Color, "Temperature", -200, 200, s => s.Temperature, (s, v) => s with { Temperature = v }, id: "temperature");
 
     public static readonly AdjustmentParameter Tint =
-        new(Color, "Tint", -100, 100, s => s.Tint, (s, v) => s with { Tint = v }, id: "tint");
+        new(Color, "Tint", -200, 200, s => s.Tint, (s, v) => s with { Tint = v }, id: "tint");
 
     public static readonly AdjustmentParameter Vibrance =
-        new(Color, "Vibrance", -100, 100, s => s.Vibrance, (s, v) => s with { Vibrance = v }, id: "vibrance");
+        new(Color, "Vibrance", -100, 200, s => s.Vibrance, (s, v) => s with { Vibrance = v }, id: "vibrance");
 
     public static readonly AdjustmentParameter Saturation =
-        new(Color, "Saturation", -100, 100, s => s.Saturation, (s, v) => s with { Saturation = v }, id: "saturation");
+        new(Color, "Saturation", -100, 200, s => s.Saturation, (s, v) => s with { Saturation = v }, id: "saturation");
 
     public static readonly AdjustmentParameter VignetteAmount =
-        new(Vignette, "Amount", -100, 100, s => s.VignetteAmount, (s, v) => s with { VignetteAmount = v }, id: "vignetteAmount");
+        new(Vignette, "Amount", -200, 200, s => s.VignetteAmount, (s, v) => s with { VignetteAmount = v }, id: "vignetteAmount");
 
     public static readonly AdjustmentParameter VignetteMidpoint =
         new(Vignette, "Midpoint", 0, 100, s => s.VignetteMidpoint, (s, v) => s with { VignetteMidpoint = v }, defaultValue: 50, id: "vignetteMidpoint");
@@ -91,7 +91,7 @@ public static class AdjustmentParameters
         new(Vignette, "Feather", 0, 100, s => s.VignetteFeather, (s, v) => s with { VignetteFeather = v }, defaultValue: 50, id: "vignetteFeather");
 
     public static readonly AdjustmentParameter SharpenAmount =
-        new(Detail, "Sharpening", 0, 150, s => s.SharpenAmount, (s, v) => s with { SharpenAmount = v }, id: "sharpenAmount");
+        new(Detail, "Sharpening", 0, 300, s => s.SharpenAmount, (s, v) => s with { SharpenAmount = v }, id: "sharpenAmount");
 
     public static readonly AdjustmentParameter SharpenRadius =
         new(Detail, "Radius", 0.5, 3, s => s.SharpenRadius, (s, v) => s with { SharpenRadius = v }, defaultValue: 1, format: "0.0", step: 0.1, id: "sharpenRadius");
@@ -136,7 +136,8 @@ public static class AdjustmentParameters
             {
                 int band = i;
                 string kind = group == HslHue ? "hue" : group == HslSaturation ? "saturation" : "luminance";
-                list.Add(new AdjustmentParameter(group, HslBands.Names[band], -100, 100,
+                // Saturation −100 is already grey; the other two go to ±200.
+                list.Add(new AdjustmentParameter(group, HslBands.Names[band], group == HslSaturation ? -100 : -200, 200,
                     s => get(HslBands.Get(s, band)),
                     (s, v) => HslBands.With(s, band, with(HslBands.Get(s, band), v)),
                     id: $"{kind}.{HslBands.Names[band].ToLowerInvariant()}"));

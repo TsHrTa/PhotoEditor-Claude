@@ -123,6 +123,15 @@ public static class LightroomXmp
         Set("ProcessVersion", "11.0");
         Set("HasSettings", "True");
         var a = state.Adjustments;
+        // This app's sliders go further than Lightroom's: the XMP gets Lightroom's limits.
+        var limited = new SortedSet<string>();
+        double Limit(double value, double max, string name)
+        {
+            if (Math.Abs(value) <= max)
+                return value;
+            limited.Add(name);
+            return Math.Clamp(value, -max, max);
+        }
         if (geometry.IsRaw)
         {
             if (fresh)
@@ -133,40 +142,45 @@ public static class LightroomXmp
         else
         {
             Set("WhiteBalance", a.Temperature == 0 && a.Tint == 0 ? "As Shot" : "Custom");
-            Set("IncrementalTemperature", Signed(a.Temperature));
-            Set("IncrementalTint", Signed(a.Tint));
+            Set("IncrementalTemperature", Signed(Limit(a.Temperature, 100, "temperature")));
+            Set("IncrementalTint", Signed(Limit(a.Tint, 100, "tint")));
         }
         if (a.DeblurAmount != 0)
             notes.Add("AI deblur (Lightroom has no equivalent setting)");
 
-        Set("Exposure2012", Signed(a.Exposure, "0.00"));
-        Set("Contrast2012", Signed(a.Contrast));
-        Set("Highlights2012", Signed(a.Highlights));
-        Set("Shadows2012", Signed(a.Shadows));
-        Set("Whites2012", Signed(a.Whites));
-        Set("Blacks2012", Signed(a.Blacks));
-        Set("Vibrance", Signed(a.Vibrance));
-        Set("Saturation", Signed(a.Saturation));
+        Set("Exposure2012", Signed(Limit(a.Exposure, 5, "exposure"), "0.00"));
+        Set("Contrast2012", Signed(Limit(a.Contrast, 100, "contrast")));
+        Set("Highlights2012", Signed(Limit(a.Highlights, 100, "highlights")));
+        Set("Shadows2012", Signed(Limit(a.Shadows, 100, "shadows")));
+        Set("Whites2012", Signed(Limit(a.Whites, 100, "whites")));
+        Set("Blacks2012", Signed(Limit(a.Blacks, 100, "blacks")));
+        Set("Vibrance", Signed(Limit(a.Vibrance, 100, "vibrance")));
+        Set("Saturation", Signed(Limit(a.Saturation, 100, "saturation")));
 
         for (int i = 0; i < HslBands.Count; i++)
         {
             var band = HslBands.Get(a, i);
-            Set("HueAdjustment" + LrBandNames[i], Signed(band.Hue));
-            Set("SaturationAdjustment" + LrBandNames[i], Signed(band.Saturation));
-            Set("LuminanceAdjustment" + LrBandNames[i], Signed(band.Luminance));
+            Set("HueAdjustment" + LrBandNames[i], Signed(Limit(band.Hue, 100, "HSL")));
+            Set("SaturationAdjustment" + LrBandNames[i], Signed(Limit(band.Saturation, 100, "HSL")));
+            Set("LuminanceAdjustment" + LrBandNames[i], Signed(Limit(band.Luminance, 100, "HSL")));
         }
 
-        Set("PostCropVignetteAmount", Signed(a.VignetteAmount));
+        Set("PostCropVignetteAmount", Signed(Limit(a.VignetteAmount, 100, "vignette")));
         Set("PostCropVignetteMidpoint", Number(a.VignetteMidpoint, "0"));
         Set("PostCropVignetteRoundness", Signed(a.VignetteRoundness));
         Set("PostCropVignetteFeather", Number(a.VignetteFeather, "0"));
         Set("PostCropVignetteStyle", "1");
         Set("PostCropVignetteHighlightContrast", "0");
-        Set("Sharpness", Number(a.SharpenAmount, "0"));
+        Set("Sharpness", Number(Math.Min(a.SharpenAmount, 150), "0"));
+        if (a.SharpenAmount > 150)
+            limited.Add("sharpening");
         Set("SharpenRadius", Signed(a.SharpenRadius, "0.0"));
         Set("SharpenEdgeMasking", Number(a.SharpenMasking, "0"));
         // Closest Lightroom equivalent of the AI denoise amount: classic luminance noise reduction.
         Set("LuminanceSmoothing", Number(a.DenoiseAmount, "0"));
+
+        if (limited.Count > 0)
+            notes.Add($"{string.Join(", ", limited)} beyond Lightroom's range (written at Lightroom's limit)");
 
         WriteCrop(state.Crop, geometry, Set);
         WriteMasks(state.Masks, geometry, description, notes);
@@ -300,15 +314,18 @@ public static class LightroomXmp
             new XAttribute(Crs + "CorrectionName", mask.Name),
             new XAttribute(Crs + "CorrectionAmount", "1"),
             new XAttribute(Crs + "CorrectionActive", mask.Enabled ? "true" : "false"),
-            new XAttribute(Crs + "LocalExposure2012", Number(a.Exposure / LocalExposureRange, "0.000000")),
-            new XAttribute(Crs + "LocalContrast2012", Number(a.Contrast / 100, "0.000000")),
-            new XAttribute(Crs + "LocalHighlights2012", Number(a.Highlights / 100, "0.000000")),
-            new XAttribute(Crs + "LocalShadows2012", Number(a.Shadows / 100, "0.000000")),
-            new XAttribute(Crs + "LocalWhites2012", Number(a.Whites / 100, "0.000000")),
-            new XAttribute(Crs + "LocalBlacks2012", Number(a.Blacks / 100, "0.000000")),
-            new XAttribute(Crs + "LocalTemperature", Number(a.Temperature / 100, "0.000000")),
-            new XAttribute(Crs + "LocalTint", Number(a.Tint / 100, "0.000000")),
-            new XAttribute(Crs + "LocalSaturation", Number(a.Saturation / 100, "0.000000")));
+            // Lightroom's local values run from −1 to +1.
+            new XAttribute(Crs + "LocalExposure2012", Local(a.Exposure / LocalExposureRange)),
+            new XAttribute(Crs + "LocalContrast2012", Local(a.Contrast / 100)),
+            new XAttribute(Crs + "LocalHighlights2012", Local(a.Highlights / 100)),
+            new XAttribute(Crs + "LocalShadows2012", Local(a.Shadows / 100)),
+            new XAttribute(Crs + "LocalWhites2012", Local(a.Whites / 100)),
+            new XAttribute(Crs + "LocalBlacks2012", Local(a.Blacks / 100)),
+            new XAttribute(Crs + "LocalTemperature", Local(a.Temperature / 100)),
+            new XAttribute(Crs + "LocalTint", Local(a.Tint / 100)),
+            new XAttribute(Crs + "LocalSaturation", Local(a.Saturation / 100)));
+
+        static string Local(double value) => Number(Math.Clamp(value, -1, 1), "0.000000");
     }
 
     private static XElement MaskDescription(string what, params (string Name, string Value)[] values) =>

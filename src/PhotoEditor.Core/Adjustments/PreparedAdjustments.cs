@@ -8,6 +8,10 @@ public readonly record struct PreparedAdjustments(
     float ShadowsAmount,
     float WhitesAmount,
     float BlacksAmount,
+    float HighlightsAmount2,
+    float ShadowsAmount2,
+    float WhitesAmount2,
+    float BlacksAmount2,
     float WhiteBalanceR,
     float WhiteBalanceG,
     float WhiteBalanceB,
@@ -40,14 +44,24 @@ public readonly record struct PreparedAdjustments(
     {
         var (wbR, wbG, wbB) = WhiteBalanceGains(s.Temperature, s.Tint);
         var (vLow, vHigh) = VignetteBand(s);
+        // Each of these steps stays monotonic up to ±100; beyond that (the sliders go to ±200) the same step is
+        // applied a second time with the rest, and a monotonic step applied twice is still monotonic.
+        var (h1, h2) = Passes(s.Highlights, _ => MaxHighlightsShift);
+        // Lifting shadows may be strong; darkening is limited so each step stays monotonic.
+        var (sh1, sh2) = Passes(s.Shadows, v => v >= 0 ? 0.25f : 0.14f);
+        var (w1, w2) = Passes(s.Whites, _ => 0.15f);
+        var (b1, b2) = Passes(s.Blacks, _ => 0.15f);
         return new(
             ExposureGain: MathF.Pow(2f, (float)s.Exposure),
             ContrastGamma: MathF.Exp((float)s.Contrast / 100f * 0.9f),
-            HighlightsAmount: (float)s.Highlights / 100f * MaxHighlightsShift,
-            // Lifting shadows may be strong; darkening is limited so the curve stays monotonic.
-            ShadowsAmount: (float)s.Shadows / 100f * (s.Shadows >= 0 ? 0.25f : 0.14f),
-            WhitesAmount: (float)s.Whites / 100f * 0.15f,
-            BlacksAmount: (float)s.Blacks / 100f * 0.15f,
+            HighlightsAmount: h1,
+            ShadowsAmount: sh1,
+            WhitesAmount: w1,
+            BlacksAmount: b1,
+            HighlightsAmount2: h2,
+            ShadowsAmount2: sh2,
+            WhitesAmount2: w2,
+            BlacksAmount2: b2,
             WhiteBalanceR: wbR,
             WhiteBalanceG: wbG,
             WhiteBalanceB: wbB,
@@ -62,6 +76,17 @@ public readonly record struct PreparedAdjustments(
             SharpenAmount: (float)s.SharpenAmount / 100f * SharpenStrengthAt100,
             SharpenRadius: (float)s.SharpenRadius,
             SharpenMasking: (float)s.SharpenMasking / 100f);
+    }
+
+    /// <summary>
+    /// Splits a slider value (±200) into two passes of at most ±100 each, scaled by the step's strength at 100.
+    /// </summary>
+    private static (float First, float Second) Passes(double value, Func<double, float> strengthAt100)
+    {
+        double first = Math.Clamp(value, -100, 100);
+        double second = value - first;
+        float k = strengthAt100(value);
+        return ((float)first / 100f * k, (float)second / 100f * k);
     }
 
     /// <summary>Transition band of the vignette weight (distance 0 = centre, 1 = corner).</summary>
