@@ -19,8 +19,14 @@ namespace PhotoEditor.Controls;
 
 /// <summary>
 /// Draws the edited image directly on Avalonia's Skia canvas (SkSL adjustment shader), with zoom
-/// (fit / 100% / mouse wheel around the cursor), drag-to-pan, brush painting and gradient handles.
+/// (fit / 100% / mouse wheel around the cursor), drag-to-pan, brush painting, gradient handles and
+/// crop editing.
 /// </summary>
+/// <remarks>
+/// The view shows the cropped result ("display" space = the crop frame, in full-resolution pixels);
+/// while the crop tool is active it shows the whole image with the crop frame on top. Mask geometry
+/// stays in normalised full-image coordinates and is mapped through the crop.
+/// </remarks>
 public class ImageViewer : Control
 {
     public static readonly StyledProperty<PreviewImage?> SourceProperty =
@@ -57,6 +63,14 @@ public class ImageViewer : Control
     private Point? _pointer;
     private bool _stroking;
     private double _zoom = 1;
+
+    // Crop shown in the view (Crop.None while the crop tool is active) and its frame in full-res pixels.
+    private Crop _displayCrop = Crop.None;
+    private CropFrame _displayFrame;
+
+    // Crop frame drag in progress
+    private CropHandle _cropHandle;
+    private (double X, double Y) _cropFrom;
 
     // Gradient creation / handle drag in progress
     private GradientHandle _dragHandle;
@@ -126,6 +140,9 @@ public class ImageViewer : Control
     /// <summary>A gradient was created or its handles dragged.</summary>
     public event EventHandler<ComponentEditEventArgs>? ComponentEdit;
 
+    /// <summary>The crop frame is dragged (crop tool).</summary>
+    public event EventHandler<CropEditEventArgs>? CropEdit;
+
     /// <summary>Current display scale (1 = 100%).</summary>
     public double Zoom
     {
@@ -143,13 +160,45 @@ public class ImageViewer : Control
         if (change.Property == SourceProperty)
         {
             // The render thread may still hold the old image; let the GC release it.
-            if (change.GetNewValue<PreviewImage?>() is { } image)
-                Update(() => _view.SetImageSize(image.Width, image.Height));
+            UpdateDisplayCrop(force: true);
+        }
+        else if (change.Property == StateProperty || change.Property == ToolProperty)
+        {
+            UpdateDisplayCrop(force: false);
         }
         else if (change.Property == BoundsProperty)
         {
             Update(() => _view.SetViewSize(Bounds.Width, Bounds.Height));
         }
+    }
+
+    /// <summary>Full-resolution image size.</summary>
+    private double ImageWidth => Source?.Width ?? 1;
+    private double ImageHeight => Source?.Height ?? 1;
+
+    /// <summary>Picks up crop changes; refits the view when the displayed size changes.</summary>
+    private void UpdateDisplayCrop(bool force)
+    {
+        if (Source is not { } image)
+            return;
+        var crop = Tool == EditTool.Crop ? Crop.None : State.Crop;
+        if (!force && crop == _displayCrop)
+            return;
+        var old = _displayFrame;
+        _displayCrop = crop;
+        _displayFrame = crop.Frame(image.Width, image.Height);
+        if (force || Math.Abs(old.HalfWidth - _displayFrame.HalfWidth) > 1e-6 || Math.Abs(old.HalfHeight - _displayFrame.HalfHeight) > 1e-6)
+            Update(() => _view.SetImageSize(_displayFrame.HalfWidth * 2, _displayFrame.HalfHeight * 2));
+    }
+
+    /// <summary>Display (cropped frame) pixel → full-resolution image pixel.</summary>
+    private (double X, double Y) DisplayToImage(double x, double y) =>
+        _displayFrame.ToImage(x - _displayFrame.HalfWidth, y - _displayFrame.HalfHeight);
+
+    private (double X, double Y) ImageToDisplay(double x, double y)
+    {
+        var (u, v) = _displayFrame.ToLocal(x, y);
+        return (u + _displayFrame.HalfWidth, v + _displayFrame.HalfHeight);
     }
 
     private void Update(Action change)
@@ -180,6 +229,15 @@ public class ImageViewer : Control
         var pos = point.Position;
         if (props.IsLeftButtonPressed)
         {
+            if (Tool == EditTool.Crop && HitTestCrop(pos) is var cropHandle and not CropHandle.None)
+            {
+                _cropHandle = cropHandle;
+                _cropFrom = ToNormalizedPoint(pos);
+                e.Pointer.Capture(this);
+                e.Handled = true;
+                CropEdit?.Invoke(this, new CropEditEventArgs(cropHandle, _cropFrom, _cropFrom, EditPhase.Begin));
+                return;
+            }
             if (Tool == EditTool.Brush)
             {
                 _stroking = true;
@@ -188,7 +246,7 @@ public class ImageViewer : Control
                 e.Handled = true;
                 return;
             }
-            if (EditableComponent is { } editable && HitTestHandle(editable, pos) is var handle and not GradientHandle.None)
+            if (Tool != EditTool.Crop && EditableComponent is { } editable && HitTestHandle(editable, pos) is var handle and not GradientHandle.None)
             {
                 BeginDrag(e, editable, handle, isNew: false);
                 return;
@@ -237,7 +295,11 @@ public class ImageViewer : Control
         base.OnPointerMoved(e);
         var p = e.GetPosition(this);
         _pointer = p;
-        if (_stroking)
+        if (_cropHandle != CropHandle.None)
+        {
+            CropEdit?.Invoke(this, new CropEditEventArgs(_cropHandle, _cropFrom, ToNormalizedPoint(p), EditPhase.Move));
+        }
+        else if (_stroking)
         {
             RaiseStroke(BrushStrokePhase.Move, p, false);
         }
@@ -250,6 +312,10 @@ public class ImageViewer : Control
             _panStart = p;
             Update(() => _view.Pan(p.X - start.X, p.Y - start.Y));
             return;
+        }
+        else if (Tool == EditTool.Crop)
+        {
+            Cursor = CropCursor(HitTestCrop(p));
         }
         else if (EditableComponent is { } editable)
         {
@@ -281,6 +347,14 @@ public class ImageViewer : Control
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
+        if (_cropHandle != CropHandle.None)
+        {
+            var handle = _cropHandle;
+            _cropHandle = CropHandle.None;
+            e.Pointer.Capture(null);
+            CropEdit?.Invoke(this, new CropEditEventArgs(handle, _cropFrom, ToNormalizedPoint(e.GetPosition(this)), EditPhase.End));
+            return;
+        }
         if (_stroking)
         {
             _stroking = false;
@@ -302,6 +376,12 @@ public class ImageViewer : Control
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         base.OnPointerCaptureLost(e);
+        if (_cropHandle != CropHandle.None)
+        {
+            var handle = _cropHandle;
+            _cropHandle = CropHandle.None;
+            CropEdit?.Invoke(this, new CropEditEventArgs(handle, _cropFrom, _cropFrom, EditPhase.End));
+        }
         if (_stroking)
         {
             _stroking = false;
@@ -317,18 +397,133 @@ public class ImageViewer : Control
     }
 
     /// <summary>Image width / height.</summary>
-    private float Aspect => _view.ImageHeight > 0 ? (float)(_view.ImageWidth / _view.ImageHeight) : 1f;
+    private float Aspect => (float)(ImageWidth / ImageHeight);
+
+    /// <summary>View point → normalised full-image coordinates.</summary>
+    private (double X, double Y) ToNormalizedPoint(Point viewPoint)
+    {
+        var (dx, dy) = _view.ViewToImage(viewPoint.X, viewPoint.Y);
+        var (ix, iy) = DisplayToImage(dx, dy);
+        return (ix / ImageWidth, iy / ImageHeight);
+    }
 
     private BrushPoint ToNormalized(Point viewPoint)
     {
-        var (ix, iy) = _view.ViewToImage(viewPoint.X, viewPoint.Y);
-        return new BrushPoint((float)(ix / _view.ImageWidth), (float)(iy / _view.ImageHeight));
+        var (x, y) = ToNormalizedPoint(viewPoint);
+        return new BrushPoint((float)x, (float)y);
     }
 
-    private Point ToView(BrushPoint p)
+    /// <summary>Full-resolution image pixel → view point.</summary>
+    private Point ImagePixelToView(double x, double y)
     {
-        var (x, y) = _view.ImageToView(p.X * _view.ImageWidth, p.Y * _view.ImageHeight);
-        return new Point(x, y);
+        var (dx, dy) = ImageToDisplay(x, y);
+        var (vx, vy) = _view.ImageToView(dx, dy);
+        return new Point(vx, vy);
+    }
+
+    private Point ToView(BrushPoint p) => ImagePixelToView(p.X * ImageWidth, p.Y * ImageHeight);
+
+    /// <summary>Degrees by which image axes appear rotated in the view (the crop's straighten angle, reversed).</summary>
+    private double DisplayRotation => -_displayFrame.Angle;
+
+    // ---- Crop tool ----
+
+    /// <summary>The crop frame being edited, in full-resolution pixels.</summary>
+    private CropFrame EditedCropFrame => State.Crop.Frame(ImageWidth, ImageHeight);
+
+    private IEnumerable<(CropHandle Handle, Point Position)> CropHandles()
+    {
+        var f = EditedCropFrame;
+        double w = f.HalfWidth, h = f.HalfHeight;
+        foreach (var (handle, u, v) in new[]
+        {
+            (CropHandle.TopLeft, -w, -h), (CropHandle.Top, 0, -h), (CropHandle.TopRight, w, -h),
+            (CropHandle.Right, w, 0), (CropHandle.BottomRight, w, h), (CropHandle.Bottom, 0, h),
+            (CropHandle.BottomLeft, -w, h), (CropHandle.Left, -w, 0),
+        })
+        {
+            var (x, y) = f.ToImage(u, v);
+            yield return (handle, ImagePixelToView(x, y));
+        }
+    }
+
+    private CropHandle HitTestCrop(Point viewPoint)
+    {
+        var best = CropHandle.None;
+        double bestDistance = HandleHitRadius;
+        foreach (var (handle, pos) in CropHandles())
+        {
+            double d = Point.Distance(pos, viewPoint);
+            if (d <= bestDistance)
+            {
+                best = handle;
+                bestDistance = d;
+            }
+        }
+        if (best != CropHandle.None)
+            return best;
+        var (nx, ny) = ToNormalizedPoint(viewPoint);
+        var f = EditedCropFrame;
+        var (u, v) = f.ToLocal(nx * ImageWidth, ny * ImageHeight);
+        return Math.Abs(u) <= f.HalfWidth && Math.Abs(v) <= f.HalfHeight ? CropHandle.Move : CropHandle.None;
+    }
+
+    private Cursor? CropCursor(CropHandle handle) => handle switch
+    {
+        CropHandle.Move => new Cursor(StandardCursorType.SizeAll),
+        CropHandle.Left or CropHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
+        CropHandle.Top or CropHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
+        CropHandle.TopLeft => new Cursor(StandardCursorType.TopLeftCorner),
+        CropHandle.TopRight => new Cursor(StandardCursorType.TopRightCorner),
+        CropHandle.BottomLeft => new Cursor(StandardCursorType.BottomLeftCorner),
+        CropHandle.BottomRight => new Cursor(StandardCursorType.BottomRightCorner),
+        _ => null,
+    };
+
+    private static readonly IBrush CropShade = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0));
+    private static readonly IPen CropGrid = new Pen(new SolidColorBrush(Color.FromArgb(110, 255, 255, 255)), 1);
+
+    /// <summary>Darkens everything outside the crop frame; draws its outline, a rule-of-thirds grid and handles.</summary>
+    private void DrawCropFrame(DrawingContext context, Rect bounds)
+    {
+        var f = EditedCropFrame;
+        var corners = f.Corners().Select(c => ImagePixelToView(c.X, c.Y)).ToArray();
+        var geometry = new StreamGeometry();
+        using (var g = geometry.Open())
+        {
+            g.SetFillRule(FillRule.EvenOdd);
+            g.BeginFigure(bounds.TopLeft, true);
+            g.LineTo(bounds.TopRight);
+            g.LineTo(bounds.BottomRight);
+            g.LineTo(bounds.BottomLeft);
+            g.EndFigure(true);
+            g.BeginFigure(corners[0], true);
+            for (int i = 1; i < 4; i++)
+                g.LineTo(corners[i]);
+            g.EndFigure(true);
+        }
+        context.DrawGeometry(CropShade, null, geometry);
+
+        for (int i = 1; i <= 2; i++)
+        {
+            double t = i / 3.0 * 2 - 1; // -1/3, +1/3 of the full width
+            var (ax, ay) = f.ToImage(t * f.HalfWidth, -f.HalfHeight);
+            var (bx, by) = f.ToImage(t * f.HalfWidth, f.HalfHeight);
+            context.DrawLine(CropGrid, ImagePixelToView(ax, ay), ImagePixelToView(bx, by));
+            (ax, ay) = f.ToImage(-f.HalfWidth, t * f.HalfHeight);
+            (bx, by) = f.ToImage(f.HalfWidth, t * f.HalfHeight);
+            context.DrawLine(CropGrid, ImagePixelToView(ax, ay), ImagePixelToView(bx, by));
+        }
+        for (int i = 0; i < 4; i++)
+        {
+            context.DrawLine(GuideShadow, corners[i], corners[(i + 1) % 4]);
+            context.DrawLine(GuideLine, corners[i], corners[(i + 1) % 4]);
+        }
+        foreach (var (_, pos) in CropHandles())
+        {
+            var r = new Rect(pos.X - 4, pos.Y - 4, 8, 8);
+            context.DrawRectangle(Brushes.White, GuideShadow, r);
+        }
     }
 
     private void RaiseStroke(BrushStrokePhase phase, Point viewPoint, bool erase)
@@ -379,9 +574,17 @@ public class ImageViewer : Control
 
         var (x0, y0) = _view.ImageToView(0, 0);
         var (x1, y1) = _view.ImageToView(_view.ImageWidth, _view.ImageHeight);
-        var dest = new SKRect((float)x0, (float)y0, (float)x1, (float)y1);
+        var clip = new SKRect((float)x0, (float)y0, (float)x1, (float)y1);
         // Use the full-resolution image only when the preview would be magnified.
         var image = _view.Scale > source.PreviewScale * 1.01 ? source.Full : source.Preview;
+        // Drawn image pixel → view: scale to full resolution, into the crop frame, then the view transform.
+        var f = _displayFrame;
+        var toView = SKMatrix.CreateTranslation((float)_view.OffsetX, (float)_view.OffsetY)
+            .PreConcat(SKMatrix.CreateScale((float)_view.Scale, (float)_view.Scale))
+            .PreConcat(SKMatrix.CreateTranslation((float)f.HalfWidth, (float)f.HalfHeight))
+            .PreConcat(SKMatrix.CreateRotationDegrees((float)-f.Angle))
+            .PreConcat(SKMatrix.CreateTranslation((float)-f.CenterX, (float)-f.CenterY))
+            .PreConcat(SKMatrix.CreateScale((float)(ImageWidth / image.Width), (float)(ImageHeight / image.Height)));
         // Masks are rasterised at preview resolution on the UI thread (cached until they change).
         var state = State;
         var (mw, mh) = MaskImageCache.MaskSize(source.Preview.Width, source.Preview.Height);
@@ -389,15 +592,17 @@ public class ImageViewer : Control
             .ToDictionary(m => m.Id, m => _maskCache.Get(m, mw, mh));
         var overlay = OverlayMask is { } om ? _maskCache.Get(om, mw, mh) : null;
         _maskCache.Retain(OverlayMask is { } keep ? state.Masks.Add(keep) : state.Masks);
-        context.Custom(new ImageDrawOperation(bounds, image, dest, _view.Scale, state, maskImages, overlay));
+        context.Custom(new ImageDrawOperation(bounds, image, clip, toView, _view.Scale, state, maskImages, overlay));
 
-        if (EditableComponent is { } editable)
+        if (Tool == EditTool.Crop)
+            DrawCropFrame(context, bounds);
+        else if (EditableComponent is { } editable)
             DrawGradientGuides(context, editable);
 
         if (Tool == EditTool.Brush && _pointer is { } p)
         {
             // Brush cursor: outer circle = radius, inner = where the feather starts.
-            double r = BrushRadius * Math.Max(_view.ImageWidth, _view.ImageHeight) * _view.Scale;
+            double r = BrushRadius * Math.Max(ImageWidth, ImageHeight) * _view.Scale;
             var dark = new Pen(new SolidColorBrush(Color.FromArgb(160, 0, 0, 0)), 3);
             var light = new Pen(Brushes.White, 1);
             context.DrawEllipse(null, dark, p, r, r);
@@ -438,13 +643,18 @@ public class ImageViewer : Control
         {
             // Outer ellipse = edge of the effect, dashed = where the feather starts.
             var c = ToView(radial.Center);
-            double rx = radial.RadiusX * _view.ImageWidth * _view.Scale;
-            double ry = radial.RadiusY * _view.ImageWidth * _view.Scale;
+            double rx = radial.RadiusX * ImageWidth * _view.Scale;
+            double ry = radial.RadiusY * ImageWidth * _view.Scale;
             double f = 1 - Math.Clamp(radial.Feather, 0, 1);
-            context.DrawEllipse(null, GuideShadow, c, rx, ry);
-            context.DrawEllipse(null, GuideLine, c, rx, ry);
-            if (f > 0.01 && f < 0.99)
-                context.DrawEllipse(null, GuideDashed, c, rx * f, ry * f);
+            // The ellipse is axis-aligned in the image, which appears rotated when the crop is straightened.
+            using (context.PushTransform(Matrix.CreateTranslation(-c.X, -c.Y)
+                * Matrix.CreateRotation(DisplayRotation * Math.PI / 180) * Matrix.CreateTranslation(c.X, c.Y)))
+            {
+                context.DrawEllipse(null, GuideShadow, c, rx, ry);
+                context.DrawEllipse(null, GuideLine, c, rx, ry);
+                if (f > 0.01 && f < 0.99)
+                    context.DrawEllipse(null, GuideDashed, c, rx * f, ry * f);
+            }
         }
 
         foreach (var (_, pos) in Handles(component))
@@ -454,7 +664,7 @@ public class ImageViewer : Control
     }
 
     private sealed class ImageDrawOperation(
-        Rect bounds, SKImage image, SKRect dest, double scale, EditState state,
+        Rect bounds, SKImage image, SKRect clip, SKMatrix toView, double scale, EditState state,
         Dictionary<Guid, SKImage> maskImages, SKImage? overlay)
         : ICustomDrawOperation
     {
@@ -477,8 +687,8 @@ public class ImageViewer : Control
             using var shader = AdjustmentShader.CreateShader(image, state, sampling, m => maskImages.GetValueOrDefault(m.Id));
             using var paint = new SKPaint { Shader = shader };
             canvas.Save();
-            canvas.Translate(dest.Left, dest.Top);
-            canvas.Scale(dest.Width / image.Width, dest.Height / image.Height);
+            canvas.ClipRect(clip, antialias: true);
+            canvas.Concat(in toView);
             canvas.DrawRect(0, 0, image.Width, image.Height, paint);
             if (overlay is not null)
             {

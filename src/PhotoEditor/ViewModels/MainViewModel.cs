@@ -36,6 +36,7 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasImage))]
     [NotifyPropertyChangedFor(nameof(CanExport))]
+    [NotifyPropertyChangedFor(nameof(CropSizeText))]
     public partial SKBitmap? Original { get; private set; }
 
     [ObservableProperty]
@@ -133,6 +134,7 @@ public partial class MainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsBrushActive))]
     [NotifyPropertyChangedFor(nameof(IsLinearGradientActive))]
     [NotifyPropertyChangedFor(nameof(IsRadialGradientActive))]
+    [NotifyPropertyChangedFor(nameof(IsCropActive))]
     public partial EditTool ActiveTool { get; set; }
 
     /// <summary>When on, left-dragging on the image paints into the selected mask.</summary>
@@ -156,12 +158,126 @@ public partial class MainViewModel : ViewModelBase
         set => SetTool(EditTool.RadialGradient, value);
     }
 
+    /// <summary>When on, the viewer shows the whole image and the crop frame can be dragged.</summary>
+    public bool IsCropActive
+    {
+        get => ActiveTool == EditTool.Crop;
+        set => SetTool(EditTool.Crop, value);
+    }
+
     private void SetTool(EditTool tool, bool on)
     {
         if (on)
             ActiveTool = tool;
         else if (ActiveTool == tool)
             ActiveTool = EditTool.None;
+    }
+
+    // ---- Crop ----
+
+    /// <summary>Aspect ratio choices for the crop (Ratio = width / height; null = free, 0 = original photo).</summary>
+    public sealed record CropAspect(string Name, double? Ratio)
+    {
+        public override string ToString() => Name;
+    }
+
+    public IReadOnlyList<CropAspect> CropAspects { get; } =
+    [
+        new("Free", null), new("Original", 0), new("1 : 1", 1), new("3 : 2", 1.5), new("4 : 3", 4.0 / 3),
+        new("5 : 4", 1.25), new("7 : 5", 1.4), new("16 : 9", 16.0 / 9),
+    ];
+
+    [ObservableProperty]
+    public partial CropAspect SelectedCropAspect { get; set; } = new("Free", null);
+
+    /// <summary>The locked width / height of the crop in pixels (portrait crops use the inverse ratio), or null.</summary>
+    private double? LockedAspect
+    {
+        get
+        {
+            if (SelectedCropAspect.Ratio is not { } ratio || Original is not { } image)
+                return null;
+            if (ratio == 0)
+                ratio = (double)image.Width / image.Height;
+            var (w, h) = State.Crop.OutputSize(image.Width, image.Height);
+            bool portrait = h > w;
+            return (portrait ? ratio < 1 : ratio >= 1) ? ratio : 1 / ratio;
+        }
+    }
+
+    partial void OnSelectedCropAspectChanged(CropAspect value)
+    {
+        if (LockedAspect is { } aspect && Original is { } image)
+            ApplyEdit(State with { Crop = CropGeometry.WithAspect(State.Crop, aspect, image.Width, image.Height) });
+    }
+
+    /// <summary>Straighten angle in degrees (the crop shrinks so it stays inside the image).</summary>
+    public double CropAngle
+    {
+        get => State.Crop.Angle;
+        set
+        {
+            if (Original is not { } image || Math.Abs(value - State.Crop.Angle) < 1e-9)
+                return;
+            // Rotate the crop as it was when straightening started, so turning back restores its size.
+            _cropAngleBase ??= State.Crop;
+            _settingCropAngle = true;
+            ApplyEdit(State with { Crop = CropGeometry.WithAngle(_cropAngleBase, Math.Round(value, 1), image.Width, image.Height) }, "crop-angle");
+            _settingCropAngle = false;
+        }
+    }
+
+    private Crop? _cropAngleBase;
+    private bool _settingCropAngle;
+
+    /// <summary>"6000 × 4000" (pixels of the export).</summary>
+    public string CropSizeText
+    {
+        get
+        {
+            if (Original is not { } image)
+                return "";
+            var (w, h) = State.Crop.OutputSize(image.Width, image.Height);
+            return $"{w} × {h}";
+        }
+    }
+
+    public bool HasCrop => !State.Crop.IsDefault;
+
+    [RelayCommand]
+    private void ResetCrop() => ApplyEdit(State with { Crop = Crop.None });
+
+    /// <summary>Swaps the crop between landscape and portrait.</summary>
+    [RelayCommand]
+    private void SwapCropOrientation()
+    {
+        if (Original is not { } image)
+            return;
+        var crop = State.Crop;
+        if (crop.IsDefault && LockedAspect is null)
+            crop = CropGeometry.WithAspect(crop, (double)image.Height / image.Width, image.Width, image.Height);
+        else
+            crop = CropGeometry.SwapOrientation(crop, image.Width, image.Height);
+        ApplyEdit(State with { Crop = crop });
+    }
+
+    private Crop _cropDragStart = Crop.None;
+    private string? _cropDragKey;
+
+    /// <summary>Handles crop frame drags from the viewer (normalised coordinates).</summary>
+    public void EditCrop(CropHandle handle, (double X, double Y) from, (double X, double Y) to, bool begin)
+    {
+        if (Original is not { } image)
+            return;
+        if (begin)
+        {
+            _cropDragStart = State.Crop;
+            _cropDragKey = $"crop:{Guid.NewGuid()}";
+            return;
+        }
+        var crop = CropGeometry.Drag(_cropDragStart, handle, from, to, LockedAspect, image.Width, image.Height);
+        if (crop != State.Crop)
+            ApplyEdit(State with { Crop = crop }, _cropDragKey);
     }
 
     // ---- Gradients (created by dragging, edited with on-canvas handles) ----
@@ -420,10 +536,19 @@ public partial class MainViewModel : ViewModelBase
 
     private AdjustmentSettings? _shownAdjustments;
 
-    partial void OnStateChanged(EditState value)
+    partial void OnStateChanged(EditState oldValue, EditState newValue)
     {
         SyncMasks();
         RefreshSliders();
+        if (oldValue.Crop != newValue.Crop)
+        {
+            if (!_settingCropAngle)
+                _cropAngleBase = null;
+            OnPropertyChanged(nameof(CropAngle));
+            OnPropertyChanged(nameof(CropSizeText));
+            OnPropertyChanged(nameof(HasCrop));
+            ResetCropCommand.NotifyCanExecuteChanged();
+        }
     }
 
     /// <summary>Updates the sliders if the edited adjustment set changed (not on every brush point).</summary>

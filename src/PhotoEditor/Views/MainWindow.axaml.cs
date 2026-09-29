@@ -41,9 +41,13 @@ public partial class MainWindow : Window
         AddHandler(DoubleTappedEvent, OnDoubleTapped, RoutingStrategies.Bubble, handledEventsToo: true);
         Viewer.BrushStroke += OnBrushStroke;
         Viewer.ComponentEdit += OnComponentEdit;
+        Viewer.CropEdit += OnCropEdit;
         AddPlainKeyBinding(Key.B, () => { if (ViewModel is { } vm) vm.IsBrushActive = !vm.IsBrushActive; });
         AddPlainKeyBinding(Key.L, () => { if (ViewModel is { } vm) vm.IsLinearGradientActive = !vm.IsLinearGradientActive; });
         AddPlainKeyBinding(Key.R, () => { if (ViewModel is { } vm) vm.IsRadialGradientActive = !vm.IsRadialGradientActive; });
+        AddPlainKeyBinding(Key.C, () => { if (ViewModel is { } vm) vm.IsCropActive = !vm.IsCropActive; });
+        AddPlainKeyBinding(Key.X, () => { if (ViewModel is { IsCropActive: true } vm) vm.SwapCropOrientationCommand.Execute(null); });
+        AddPlainKeyBinding(Key.Enter, () => { if (ViewModel is { IsCropActive: true } vm) vm.ActiveTool = EditTool.None; });
         AddPlainKeyBinding(Key.Escape, () => { if (ViewModel is { } vm) vm.ActiveTool = EditTool.None; });
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
@@ -130,6 +134,9 @@ public partial class MainWindow : Window
 
     private void OnComponentEdit(object? sender, ComponentEditEventArgs e) =>
         ViewModel?.EditComponent(e.Component, e.Phase == EditPhase.Begin, e.Phase == EditPhase.End, e.IsNew);
+
+    private void OnCropEdit(object? sender, CropEditEventArgs e) =>
+        ViewModel?.EditCrop(e.Handle, e.From, e.To, e.Phase == EditPhase.Begin);
 
     private void OnFitClick(object? sender, RoutedEventArgs e) => Viewer.ZoomToFit();
 

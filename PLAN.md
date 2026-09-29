@@ -43,7 +43,7 @@ Each item is meant to be one small, self-contained step.
 
 ### Phase 3b – Requested additions
 - [x] Camera RAW support (Canon CR3/CR2, NEF, ARW, DNG, …) via Magick.NET / LibRaw
-- [ ] Crop tool (crop rectangle, aspect ratio presets, straighten angle)
+- [x] Crop tool (crop rectangle, aspect ratio presets, straighten angle)
 - [ ] Lightroom-compatible edits: write/read Adobe Camera Raw XMP (`crs:` settings) so Lightroom can open the edits
 
 ### Phase 4 – AI masks
@@ -92,7 +92,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: RAW support done (user request: CR3). `Core/Imaging/RawImageLoader` decodes with Magick.NET-Q16 14.17 (LibRaw: camera white balance, sRGB, pixels already upright) into the same 8-bit RGBA bitmap as JPEGs; `ImageLoader` routes RAW extensions there. A 21 MP CR2 takes ~4–5 s, so opening is now async (`OpenFileAsync`, decode + preview on a background thread). Export: RAW files have no EXIF block we can copy, so a minimal one (make, model, date taken, ISO, shutter, aperture, focal length) is built from LibRaw's metadata via `MagickImage.Ping` (fast) — no lens name / GPS. Verified with a real Canon 5D Mark II CR2 (decode + export + EXIF); CR3 goes through the same LibRaw path (Magick lists Cr3 as readable) but I had no full CR3 sample here. Limits: the pipeline is 8-bit, so RAW highlight headroom beyond LibRaw's default rendering is lost (a 16-bit / float pipeline would be a later step); LibRaw's default rendering is flatter than Lightroom's camera profile. Next: crop tool.
 
+- 2026-09-29: Crop done. `Core/Editing/Crop` is stored like Lightroom: unrotated crop edges (normalised Left/Top/Right/Bottom of the upright image) + straighten `Angle` (±45°, rotation about the crop centre); part of `EditState` and the sidecar (`crop`). `CropGeometry` (tested): handle drags in the frame's rotated axes (corner keeps the opposite corner, edges, move slides along the border), aspect lock, `WithAngle` shrinks to the largest same-ratio frame that fits, results are always inside the image (binary search towards the proposed frame). Rendering: masks and adjustments run on the full image; the vignette is now post-crop (shader uniforms `vignetteCenter/Half/Rotation`, parity-tested with a rotated crop); export cuts the rotated crop with bilinear, edge-clamped sampling (`CpuAdjustmentRenderer.ApplyCrop`). Viewer: shows the cropped result (display space = crop frame; view↔image mapping goes through it, so brush/gradients work on a straightened crop); "Crop (C)" shows the whole image with dimmed outside, thirds grid and 8 handles; Enter/Esc leaves. Panel: aspect presets (Free, Original, 1:1, 3:2, 4:3, 5:4, 7:5, 16:9; portrait crops use the inverse), swap orientation (X), Straighten slider, Reset crop, output size. Verified under Xvfb with the CR2 (drag, straighten, reload from sidecar, radial gradient on a rotated crop). Straightening keeps the crop from when straightening started so turning back restores its size; there is no "grow back to max" and no drag-outside-to-rotate. Next: Lightroom XMP.
+
 ### To check visually (Windows)
+- Crop: handles at the image border are half outside the view (still grabbable); drag feel with aspect lock; straighten direction feels natural.
 - Open a CR3 from your camera: colours/white balance look right, portrait shots come in upright, exported JPEG has camera + date in Windows Photos.
 - Vignette looks natural at defaults on a real photo; roundness extremes.
 - Radial gradient: ellipse guides/handles line up with the red overlay at all zoom levels; feather slider feels right.

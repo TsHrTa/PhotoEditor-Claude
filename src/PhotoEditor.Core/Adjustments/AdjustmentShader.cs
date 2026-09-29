@@ -27,12 +27,15 @@ public static class AdjustmentShader
         uniform float3 hsl[8];
         // Band centre hues in degrees; hslCenters[8] = 360 closes the circle.
         uniform float hslCenters[9];
-        // Vignette: exposure change at full weight, transition band, roundness; image size in pixels.
+        // Vignette: exposure change at full weight, transition band, roundness; the frame it follows
+        // (crop centre, half size and (cos, sin) of its angle, in image pixels).
         uniform float vignetteStops;
         uniform float vignetteLow;
         uniform float vignetteHigh;
         uniform float vignetteRoundness;
-        uniform float2 imageSize;
+        uniform float2 vignetteCenter;
+        uniform float2 vignetteHalf;
+        uniform float2 vignetteRotation;
 
         const float perceptualGamma = 2.2;
 
@@ -106,8 +109,9 @@ public static class AdjustmentShader
         float vignetteDistance(float2 uv) {
             if (vignetteRoundness >= 0.0) {
                 float ellipse = sqrt(uv.x * uv.x + uv.y * uv.y) / sqrt(2.0);
-                float2 px = uv * imageSize;
-                float circle = sqrt(px.x * px.x + px.y * px.y) / sqrt(imageSize.x * imageSize.x + imageSize.y * imageSize.y);
+                float2 size = vignetteHalf * 2.0;
+                float2 px = uv * size;
+                float circle = sqrt(px.x * px.x + px.y * px.y) / sqrt(size.x * size.x + size.y * size.y);
                 return ellipse + (circle - ellipse) * vignetteRoundness;
             }
             float p = 2.0 - 6.0 * vignetteRoundness;
@@ -140,7 +144,9 @@ public static class AdjustmentShader
             c = applyHsl(c);
 
             if (vignetteStops != 0.0) {
-                float2 uv = (coord / imageSize - 0.5) * 2.0;
+                float2 d = coord - vignetteCenter;
+                float2 uv = float2(d.x * vignetteRotation.x + d.y * vignetteRotation.y,
+                                   -d.x * vignetteRotation.y + d.y * vignetteRotation.x) / vignetteHalf;
                 c *= exp2(vignetteStops * smoothstep(vignetteLow, vignetteHigh, vignetteDistance(uv)));
             }
 
@@ -172,7 +178,8 @@ public static class AdjustmentShader
     {
         using var imageShader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
         using var white = SKShader.CreateColor(SKColors.White);
-        var current = CreatePass(imageShader, white, state.Adjustments, image);
+        var frame = VignetteMath.Frame.From(state.Crop.Frame(image.Width, image.Height));
+        var current = CreatePass(imageShader, white, state.Adjustments, frame);
 
         foreach (var mask in state.Masks)
         {
@@ -181,7 +188,7 @@ public static class AdjustmentShader
             var toImage = SKMatrix.CreateScale((float)image.Width / maskImg.Width, (float)image.Height / maskImg.Height);
             using var maskShader = maskImg.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
                 MaskSampling(maskImg, image), toImage);
-            var next = CreatePass(current, maskShader, mask.Adjustments, image);
+            var next = CreatePass(current, maskShader, mask.Adjustments, frame);
             current.Dispose();
             current = next;
         }
@@ -194,7 +201,7 @@ public static class AdjustmentShader
             ? new SKSamplingOptions(SKFilterMode.Nearest)
             : new SKSamplingOptions(SKFilterMode.Linear);
 
-    private static SKShader CreatePass(SKShader input, SKShader mask, AdjustmentSettings settings, SKImage image)
+    private static SKShader CreatePass(SKShader input, SKShader mask, AdjustmentSettings settings, VignetteMath.Frame frame)
     {
         var effect = Effect;
         var p = PreparedAdjustments.From(settings);
@@ -215,7 +222,9 @@ public static class AdjustmentShader
             ["vignetteLow"] = p.VignetteLow,
             ["vignetteHigh"] = p.VignetteHigh,
             ["vignetteRoundness"] = p.VignetteRoundness,
-            ["imageSize"] = new[] { (float)image.Width, (float)image.Height },
+            ["vignetteCenter"] = new[] { frame.CenterX, frame.CenterY },
+            ["vignetteHalf"] = new[] { frame.HalfWidth, frame.HalfHeight },
+            ["vignetteRotation"] = new[] { frame.Cos, frame.Sin },
         };
         var children = new SKRuntimeEffectChildren(effect)
         {

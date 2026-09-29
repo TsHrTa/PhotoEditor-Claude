@@ -44,6 +44,31 @@
 
         <ScrollViewer DockPanel.Dock="Right" Width="320" Padding="8,0,16,0" IsEnabled="{Binding HasImage}">
           <StackPanel Spacing="4">
+            <Expander Header="Crop" IsExpanded="True" HorizontalAlignment="Stretch">
+                <StackPanel Spacing="6">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <ToggleButton Content="Crop (C)" IsChecked="{Binding IsCropActive}"
+                                      ToolTip.Tip="Show the whole image and drag the crop frame (edges, corners, or inside to move). Enter or Esc when done." />
+                        <ComboBox ItemsSource="{Binding CropAspects}" SelectedItem="{Binding SelectedCropAspect}"
+                                  Width="100" ToolTip.Tip="Aspect ratio of the crop" />
+                        <Button Content="⤾" Command="{Binding SwapCropOrientationCommand}"
+                                ToolTip.Tip="Swap portrait / landscape (X)" />
+                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                        <TextBlock Text="Straighten" VerticalAlignment="Bottom" />
+                        <TextBlock Grid.Column="1" Text="{Binding CropAngle, StringFormat='{}{0:+0.0;-0.0;0.0}°'}" VerticalAlignment="Bottom" />
+                        <Slider Grid.Row="1" Grid.ColumnSpan="2" Minimum="-45" Maximum="45" Value="{Binding CropAngle}"
+                                SmallChange="0.1" LargeChange="1" />
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="{Binding CropSizeText, StringFormat='Output: {0} px'}" Foreground="Gray"
+                                   VerticalAlignment="Center" IsVisible="{Binding HasImage}" />
+                        <Button Grid.Column="1" Content="Reset crop" Command="{Binding ResetCropCommand}"
+                                IsEnabled="{Binding HasCrop}" ToolTip.Tip="Remove the crop and straighten" />
+                    </Grid>
+                </StackPanel>
+            </Expander>
+
             <Expander Header="Masks" IsExpanded="True" HorizontalAlignment="Stretch">
                 <StackPanel Spacing="6">
                     <StackPanel Orientation="Horizontal" Spacing="6">

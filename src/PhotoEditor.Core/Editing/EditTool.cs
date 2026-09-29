@@ -8,4 +8,7 @@ public enum EditTool
     Brush,
     LinearGradient,
     RadialGradient,
+
+    /// <summary>Crop rectangle editing: the viewer shows the whole image with the crop frame.</summary>
+    Crop,
 }

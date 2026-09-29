@@ -14,7 +14,11 @@ public static class CpuAdjustmentRenderer
     public static SKBitmap Render(SKBitmap source, AdjustmentSettings settings) =>
         Render(source, new EditState { Adjustments = settings });
 
-    /// <summary>Returns a new RGBA8888 premultiplied bitmap with the global adjustments and all masks applied.</summary>
+    /// <summary>
+    /// Returns a new RGBA8888 premultiplied bitmap (same size as <paramref name="source"/>) with the global
+    /// adjustments and all masks applied. The crop is not applied (see <see cref="ApplyCrop"/>), but the
+    /// vignette follows the crop frame.
+    /// </summary>
     public static SKBitmap Render(SKBitmap source, EditState state)
     {
         using var src = source.ColorType == SKColorType.Rgba8888 && source.AlphaType == SKAlphaType.Premul
@@ -31,6 +35,7 @@ public static class CpuAdjustmentRenderer
             .ToArray();
         var result = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         var p = PreparedAdjustments.From(state.Adjustments);
+        var frame = VignetteMath.Frame.From(state.Crop.Frame(width, height));
         int rowBytesIn = input.RowBytes, rowBytesOut = result.RowBytes;
         nint inPtr = input.GetPixels(), outPtr = result.GetPixels();
 
@@ -40,7 +45,7 @@ public static class CpuAdjustmentRenderer
             {
                 var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
                 var outRow = new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
-                ProcessRow(inRow, outRow, p, layers, y, height);
+                ProcessRow(inRow, outRow, p, layers, y, frame);
             }
         });
         return result;
@@ -51,9 +56,9 @@ public static class CpuAdjustmentRenderer
 
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
     public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
-        ProcessRow(input, output, p, [], 0, 1);
+        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1));
 
-    private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y, int height)
+    private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y, in VignetteMath.Frame frame)
     {
         int width = input.Length / 4;
         for (int i = 0; i < input.Length; i += 4)
@@ -82,7 +87,7 @@ public static class CpuAdjustmentRenderer
 
             ApplyLinear(ref r, ref g, ref b, p);
             if (p.HasVignette)
-                VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, width, height, p);
+                VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, p);
             // Result of the global pass as unpremultiplied sRGB, like the shader hands to the next pass.
             float sr = ColorMath.LinearToSrgb(Math.Clamp(r, 0f, 1f));
             float sg = ColorMath.LinearToSrgb(Math.Clamp(g, 0f, 1f));
@@ -98,7 +103,7 @@ public static class CpuAdjustmentRenderer
                 b = ColorMath.SrgbToLinear(sb);
                 ApplyLinear(ref r, ref g, ref b, layer.Adjustments);
                 if (layer.Adjustments.HasVignette)
-                    VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, width, height, layer.Adjustments);
+                    VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, layer.Adjustments);
                 sr = Mix(sr, ColorMath.LinearToSrgb(Math.Clamp(r, 0f, 1f)), m);
                 sg = Mix(sg, ColorMath.LinearToSrgb(Math.Clamp(g, 0f, 1f)), m);
                 sb = Mix(sb, ColorMath.LinearToSrgb(Math.Clamp(b, 0f, 1f)), m);
@@ -151,5 +156,30 @@ public static class CpuAdjustmentRenderer
 
         if (p.HasHsl)
             HslMath.Apply(ref r, ref g, ref b, p.Hsl);
+    }
+
+    /// <summary>
+    /// Cuts the (rotated) crop out of <paramref name="source"/> with bilinear sampling; returns the input
+    /// itself when <paramref name="crop"/> is the whole image.
+    /// </summary>
+    public static SKBitmap ApplyCrop(SKBitmap source, Crop crop)
+    {
+        if (crop.IsDefault)
+            return source;
+        var f = crop.Frame(source.Width, source.Height);
+        var (w, h) = crop.OutputSize(source.Width, source.Height);
+        var result = new SKBitmap(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul));
+        using var canvas = new SKCanvas(result);
+        using var image = SKImage.FromBitmap(source);
+        canvas.Clear(SKColors.Transparent);
+        canvas.Translate(w / 2f, h / 2f);
+        canvas.RotateDegrees((float)-f.Angle);
+        canvas.Translate((float)-f.CenterX, (float)-f.CenterY);
+        // Clamp at the image border so edge pixels are not blended with transparency.
+        using var shader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
+            new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
+        using var paint = new SKPaint { Shader = shader, BlendMode = SKBlendMode.Src };
+        canvas.DrawRect(-source.Width, -source.Height, 3f * source.Width, 3f * source.Height, paint);
+        return result;
     }
 }

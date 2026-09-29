@@ -27,7 +27,17 @@ public static class ImageExporter
     public static void Export(SKBitmap original, EditState state, string? sourcePath, string destinationPath, ExportOptions options)
     {
         using var rendered = CpuAdjustmentRenderer.Render(original, state);
-        var bytes = Encode(rendered, options);
+        var cropped = CpuAdjustmentRenderer.ApplyCrop(rendered, state.Crop);
+        byte[] bytes;
+        try
+        {
+            bytes = Encode(cropped, options);
+        }
+        finally
+        {
+            if (!ReferenceEquals(cropped, rendered))
+                cropped.Dispose();
+        }
 
         var exif = sourcePath is null ? null : ExifMetadata.Read(sourcePath);
         if (exif is not null)

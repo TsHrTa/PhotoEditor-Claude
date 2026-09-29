@@ -14,10 +14,12 @@ public sealed record EditDocument
     public int Version { get; init; } = CurrentVersion;
     public AdjustmentSettings Adjustments { get; init; } = AdjustmentSettings.Default;
     public ImmutableList<Mask> Masks { get; init; } = [];
+    public Crop Crop { get; init; } = Crop.None;
 
-    public static EditDocument From(EditState state) => new() { Adjustments = state.Adjustments, Masks = state.Masks };
+    public static EditDocument From(EditState state) =>
+        new() { Adjustments = state.Adjustments, Masks = state.Masks, Crop = state.Crop };
 
-    public EditState ToState() => new() { Adjustments = Adjustments, Masks = Masks };
+    public EditState ToState() => new() { Adjustments = Adjustments, Masks = Masks, Crop = Crop };
 
     public bool Equals(EditDocument? other) =>
         other is not null && Version == other.Version && ToState() == other.ToState();
@@ -57,7 +59,12 @@ public static class SidecarFile
                 Components = (m.Components ?? []).RemoveAll(c => c is null),
             })
             .ToImmutableList();
-        return doc with { Adjustments = Normalize(doc.Adjustments ?? AdjustmentSettings.Default), Masks = masks };
+        return doc with
+        {
+            Adjustments = Normalize(doc.Adjustments ?? AdjustmentSettings.Default),
+            Masks = masks,
+            Crop = CropGeometry.Normalize(doc.Crop),
+        };
     }
 
     /// <summary>Writes the sidecar for <paramref name="imagePath"/> (atomically via a temp file).</summary>

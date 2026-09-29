@@ -14,10 +14,13 @@ public sealed record EditState
     /// <summary>Applied in order on top of the global adjustments.</summary>
     public ImmutableList<Mask> Masks { get; init; } = [];
 
+    /// <summary>Applied last (after all adjustments); the vignette is relative to the cropped frame.</summary>
+    public Crop Crop { get; init; } = Crop.None;
+
     public bool IsDefault => Equals(Default);
 
     public bool Equals(EditState? other) =>
-        other is not null && Adjustments == other.Adjustments && Masks.SequenceEqual(other.Masks);
+        other is not null && Adjustments == other.Adjustments && Crop == other.Crop && Masks.SequenceEqual(other.Masks);
 
-    public override int GetHashCode() => HashCode.Combine(Adjustments, Masks.Count);
+    public override int GetHashCode() => HashCode.Combine(Adjustments, Crop, Masks.Count);
 }
