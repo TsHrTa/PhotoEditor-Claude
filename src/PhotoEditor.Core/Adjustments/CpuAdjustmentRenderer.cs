@@ -45,6 +45,9 @@ public static class CpuAdjustmentRenderer
         // Soften (global or in a mask) subtracts the original's fine detail.
         // Dehaze (global or in a mask) uses the photo's haze map, computed from the original.
         var haze = p.HasDehaze || layers.Any(l => l.Adjustments.HasDehaze) ? HazeMap.Compute(original) : null;
+        DetailFilters? detailFilters = p.HasNoiseReduction || p.HasDefringe
+            ? new DetailFilters(original.GetPixels(), original.RowBytes, width, height)
+            : null;
         Softening? soften = p.HasSoften || layers.Any(l => l.Adjustments.HasSoften)
             ? new Softening(original.GetPixels(), original.RowBytes, width, height, PreparedAdjustments.SoftenStepFor(Math.Max(width, height)))
             : null;
@@ -55,7 +58,7 @@ public static class CpuAdjustmentRenderer
             {
                 var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
                 var outRow = new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
-                ProcessRow(inRow, outRow, p, layers, y, frame, soften, haze, height);
+                ProcessRow(inRow, outRow, p, layers, y, frame, soften, haze, height, detailFilters);
             }
         });
         return result;
@@ -66,10 +69,10 @@ public static class CpuAdjustmentRenderer
 
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
     public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
-        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1);
+        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null);
 
     private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y,
-        in VignetteMath.Frame frame, Softening? soften, HazeMap? haze, int height)
+        in VignetteMath.Frame frame, Softening? soften, HazeMap? haze, int height, DetailFilters? detailFilters)
     {
         int width = input.Length / 4;
         for (int i = 0; i < input.Length; i += 4)
@@ -85,14 +88,43 @@ public static class CpuAdjustmentRenderer
             // The original's fine detail at this pixel, computed once when a pass softens.
             float dr = 0, dg = 0, db = 0;
             bool hasDetail = false;
-            if (p.HasSoften && soften is { } sg0)
+            if ((p.HasSoften && soften is not null) || detailFilters is not null)
             {
-                sg0.Detail(i / 4, y, out dr, out dg, out db);
-                hasDetail = true;
                 float inv = 1f / a8;
-                r = ColorMath.SrgbToLinear(Math.Clamp(input[i] * inv - p.SoftenAmount * dr, 0f, 1f));
-                g = ColorMath.SrgbToLinear(Math.Clamp(input[i + 1] * inv - p.SoftenAmount * dg, 0f, 1f));
-                b = ColorMath.SrgbToLinear(Math.Clamp(input[i + 2] * inv - p.SoftenAmount * db, 0f, 1f));
+                float s0 = input[i] * inv, s1 = input[i + 1] * inv, s2 = input[i + 2] * inv;
+                // Noise reduction and defringe: changes computed from the original (as the shader).
+                if (detailFilters is { } df)
+                {
+                    int x = i / 4;
+                    df.Centre(x, y, s0, s1, s2, out float cr, out float cg, out float cb);
+                    if (p.NoiseLuminanceAmount > 0f)
+                    {
+                        float n = p.NoiseLuminanceAmount * df.LumaNoise(x, y, cr, cg, cb);
+                        s0 -= n; s1 -= n; s2 -= n;
+                    }
+                    if (p.NoiseColorAmount > 0f)
+                    {
+                        df.ColorNoise(x, y, cr, cg, cb, out float nr, out float ng, out float nb);
+                        s0 -= p.NoiseColorAmount * nr; s1 -= p.NoiseColorAmount * ng; s2 -= p.NoiseColorAmount * nb;
+                    }
+                    if (p.HasDefringe)
+                    {
+                        df.Defringe(x, y, cr, cg, cb, p.DefringePurpleAmount, p.DefringeGreenAmount, out float fr, out float fg, out float fb);
+                        s0 += fr; s1 += fg; s2 += fb;
+                    }
+                    s0 = Math.Clamp(s0, 0f, 1f); s1 = Math.Clamp(s1, 0f, 1f); s2 = Math.Clamp(s2, 0f, 1f);
+                }
+                if (p.HasSoften && soften is { } sg0)
+                {
+                    sg0.Detail(i / 4, y, out dr, out dg, out db);
+                    hasDetail = true;
+                    s0 = Math.Clamp(s0 - p.SoftenAmount * dr, 0f, 1f);
+                    s1 = Math.Clamp(s1 - p.SoftenAmount * dg, 0f, 1f);
+                    s2 = Math.Clamp(s2 - p.SoftenAmount * db, 0f, 1f);
+                }
+                r = ColorMath.SrgbToLinear(s0);
+                g = ColorMath.SrgbToLinear(s1);
+                b = ColorMath.SrgbToLinear(s2);
             }
             else if (a8 == 255)
             {

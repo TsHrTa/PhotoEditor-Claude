@@ -82,6 +82,6 @@ public class SharpeningTests
     }
 
     [Fact]
-    public void GlobalOnly_ListsTheDetailSliders() =>
-        Assert.All(AdjustmentParameters.GlobalOnly, p => Assert.Equal(AdjustmentParameters.Detail, p.Group));
+    public void GlobalOnly_ListsTheDetailAndLensSliders() =>
+        Assert.All(AdjustmentParameters.GlobalOnly, p => Assert.Contains(p.Group, new[] { AdjustmentParameters.Detail, AdjustmentParameters.Lens }));
 }

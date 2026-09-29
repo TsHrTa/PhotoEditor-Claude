@@ -72,6 +72,18 @@ public sealed record AdjustmentSettings
     /// </summary>
     public double Soften { get; init; }
 
+    /// <summary>Luminance noise reduction 0..100 (edge-preserving smoothing of brightness only). Whole image only.</summary>
+    public double NoiseLuminance { get; init; }
+
+    /// <summary>Colour noise reduction 0..100 (smooths colour blotches, keeps brightness detail). Whole image only.</summary>
+    public double NoiseColor { get; init; }
+
+    /// <summary>Removes purple fringes at high-contrast edges, 0..100. Whole image only.</summary>
+    public double DefringePurple { get; init; }
+
+    /// <summary>Removes green fringes at high-contrast edges, 0..100. Whole image only.</summary>
+    public double DefringeGreen { get; init; }
+
     /// <summary>Dehaze −100..100: removes (positive) or adds (negative) haze, based on the photo's haze map. Also in masks.</summary>
     public double Dehaze { get; init; }
 

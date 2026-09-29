@@ -180,8 +180,13 @@ public static class LightroomXmp
             limited.Add("sharpening");
         Set("SharpenRadius", Signed(a.SharpenRadius, "0.0"));
         Set("SharpenEdgeMasking", Number(a.SharpenMasking, "0"));
-        // Closest Lightroom equivalent of the AI denoise amount: classic luminance noise reduction.
-        Set("LuminanceSmoothing", Number(a.DenoiseAmount, "0"));
+        Set("LuminanceSmoothing", Number(a.NoiseLuminance, "0"));
+        Set("ColorNoiseReduction", Number(a.NoiseColor, "0"));
+        // Lightroom's defringe amounts run 0..20.
+        Set("DefringePurpleAmount", Number(a.DefringePurple / 5, "0"));
+        Set("DefringeGreenAmount", Number(a.DefringeGreen / 5, "0"));
+        if (a.DenoiseAmount != 0)
+            notes.Add("AI denoise (Lightroom has no equivalent setting; use its own Denoise)");
 
         if (limited.Count > 0)
             notes.Add($"{string.Join(", ", limited)} beyond Lightroom's range (written at Lightroom's limit)");
@@ -441,7 +446,10 @@ public static class LightroomXmp
             SharpenAmount = Get("Sharpness"),
             SharpenRadius = Get("SharpenRadius", 1),
             SharpenMasking = Get("SharpenEdgeMasking"),
-            DenoiseAmount = Get("LuminanceSmoothing"),
+            NoiseLuminance = Get("LuminanceSmoothing"),
+            NoiseColor = Get("ColorNoiseReduction"),
+            DefringePurple = Get("DefringePurpleAmount") * 5,
+            DefringeGreen = Get("DefringeGreenAmount") * 5,
         };
         for (int i = 0; i < HslBands.Count; i++)
         {

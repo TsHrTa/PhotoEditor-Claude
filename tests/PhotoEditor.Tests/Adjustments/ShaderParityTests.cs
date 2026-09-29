@@ -42,6 +42,10 @@ public class ShaderParityTests
         { "extreme hsl", new AdjustmentSettings { Reds = new HslBand(200, 200, -200), Blues = new HslBand(-200, -100, 200) } },
         { "extreme vignette + sharpen", new AdjustmentSettings { VignetteAmount = -200, SharpenAmount = 300 } },
         { "soften", new AdjustmentSettings { Soften = 100 } },
+        { "noise luminance", new AdjustmentSettings { NoiseLuminance = 100 } },
+        { "noise color", new AdjustmentSettings { NoiseColor = 100 } },
+        { "defringe", new AdjustmentSettings { DefringePurple = 100, DefringeGreen = 100 } },
+        { "all detail", new AdjustmentSettings { NoiseLuminance = 60, NoiseColor = 80, DefringePurple = 50, SharpenAmount = 70, Soften = 30, Exposure = 0.4 } },
         { "soften + sharpen + light", new AdjustmentSettings { Soften = 60, SharpenAmount = 80, Exposure = 0.3, Contrast = 20 } },
     };
 

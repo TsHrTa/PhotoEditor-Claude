@@ -52,6 +52,14 @@ public static class AdjustmentShader
         uniform shader haze;
         uniform float3 hazeLight;
         uniform float dehazeAmount;
+        // Noise reduction and defringe (global pass only): amounts 0..1 and tap spacings in image pixels.
+        uniform float noiseLumaAmount;
+        uniform float noiseColorAmount;
+        uniform float defringePurple;
+        uniform float defringeGreen;
+        uniform float lumaNoiseStep;
+        uniform float colorNoiseStep;
+        uniform float fringeStep;
         uniform float softenAmount;
         uniform float softenStep;
         const float softenRangeSigma = 0.1;
@@ -205,6 +213,75 @@ public static class AdjustmentShader
             return c + (hazeLight - c) * (-dehazeAmount * 0.6);
         }
 
+        float lum(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
+
+        // The original photo at p, unpremultiplied; transparent pixels count as the centre colour.
+        float3 sourceAt(float2 p, float3 fallback) {
+            half4 t = source.eval(p);
+            return t.a > 0.0 ? float3(t.rgb) / t.a : fallback;
+        }
+
+        // Luminance noise at coord: brightness minus its edge-preserving 5 × 5 average (spatial sigma 1 tap,
+        // range sigma 0.05), the same for all channels so colours are kept.
+        float lumaNoise(float2 coord, float3 c0) {
+            float y0 = lum(c0);
+            float sum = 0.0;
+            float wsum = 0.0;
+            for (int j = -2; j <= 2; j++) {
+                for (int i = -2; i <= 2; i++) {
+                    float y = lum(sourceAt(coord + float2(float(i), float(j)) * lumaNoiseStep, c0));
+                    float d = y - y0;
+                    float w = exp(-float(i * i + j * j) / 2.0) * exp(-d * d / 0.005);
+                    sum += w * y;
+                    wsum += w;
+                }
+            }
+            return y0 - sum / wsum;
+        }
+
+        // Colour noise at coord: the chroma (colour minus brightness) minus its 5 × 5 average (spatial sigma 1.5 taps),
+        // guarded by brightness edges (range sigma 0.1) so colours don't bleed across edges.
+        float3 colorNoise(float2 coord, float3 c0) {
+            float y0 = lum(c0);
+            float3 sum = float3(0);
+            float wsum = 0.0;
+            for (int j = -2; j <= 2; j++) {
+                for (int i = -2; i <= 2; i++) {
+                    float3 c = sourceAt(coord + float2(float(i), float(j)) * colorNoiseStep, c0);
+                    float y = lum(c);
+                    float d = y - y0;
+                    float w = exp(-float(i * i + j * j) / 4.5) * exp(-d * d / 0.02);
+                    sum += w * (c - y);
+                    wsum += w;
+                }
+            }
+            return (c0 - y0) - sum / wsum;
+        }
+
+        float hueDistance(float h, float centre) {
+            float d = abs(h - centre);
+            return min(d, 360.0 - d);
+        }
+
+        // Defringe: desaturates purple / green pixels next to a strong brightness edge (largest difference to the
+        // 8 neighbours at fringeStep). Returns the change to add.
+        float3 defringe(float2 coord, float3 c0) {
+            float y0 = lum(c0);
+            float edgeDiff = 0.0;
+            for (int j = -1; j <= 1; j++) {
+                for (int i = -1; i <= 1; i++) {
+                    float y = lum(sourceAt(coord + float2(float(i), float(j)) * fringeStep, c0));
+                    edgeDiff = max(edgeDiff, abs(y - y0));
+                }
+            }
+            float edge = smoothstep(0.08, 0.25, edgeDiff);
+            float h = rgbToHsv(c0).x;
+            float purple = 1.0 - smoothstep(25.0, 45.0, hueDistance(h, 295.0));
+            float green = 1.0 - smoothstep(25.0, 45.0, hueDistance(h, 115.0));
+            float k = clamp((defringePurple * purple + defringeGreen * green) * edge, 0.0, 1.0);
+            return -k * (c0 - y0);
+        }
+
         half4 main(float2 coord) {
             half4 src = image.eval(coord);
             float a = src.a;
@@ -213,6 +290,13 @@ public static class AdjustmentShader
             // What this pass leaves outside its mask.
             float3 s0 = s;
             if (sharpenAmount > 0.0) s = sharpen(s, coord);
+            if (noiseLumaAmount > 0.0 || noiseColorAmount > 0.0 || defringePurple > 0.0 || defringeGreen > 0.0) {
+                float3 c0 = sourceAt(coord, s);
+                if (noiseLumaAmount > 0.0) s -= noiseLumaAmount * lumaNoise(coord, c0);
+                if (noiseColorAmount > 0.0) s -= noiseColorAmount * colorNoise(coord, c0);
+                if (defringePurple > 0.0 || defringeGreen > 0.0) s += defringe(coord, c0);
+                s = clamp(s, 0.0, 1.0);
+            }
             if (softenAmount > 0.0) s = clamp(s - softenAmount * softDetail(coord), 0.0, 1.0);
 
             // Linear light
@@ -347,6 +431,13 @@ public static class AdjustmentShader
             ["sharpenStep"] = p.SharpenRadius * pixelScale,
             ["sharpenMasking"] = p.SharpenMasking,
             ["softenAmount"] = p.SoftenAmount,
+            ["noiseLumaAmount"] = sharpen ? p.NoiseLuminanceAmount : 0f,
+            ["noiseColorAmount"] = sharpen ? p.NoiseColorAmount : 0f,
+            ["defringePurple"] = sharpen ? p.DefringePurpleAmount : 0f,
+            ["defringeGreen"] = sharpen ? p.DefringeGreenAmount : 0f,
+            ["lumaNoiseStep"] = PreparedAdjustments.LumaNoiseStep * pixelScale,
+            ["colorNoiseStep"] = PreparedAdjustments.ColorNoiseStep * pixelScale,
+            ["fringeStep"] = PreparedAdjustments.FringeStep * pixelScale,
             ["hazeLight"] = haze.Map is { } m ? new[] { m.LightR, m.LightG, m.LightB } : new[] { 1f, 1f, 1f },
             ["dehazeAmount"] = haze.Map is null ? 0f : p.DehazeAmount,
             ["softenStep"] = softenStep,

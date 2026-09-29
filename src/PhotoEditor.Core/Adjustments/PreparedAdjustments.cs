@@ -27,8 +27,18 @@ public readonly record struct PreparedAdjustments(
     float SharpenRadius,
     float SharpenMasking,
     float SoftenAmount,
-    float DehazeAmount)
+    float DehazeAmount,
+    float NoiseLuminanceAmount,
+    float NoiseColorAmount,
+    float DefringePurpleAmount,
+    float DefringeGreenAmount)
 {
+    public bool HasNoiseReduction => NoiseLuminanceAmount > 0f || NoiseColorAmount > 0f;
+    public bool HasDefringe => DefringePurpleAmount > 0f || DefringeGreenAmount > 0f;
+
+    /// <summary>Tap spacing (full-resolution pixels) of the luminance noise filter, the colour noise blur and the fringe edge test.</summary>
+    public const int LumaNoiseStep = 1, ColorNoiseStep = 2, FringeStep = 2;
+
     public bool HasDehaze => DehazeAmount != 0f;
 
     /// <summary>
@@ -92,7 +102,11 @@ public readonly record struct PreparedAdjustments(
             SharpenRadius: (float)s.SharpenRadius,
             SharpenMasking: (float)s.SharpenMasking / 100f,
             SoftenAmount: (float)Math.Clamp(s.Soften, 0, 100) / 100f,
-            DehazeAmount: (float)Math.Clamp(s.Dehaze, -100, 100) / 100f);
+            DehazeAmount: (float)Math.Clamp(s.Dehaze, -100, 100) / 100f,
+            NoiseLuminanceAmount: (float)Math.Clamp(s.NoiseLuminance, 0, 100) / 100f,
+            NoiseColorAmount: (float)Math.Clamp(s.NoiseColor, 0, 100) / 100f,
+            DefringePurpleAmount: (float)Math.Clamp(s.DefringePurple, 0, 100) / 100f,
+            DefringeGreenAmount: (float)Math.Clamp(s.DefringeGreen, 0, 100) / 100f);
     }
 
     /// <summary>

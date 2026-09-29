@@ -58,7 +58,8 @@ public static class SettingsTransfer
         if (groups.HasFlag(SettingsGroups.Vignette))
             a = a with { VignetteAmount = s.VignetteAmount, VignetteMidpoint = s.VignetteMidpoint, VignetteRoundness = s.VignetteRoundness, VignetteFeather = s.VignetteFeather };
         if (groups.HasFlag(SettingsGroups.Detail))
-            a = a with { SharpenAmount = s.SharpenAmount, SharpenRadius = s.SharpenRadius, SharpenMasking = s.SharpenMasking, DenoiseAmount = s.DenoiseAmount, DeblurAmount = s.DeblurAmount, Soften = s.Soften };
+            a = a with { SharpenAmount = s.SharpenAmount, SharpenRadius = s.SharpenRadius, SharpenMasking = s.SharpenMasking, DenoiseAmount = s.DenoiseAmount, DeblurAmount = s.DeblurAmount, Soften = s.Soften,
+                NoiseLuminance = s.NoiseLuminance, NoiseColor = s.NoiseColor, DefringePurple = s.DefringePurple, DefringeGreen = s.DefringeGreen };
 
         var result = target with { Adjustments = a };
         if (groups.HasFlag(SettingsGroups.Crop))

@@ -182,7 +182,7 @@ public class LightroomXmpTests
                xmp:Rating="4"
                crs:WhiteBalance="Custom"
                crs:Temperature="5250"
-               crs:ColorNoiseReduction="40"
+               crs:GrainAmount="40"
                crs:Exposure2012="+2.00"
                crs:HasSettings="True">
                <dc:subject><rdf:Bag><rdf:li>holiday</rdf:li></rdf:Bag></dc:subject>
@@ -198,7 +198,7 @@ public class LightroomXmpTests
         Assert.Equal("4", d.Attribute(xmp + "Rating")!.Value);
         Assert.Equal("Custom", d.Attribute(Crs + "WhiteBalance")!.Value); // Lightroom's white balance kept
         Assert.Equal("5250", d.Attribute(Crs + "Temperature")!.Value);
-        Assert.Equal("40", d.Attribute(Crs + "ColorNoiseReduction")!.Value);
+        Assert.Equal("40", d.Attribute(Crs + "GrainAmount")!.Value);
         Assert.Equal("-0.50", d.Attribute(Crs + "Exposure2012")!.Value);
         Assert.Contains("holiday", xml);
         Assert.Single(XDocument.Parse(xml).Descendants(XName.Get("Description", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")),
@@ -341,5 +341,19 @@ public class LightroomXmpTests
         var flipped = new EditState { Orientation = new PhotoOrientation(0, Flip: true) };
         var back = LightroomXmp.Read(LightroomXmp.Write(flipped, geometry, null, out _), geometry).Orientation;
         Assert.Equal(new PhotoOrientation(0, true), back);
+    }
+
+    [Fact]
+    public void NoiseReductionAndDefringe_RoundTrip()
+    {
+        var state = new EditState
+        {
+            Adjustments = new AdjustmentSettings { NoiseLuminance = 30, NoiseColor = 25, DefringePurple = 50, DefringeGreen = 20 },
+        };
+        var xml = LightroomXmp.Write(state, Landscape, null, out _);
+        Assert.Contains("crs:DefringePurpleAmount=\"10\"", xml);
+        var back = LightroomXmp.Read(xml, Landscape).Adjustments;
+        Assert.Equal((30.0, 25.0, 50.0, 20.0), (back.NoiseLuminance, back.NoiseColor, back.DefringePurple, back.DefringeGreen));
+        Assert.Equal(0, back.DenoiseAmount); // Lightroom's luminance smoothing is the manual slider, not AI denoise
     }
 }
