@@ -27,7 +27,8 @@ public sealed class AdjustmentParameter(
     public double Get(AdjustmentSettings settings) => get(settings);
 
     public AdjustmentSettings Set(AdjustmentSettings settings, double value) =>
-        set(settings, Math.Clamp(Math.Round(value / Step) * Step, Minimum, Maximum));
+        // "+ 0.0" turns a rounded -0 into 0 (shown as "-0" otherwise).
+        set(settings, Math.Clamp(Math.Round(value / Step) * Step, Minimum, Maximum) + 0.0);
 
     public override string ToString() => $"{Group}/{Label}";
 }

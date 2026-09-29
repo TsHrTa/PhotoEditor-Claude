@@ -630,7 +630,7 @@ public partial class MainViewModel : ViewModelBase
             {
                 var skipped = string.Join("; ", LightroomXmp.Save(path, State, _geometry));
                 if (skipped != _lastXmpSkipped && skipped.Length > 0)
-                    Status = $"Saved. Not in the Lightroom XMP: {skipped}";
+                    Status = $"{Status} — not in the Lightroom XMP: {skipped}";
                 _lastXmpSkipped = skipped;
             }
             _hasUnsavedEdits = false;
@@ -674,6 +674,20 @@ public partial class MainViewModel : ViewModelBase
 
     [RelayCommand(CanExecute = nameof(CanResetAll))]
     private void ResetAll() => ApplyEdit(EditState.Default);
+
+    /// <summary>Sets the global Light sliders, white balance and vibrance from the photo's statistics (one undo step).</summary>
+    [RelayCommand]
+    private void Auto()
+    {
+        if (Original is not { } image)
+            return;
+        var suggested = AutoAdjust.Suggest(image, State.Crop, State.Adjustments);
+        SelectedMask = null; // show the global sliders that changed
+        ApplyEdit(State with { Adjustments = suggested });
+        var a = suggested;
+        Status = FormattableString.Invariant(
+            $"Auto: exposure {a.Exposure:+0.00;-0.00;0}, contrast {a.Contrast:+0;-0;0}, highlights {a.Highlights:+0;-0;0}, shadows {a.Shadows:+0;-0;0}, whites {a.Whites:+0;-0;0}, blacks {a.Blacks:+0;-0;0}, temp {a.Temperature:+0;-0;0}, tint {a.Tint:+0;-0;0}, vibrance {a.Vibrance:+0;-0;0}");
+    }
 
     private bool CanResetAll() => !State.IsDefault;
 

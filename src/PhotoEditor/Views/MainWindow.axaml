@@ -32,6 +32,8 @@
             <Button Content="100%" Click="OnActualSizeClick" ToolTip.Tip="Actual pixels (Ctrl+1)" IsEnabled="{Binding HasImage}" />
             <ToggleButton Content="Before" IsChecked="{Binding ShowOriginal}" IsEnabled="{Binding HasImage}"
                           ToolTip.Tip="Show the original image (\)" />
+            <Button Content="Auto" Command="{Binding AutoCommand}" IsEnabled="{Binding HasImage}"
+                    ToolTip.Tip="Suggest exposure, contrast, highlights, shadows, whites, blacks, white balance and vibrance for this photo (Ctrl+U). Undo with Ctrl+Z." />
             <Button Content="Reset all" Command="{Binding ResetAllCommand}"
                     ToolTip.Tip="Reset all adjustments. Double-click a slider to reset just that one." />
         </StackPanel>

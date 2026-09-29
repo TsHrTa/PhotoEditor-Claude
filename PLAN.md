@@ -46,6 +46,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Crop tool (crop rectangle, aspect ratio presets, straighten angle)
 - [x] Lightroom-compatible edits: write/read Adobe Camera Raw XMP (`crs:` settings) so Lightroom can open the edits
 - [x] XMP sidecars for every format (JPEG, PNG, DNG too); originals are never modified, export never overwrites the source
+- [x] Auto button (classic, non-AI): suggest Light sliders, white balance and vibrance from the photo's statistics
 
 ### Phase 4 – AI masks
 - [ ] ONNX Runtime integration (DirectML with CPU fallback), model download on first use
@@ -99,7 +100,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: XMP for all formats (user request: also JPEG/DNG, never change originals, export just creates a new JPG; no "export for Lightroom"). Every edited photo gets a sidecar; JPEG/PNG write white balance as `IncrementalTemperature/IncrementalTint` (relative, like Lightroom does for rendered files), RAW still skips it. Naming: `IMG_0001.xmp`; when a proprietary RAW shares the base name (RAW+JPEG pairs) the other file uses `IMG_0001.JPG.xmp` so they don't overwrite each other. Orientation for JPEG crops comes from the JPEG's EXIF (`ImageLoader.ReadOrientation`). `ImageExporter` refuses a destination equal to the source (case-insensitive). Note for the user: Lightroom Classic reads sidecars automatically only for proprietary RAW; for JPEG/DNG it reads XMP embedded in the file, so these sidecars may be ignored there. Next: Phase 4 (AI masks) or auto-edit, as the user decides.
 
+- 2026-09-29: Auto done. `Core/Adjustments/AutoAdjust.Suggest` samples a 250×250 grid inside the crop (unedited pixels, so Auto is repeatable) and sets, step by step, each checked through the real pipeline: white balance = half-way grey-world on mid-tones (±40 temp / ±30 tint), exposure = median perceptual brightness → 0.45 with a soft limit (+4 EV needed → ≈ +2, max ±2.5) so night / high-key shots keep their mood, contrast from the 10–90 % spread, highlights from clipping, shadows from the dark fraction, whites / blacks stretch the 0.5 / 99.5 % points towards 0.97 / 0.02 (two passes), vibrance for muted photos. HSL, saturation, vignette and masks are kept. "Auto" toolbar button / Ctrl+U, one undo step, sliders switch to the whole image, status shows the values. Tested on synthetic scenes (dark, bright, flat, colour casts, crop). On the dark blue CR2 it gives +2.4 EV, shadows +50, temp +40 — reasonable but strong; the constants are guesses to tune on real photos. Also fixed sliders showing "-0". Next: Phase 4.
+
 ### To check visually (Windows)
+- Auto on a range of your own photos (daylight, backlit, night, snow, portraits): too strong / too weak? Tell me which and I'll tune the constants in `AutoAdjust`.
 - Lightroom with a JPEG / DNG edited here: does it pick up `IMG_0001.xmp` (Metadata → Read Metadata from File)? Lightroom Classic is documented to ignore sidecars for these formats.
 - Lightroom: import a CR3 edited here (or Metadata → Read Metadata from File): exposure/HSL/vignette/gradients show up; crop matches for a landscape AND a portrait shot; straighten turns the right way (the CropAngle sign is my best guess); linear gradient direction and radial size/feather look right.
 - Crop: handles at the image border are half outside the view (still grabbable); drag feel with aspect lock; straighten direction feels natural.

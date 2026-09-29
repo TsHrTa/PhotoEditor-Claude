@@ -23,6 +23,7 @@ public partial class MainWindow : Window
         AddKeyBinding(Key.O, new AsyncRelayCommand(OpenAsync));
         AddKeyBinding(Key.E, new AsyncRelayCommand(ExportAsync));
         AddKeyBinding(Key.S, new RelayCommand(() => ViewModel?.SaveEdits()));
+        AddKeyBinding(Key.U, new RelayCommand(() => ViewModel?.AutoCommand.Execute(null)));
         AddKeyBinding(Key.Z, new RelayCommand(() => ViewModel?.UndoCommand.Execute(null)));
         AddKeyBinding(Key.Y, new RelayCommand(() => ViewModel?.RedoCommand.Execute(null)));
         KeyBindings.Add(new KeyBinding
