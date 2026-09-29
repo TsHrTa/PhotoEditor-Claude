@@ -16,6 +16,9 @@ public static class AdjustmentShader
         uniform float shadowsAmount;
         uniform float whitesAmount;
         uniform float blacksAmount;
+        uniform float3 whiteBalance;
+        uniform float saturationFactor;
+        uniform float vibranceAmount;
 
         const float perceptualGamma = 2.2;
 
@@ -51,12 +54,20 @@ public static class AdjustmentShader
 
             // Linear light
             c = float3(srgbToLinear(c.r), srgbToLinear(c.g), srgbToLinear(c.b));
-            c *= exposureGain;
+            c *= whiteBalance * exposureGain;
 
             // Tone curve on perceptual luminance, applied as a ratio
             float y = dot(c, float3(0.2126, 0.7152, 0.0722));
             float y2 = pow(toneCurve(pow(max(y, 0.0), 1.0 / perceptualGamma)), perceptualGamma);
             c = y > 1e-6 ? c * (y2 / y) : float3(y2);
+
+            // Vibrance then saturation around luminance
+            float mx = max(c.r, max(c.g, c.b));
+            float mn = min(c.r, min(c.g, c.b));
+            float sat = mx > 1e-6 ? (mx - mn) / mx : 0.0;
+            float factor = (1.0 + vibranceAmount * (1.0 - sat)) * saturationFactor;
+            y = dot(c, float3(0.2126, 0.7152, 0.0722));
+            c = max(y + (c - y) * factor, 0.0);
 
             c = clamp(c, 0.0, 1.0);
             c = float3(linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b));
@@ -83,6 +94,9 @@ public static class AdjustmentShader
             ["shadowsAmount"] = p.ShadowsAmount,
             ["whitesAmount"] = p.WhitesAmount,
             ["blacksAmount"] = p.BlacksAmount,
+            ["whiteBalance"] = new[] { p.WhiteBalanceR, p.WhiteBalanceG, p.WhiteBalanceB },
+            ["saturationFactor"] = p.SaturationFactor,
+            ["vibranceAmount"] = p.VibranceAmount,
         };
         using var imageShader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
         var children = new SKRuntimeEffectChildren(effect)

@@ -76,9 +76,9 @@ public static class CpuAdjustmentRenderer
     /// <summary>The per-pixel adjustment math on linear-light RGB.</summary>
     public static void ApplyLinear(ref float r, ref float g, ref float b, in PreparedAdjustments p)
     {
-        r *= p.ExposureGain;
-        g *= p.ExposureGain;
-        b *= p.ExposureGain;
+        r *= p.WhiteBalanceR * p.ExposureGain;
+        g *= p.WhiteBalanceG * p.ExposureGain;
+        b *= p.WhiteBalanceB * p.ExposureGain;
 
         // Tone: curve on perceptual luminance, applied to RGB as a ratio (keeps hue).
         float y = ToneCurve.Luminance(r, g, b);
@@ -96,5 +96,15 @@ public static class CpuAdjustmentRenderer
         {
             r = g = b = y2;
         }
+
+        // Vibrance (weighted by how muted the colour is), then saturation, around luminance.
+        float max = MathF.Max(r, MathF.Max(g, b));
+        float min = MathF.Min(r, MathF.Min(g, b));
+        float sat = max > 1e-6f ? (max - min) / max : 0f;
+        float factor = (1f + p.VibranceAmount * (1f - sat)) * p.SaturationFactor;
+        y = ToneCurve.Luminance(r, g, b);
+        r = MathF.Max(y + (r - y) * factor, 0f);
+        g = MathF.Max(y + (g - y) * factor, 0f);
+        b = MathF.Max(y + (b - y) * factor, 0f);
     }
 }

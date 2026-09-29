@@ -19,5 +19,17 @@ public sealed record AdjustmentSettings
     public double Whites { get; init; }
     public double Blacks { get; init; }
 
+    /// <summary>-100 (cooler/blue) .. +100 (warmer/yellow).</summary>
+    public double Temperature { get; init; }
+
+    /// <summary>-100 (green) .. +100 (magenta).</summary>
+    public double Tint { get; init; }
+
+    /// <summary>-100 (greyscale) .. +100.</summary>
+    public double Saturation { get; init; }
+
+    /// <summary>-100..+100; like saturation but affects muted colours more than saturated ones.</summary>
+    public double Vibrance { get; init; }
+
     public bool IsDefault => this == Default;
 }

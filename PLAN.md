@@ -24,7 +24,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Zoom (fit / 100% / mouse wheel) and pan
 - [x] Adjustment pipeline: settings model + SkSL shader rendering on a preview-sized image
 - [x] Light: exposure, contrast, highlights, shadows, whites, blacks
-- [ ] Color: temperature, tint, saturation, vibrance
+- [x] Color: temperature, tint, saturation, vibrance
 - [ ] HSL panel: hue / saturation / luminance per color band (reds, oranges, yellows, greens, aquas, blues, purples, magentas)
 - [ ] Before/after toggle, reset per slider (double-click) and reset all
 - [ ] Export full resolution (JPEG quality, PNG), keep EXIF
@@ -61,7 +61,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Light sliders done. After exposure (linear), a tone curve (`Core/Adjustments/ToneCurve`) runs on perceptual luminance (Y^(1/2.2)) and is applied to RGB as a ratio so hue is kept: contrast = S-curve around 0.5, highlights = shift weighted by smoothstep(0.35..1) (negative recovers over-exposed values), shadows = bump peaking at 1/3, whites/blacks = x⁴ / (1-x)⁴ end shifts. Tests check monotonicity and shader parity. Strengths are my own guesses, not calibrated to Lightroom. Next: Color (temperature, tint, saturation, vibrance).
 
+- 2026-09-29: Color sliders done. Temperature/tint = linear RGB gains (luminance-normalised) applied with exposure; vibrance (weighted by 1 − current saturation) and saturation scale chroma around luminance after the tone curve. No skin-tone protection in vibrance. Next: HSL panel.
+
 ### To check visually (Windows)
+- Temperature/tint direction and strength look natural (±100 = exp(±0.35) red/blue gain).
 - Light slider strengths feel reasonable on real photos (constants in `PreparedAdjustments.From`).
 - Live preview is GPU-accelerated and smooth while dragging sliders on a 24MP JPEG (Xvfb here renders in software).
 - Mouse-wheel zoom step feels right with a real wheel / precision touchpad (1.25x per notch).

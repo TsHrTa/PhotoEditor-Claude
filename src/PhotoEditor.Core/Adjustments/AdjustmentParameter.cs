@@ -36,6 +36,7 @@ public sealed class AdjustmentParameter(
 public static class AdjustmentParameters
 {
     public const string Light = "Light";
+    public const string Color = "Color";
 
     public static readonly AdjustmentParameter Exposure =
         new(Light, "Exposure", -5, 5, s => s.Exposure, (s, v) => s with { Exposure = v }, format: "+0.00;-0.00;0.00", step: 0.01);
@@ -55,6 +56,21 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter Blacks =
         new(Light, "Blacks", -100, 100, s => s.Blacks, (s, v) => s with { Blacks = v });
 
+    public static readonly AdjustmentParameter Temperature =
+        new(Color, "Temperature", -100, 100, s => s.Temperature, (s, v) => s with { Temperature = v });
+
+    public static readonly AdjustmentParameter Tint =
+        new(Color, "Tint", -100, 100, s => s.Tint, (s, v) => s with { Tint = v });
+
+    public static readonly AdjustmentParameter Vibrance =
+        new(Color, "Vibrance", -100, 100, s => s.Vibrance, (s, v) => s with { Vibrance = v });
+
+    public static readonly AdjustmentParameter Saturation =
+        new(Color, "Saturation", -100, 100, s => s.Saturation, (s, v) => s with { Saturation = v });
+
     public static readonly IReadOnlyList<AdjustmentParameter> All =
-        [Exposure, Contrast, Highlights, Shadows, Whites, Blacks];
+    [
+        Exposure, Contrast, Highlights, Shadows, Whites, Blacks,
+        Temperature, Tint, Vibrance, Saturation,
+    ];
 }

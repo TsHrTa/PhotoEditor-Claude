@@ -19,6 +19,12 @@ public class ShaderParityTests
         { "shadows-", new AdjustmentSettings { Shadows = -100 } },
         { "whites", new AdjustmentSettings { Whites = 60 } },
         { "blacks", new AdjustmentSettings { Blacks = -80 } },
+        { "warm", new AdjustmentSettings { Temperature = 70, Tint = 20 } },
+        { "cool green", new AdjustmentSettings { Temperature = -100, Tint = -100 } },
+        { "saturation+", new AdjustmentSettings { Saturation = 80 } },
+        { "greyscale", new AdjustmentSettings { Saturation = -100 } },
+        { "vibrance", new AdjustmentSettings { Vibrance = 100 } },
+        { "vibrance-", new AdjustmentSettings { Vibrance = -70, Saturation = 20 } },
         { "all light", new AdjustmentSettings { Exposure = 0.4, Contrast = 25, Highlights = -40, Shadows = 35, Whites = 15, Blacks = -10 } },
     };
 
