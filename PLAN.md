@@ -49,7 +49,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Auto button (classic, non-AI): suggest Light sliders, white balance and vibrance from the photo's statistics
 
 ### Phase 4 – AI masks
-- [ ] ONNX Runtime integration (DirectML with CPU fallback), model download on first use
+- [x] ONNX Runtime integration (DirectML with CPU fallback), model download on first use
 - [ ] Click / box to select (MobileSAM or EfficientSAM)
 - [ ] Select Subject (BiRefNet-lite)
 - [ ] Select Sky / People (SegFormer)
@@ -102,7 +102,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Auto done. `Core/Adjustments/AutoAdjust.Suggest` samples a 250×250 grid inside the crop (unedited pixels, so Auto is repeatable) and sets, step by step, each checked through the real pipeline: white balance = half-way grey-world on mid-tones (±40 temp / ±30 tint), exposure = median perceptual brightness → 0.45 with a soft limit (+4 EV needed → ≈ +2, max ±2.5) so night / high-key shots keep their mood, contrast from the 10–90 % spread, highlights from clipping, shadows from the dark fraction, whites / blacks stretch the 0.5 / 99.5 % points towards 0.97 / 0.02 (two passes), vibrance for muted photos. HSL, saturation, vignette and masks are kept. "Auto" toolbar button / Ctrl+U, one undo step, sliders switch to the whole image, status shows the values. Tested on synthetic scenes (dark, bright, flat, colour casts, crop). On the dark blue CR2 it gives +2.4 EV, shadows +50, temp +40 — reasonable but strong; the constants are guesses to tune on real photos. Also fixed sliders showing "-0". Next: Phase 4.
 
+- 2026-09-29: ONNX Runtime integration done (Phase 4 item 1). ONNX Runtime 1.24.4: Core uses the managed API (`Microsoft.ML.OnnxRuntime.Managed`); the app references `Microsoft.ML.OnnxRuntime.DirectML` on Windows (ships DirectML.dll, checked with a win-x64 cross-build) and the CPU package elsewhere; tests use the CPU package. `Core/Ai/OnnxModel` loads a model on DirectML (memory pattern off, sequential, as DML requires) and falls back to CPU with a reason (`Device`, `FallbackReason`); `Run` takes/returns named float tensors. `Core/Ai/ModelStore` keeps models in `%LOCALAPPDATA%\PhotoEditor\models`, downloads on first use to a `.part` file with progress and SHA-256 check (rejects and deletes on mismatch). Tested with a tiny generated model (`tests/.../Assets/sigmoid2x.onnx`, sigmoid(2x)) and a fake HTTP handler. No UI yet: it comes with the first real model. BLOCKER for the next items: huggingface.co is not reachable from this cloud environment, so I cannot download the real models (MobileSAM, BiRefNet, SegFormer) to get their hashes and test inference here. Next: click/box select (MobileSAM) once the network allows Hugging Face.
+
 ### To check visually (Windows)
+- (When the first AI model exists) status shows DirectML/GPU being used on your PC, not the CPU fallback.
 - Auto on a range of your own photos (daylight, backlit, night, snow, portraits): too strong / too weak? Tell me which and I'll tune the constants in `AutoAdjust`.
 - Lightroom with a JPEG / DNG edited here: does it pick up `IMG_0001.xmp` (Metadata → Read Metadata from File)? Lightroom Classic is documented to ignore sidecars for these formats.
 - Lightroom: import a CR3 edited here (or Metadata → Read Metadata from File): exposure/HSL/vignette/gradients show up; crop matches for a landscape AND a portrait shot; straighten turns the right way (the CropAngle sign is my best guess); linear gradient direction and radial size/feather look right.
