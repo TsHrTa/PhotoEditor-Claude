@@ -135,6 +135,8 @@ public static class LightroomXmp
             Set("IncrementalTemperature", Signed(a.Temperature));
             Set("IncrementalTint", Signed(a.Tint));
         }
+        if (a.DeblurAmount != 0)
+            notes.Add("AI deblur (Lightroom has no equivalent setting)");
 
         Set("Exposure2012", Signed(a.Exposure, "0.00"));
         Set("Contrast2012", Signed(a.Contrast));

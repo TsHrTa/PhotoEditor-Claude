@@ -57,6 +57,15 @@ public static class ModelCatalog
     /// <summary>Files needed for AI Denoise (≈ 77 MB).</summary>
     public static IReadOnlyList<ModelInfo> Denoise { get; } = [DenoiseGraph, DenoiseData];
 
+    /// <summary>NAFNet deblurring (trained on motion blur), OpenCV model zoo, single file, RGB 0..1 in and out.</summary>
+    public static readonly ModelInfo DeblurGraph = new("nafnet-deblur/deblurring_nafnet_2025may.onnx", "AI Deblur",
+        "https://huggingface.co/opencv/deblurring_nafnet/resolve/f1f255116cdb628a311d2b5749871189a4639d84/deblurring_nafnet_2025may.onnx",
+        "07263f416febecce10193dd648e950b22e397cf521eedab1a114ef77b2bc9587", 91_736_251,
+        "MIT (NAFNet by Megvii Research; ONNX by the OpenCV model zoo)");
+
+    /// <summary>Files needed for AI Deblur (≈ 92 MB).</summary>
+    public static IReadOnlyList<ModelInfo> Deblur { get; } = [DeblurGraph];
+
     /// <summary>ADE20K class indices (0-based, as in the model's output).</summary>
     public const int AdeSky = 2, AdePerson = 12;
 }

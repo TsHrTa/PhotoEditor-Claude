@@ -5,19 +5,33 @@ using SkiaSharp;
 namespace PhotoEditor.Core.Ai;
 
 /// <summary>Progress of a tiled AI operation.</summary>
+
+/// <summary>Window sizes a model accepts: a multiple of <paramref name="Multiple"/> and at least <paramref name="Minimum"/> (full <see cref="ImageRestorer.Window"/>-sized windows must satisfy both).</summary>
+public readonly record struct WindowShape(int Multiple, int Minimum);
+
 public readonly record struct TileProgress(int Done, int Total)
 {
     public double Fraction => Total == 0 ? 1 : (double)Done / Total;
 }
 
+/// <summary>What an <see cref="ImageRestorer"/> does.</summary>
+public enum RestoreKind
+{
+    /// <summary>Noise reduction (SCUNet, real-photo variant).</summary>
+    Denoise,
+
+    /// <summary>Deblur / sharpen (NAFNet, trained on motion blur).</summary>
+    Deblur,
+}
+
 /// <summary>
-/// AI noise reduction with SCUNet (real-photo variant). Full photos do not fit the model, so it runs on
+/// AI photo restoration: noise reduction with SCUNet or deblurring with NAFNet. Full photos do not fit the models, so they run on
 /// overlapping 512 × 512 windows; neighbouring results are cross-faded over the overlap (each window's output
 /// drifts slightly in brightness, which a hard cut shows as bands in flat dark areas). Rows of windows are
 /// accumulated in a band buffer, so memory stays small even for 24 MP photos.
 /// Input / output are RGB 0..1, sizes divisible by 8.
 /// </summary>
-public sealed class Denoiser : IDisposable
+public sealed class ImageRestorer : IDisposable
 {
     /// <summary>Model input window (divisible by 8).</summary>
     public const int Window = 512;
@@ -27,25 +41,42 @@ public sealed class Denoiser : IDisposable
 
     private readonly OnnxModel _model;
 
-    private Denoiser(OnnxModel model) => _model = model;
+    private ImageRestorer(OnnxModel model, RestoreKind kind)
+    {
+        _model = model;
+        Kind = kind;
+    }
+
+    public RestoreKind Kind { get; }
 
     public InferenceDevice Device => _model.Device;
     public string? FallbackReason => _model.FallbackReason;
 
-    public static Denoiser Load(ModelStore store, InferenceDevice preferred = InferenceDevice.DirectML) =>
-        new(OnnxModel.Load(store.PathOf(ModelCatalog.DenoiseGraph), preferred));
+    /// <summary>The model files for <paramref name="kind"/> (the first one is the graph to load).</summary>
+    public static IReadOnlyList<ModelInfo> ModelFiles(RestoreKind kind) =>
+        kind == RestoreKind.Denoise ? ModelCatalog.Denoise : ModelCatalog.Deblur;
 
-    /// <summary>Returns the denoised photo (same size, RGBA8888 premultiplied, alpha kept).</summary>
-    public SKBitmap Denoise(SKBitmap image, IProgress<TileProgress>? progress = null, CancellationToken cancel = default) =>
+    public static ImageRestorer Load(ModelStore store, RestoreKind kind, InferenceDevice preferred = InferenceDevice.DirectML) =>
+        new(OnnxModel.Load(store.PathOf(ModelFiles(kind)[0]), preferred), kind);
+
+    /// <summary>Returns the restored photo (same size, RGBA8888 premultiplied, alpha kept).</summary>
+    public SKBitmap Restore(SKBitmap image, IProgress<TileProgress>? progress = null, CancellationToken cancel = default) =>
         ProcessTiles(image, input => _model.Run(new Dictionary<string, Tensor> { [_model.InputNames[0]] = input })[_model.OutputNames[0]],
-            progress, cancel);
+            progress, cancel, ShapeFor(Kind));
+
+    /// <summary>
+    /// Window sizes the model accepts (small photos and thin strips are mirror-padded up to them): SCUNet's
+    /// attention windows need a multiple of 64; NAFNet's channel attention pools over a fixed area, so ≥ 384 px.
+    /// </summary>
+    private static WindowShape ShapeFor(RestoreKind kind) =>
+        kind == RestoreKind.Deblur ? new(Multiple: 16, Minimum: 384) : new(Multiple: 64, Minimum: 64);
 
     /// <summary>
     /// Runs <paramref name="run"/> (1 × 3 × H × W RGB 0..1 → same shape) over the image in overlapping windows
-    /// and assembles the cross-faded result. Windows larger than a small image are mirror-padded to a multiple of 8.
+    /// and assembles the cross-faded result. Windows larger than a small image are mirror-padded to the model's <paramref name="shape"/>.
     /// </summary>
     public static SKBitmap ProcessTiles(SKBitmap image, Func<Tensor, Tensor> run, IProgress<TileProgress>? progress = null,
-        CancellationToken cancel = default)
+        CancellationToken cancel = default, WindowShape? shape = null)
     {
         using var converted = image.ColorType == SKColorType.Rgba8888 && image.AlphaType == SKAlphaType.Premul
             ? null
@@ -56,7 +87,9 @@ public sealed class Denoiser : IDisposable
         int srcRow = source.RowBytes;
         var dst = new byte[width * 4 * height];
 
-        int winW = Math.Min(Window, RoundUp8(width)), winH = Math.Min(Window, RoundUp8(height));
+        var (multiple, minimum) = shape ?? new WindowShape(8, 8);
+        int winW = Math.Max(minimum, Math.Min(Window, RoundUp(width, multiple)));
+        int winH = Math.Max(minimum, Math.Min(Window, RoundUp(height, multiple)));
         var xs = Starts(width, winW);
         var ys = Starts(height, winH);
         int total = xs.Length * ys.Length, done = 0;
@@ -167,7 +200,7 @@ public sealed class Denoiser : IDisposable
 
     private static byte ToByte(float v) => (byte)Math.Clamp((int)(v * 255f + 0.5f), 0, 255);
 
-    private static int RoundUp8(int v) => (v + 7) / 8 * 8;
+    private static int RoundUp(int v, int multiple) => (v + multiple - 1) / multiple * multiple;
 
     /// <summary>Mirror-pads coordinates outside 0..size-1.</summary>
     private static int Mirror(int v, int size)
@@ -198,13 +231,13 @@ public sealed class Denoiser : IDisposable
 }
 
 /// <summary>
-/// Keeps denoised photos on disk (<c>%LOCALAPPDATA%\PhotoEditor\cache\denoise</c>), keyed by the photo's path,
-/// size and modification time, so the slow AI step runs once per photo.
+/// Keeps AI-restored photos on disk (<c>%LOCALAPPDATA%\PhotoEditor\cache\restore</c>), keyed by the photo's path,
+/// size and modification time plus a variant (e.g. "denoise", "deblur-of-denoised"), so the slow AI steps run once per photo.
 /// </summary>
-public sealed class DenoiseCache(string directory)
+public sealed class RestoreCache(string directory)
 {
     public static string DefaultDirectory =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PhotoEditor", "cache", "denoise");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PhotoEditor", "cache", "restore");
 
     public string Directory { get; } = directory;
 
@@ -212,17 +245,17 @@ public sealed class DenoiseCache(string directory)
     public const int Version = 2;
 
     /// <summary>Cache file for the photo at <paramref name="imagePath"/> (changes when the photo file changes).</summary>
-    public string PathFor(string imagePath)
+    public string PathFor(string imagePath, string variant)
     {
         var info = new FileInfo(imagePath);
-        var key = $"{Path.GetFullPath(imagePath).ToLowerInvariant()}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{ModelCatalog.DenoiseGraph.Sha256}|v{Version}";
+        var key = $"{Path.GetFullPath(imagePath).ToLowerInvariant()}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{variant}|v{Version}";
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..32];
         return Path.Combine(Directory, hash + ".png");
     }
 
-    public SKBitmap? Load(string imagePath, int width, int height)
+    public SKBitmap? Load(string imagePath, string variant, int width, int height)
     {
-        var path = PathFor(imagePath);
+        var path = PathFor(imagePath, variant);
         if (!File.Exists(path))
             return null;
         using var decoded = SKBitmap.Decode(path);
@@ -231,10 +264,10 @@ public sealed class DenoiseCache(string directory)
         return decoded.Copy(SKColorType.Rgba8888);
     }
 
-    public void Save(string imagePath, SKBitmap denoised)
+    public void Save(string imagePath, string variant, SKBitmap denoised)
     {
         System.IO.Directory.CreateDirectory(Directory);
-        var path = PathFor(imagePath);
+        var path = PathFor(imagePath, variant);
         var temp = path + ".tmp";
         using (var data = denoised.Encode(SKEncodedImageFormat.Png, 1) ?? throw new InvalidOperationException("Could not encode."))
         using (var file = File.Create(temp))

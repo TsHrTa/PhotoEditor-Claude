@@ -549,8 +549,9 @@ public partial class MainViewModel : ViewModelBase
     {
         SyncMasks();
         RefreshSliders();
-        if (oldValue.Adjustments.DenoiseAmount != newValue.Adjustments.DenoiseAmount)
-            ScheduleDenoiseUpdate();
+        if (oldValue.Adjustments.DenoiseAmount != newValue.Adjustments.DenoiseAmount
+            || oldValue.Adjustments.DeblurAmount != newValue.Adjustments.DeblurAmount)
+            ScheduleRestoreUpdate();
         if (oldValue.Crop != newValue.Crop)
         {
             if (!_settingCropAngle)
@@ -798,9 +799,9 @@ public partial class MainViewModel : ViewModelBase
         try
         {
             var watch = Stopwatch.StartNew();
-            if (await ExportSourceAsync(original, state.Adjustments.DenoiseAmount) is not { } exportSource)
+            if (await ExportSourceAsync(original, (state.Adjustments.DenoiseAmount / 100, state.Adjustments.DeblurAmount / 100)) is not { } exportSource)
             {
-                Status = "Export stopped: the AI denoise did not finish.";
+                Status = "Export stopped: the AI denoise / deblur did not finish.";
                 return;
             }
             Status = $"Exporting {Path.GetFileName(path)}…";
@@ -870,7 +871,7 @@ public partial class MainViewModel : ViewModelBase
             UpdateHistoryCommands();
             ShowOriginal = false;
             FilePath = path;
-            ResetDenoise(preview);
+            ResetRestore(preview);
             Status = $"{bitmap.Width} × {bitmap.Height}{sidecarNote}";
             return true;
         }

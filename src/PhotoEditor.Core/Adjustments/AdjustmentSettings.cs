@@ -60,6 +60,12 @@ public sealed record AdjustmentSettings
     /// </summary>
     public double DenoiseAmount { get; init; }
 
+    /// <summary>
+    /// AI deblur / sharpen 0..100: blend towards the AI-deblurred photo (computed once per photo, from the denoised
+    /// photo when Denoise is on). Whole image only.
+    /// </summary>
+    public double DeblurAmount { get; init; }
+
     // HSL panel, one entry per colour band (see HslBands).
     public HslBand Reds { get; init; } = HslBand.Zero;
     public HslBand Oranges { get; init; } = HslBand.Zero;

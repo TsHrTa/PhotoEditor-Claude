@@ -102,8 +102,11 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter DenoiseAmount =
         new(Detail, "Denoise (AI)", 0, 100, s => s.DenoiseAmount, (s, v) => s with { DenoiseAmount = v }, id: "denoiseAmount");
 
+    public static readonly AdjustmentParameter DeblurAmount =
+        new(Detail, "Deblur (AI)", 0, 100, s => s.DeblurAmount, (s, v) => s with { DeblurAmount = v }, id: "deblurAmount");
+
     /// <summary>Parameters that only apply to the whole image (not inside masks).</summary>
-    public static readonly IReadOnlyList<AdjustmentParameter> GlobalOnly = [DenoiseAmount, SharpenAmount, SharpenRadius, SharpenMasking];
+    public static readonly IReadOnlyList<AdjustmentParameter> GlobalOnly = [DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking];
 
     public static readonly IReadOnlyList<AdjustmentParameter> Hsl = CreateHsl();
 
@@ -113,7 +116,7 @@ public static class AdjustmentParameters
         Temperature, Tint, Vibrance, Saturation,
         .. Hsl,
         VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
-        DenoiseAmount, SharpenAmount, SharpenRadius, SharpenMasking,
+        DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking,
     ];
 
     /// <summary>Parameter with the given <see cref="AdjustmentParameter.Id"/>, or null.</summary>
