@@ -176,7 +176,11 @@ public sealed class EmbeddedPreviewTests : IDisposable
         Assert.True(full.Width >= 2000, $"{full.Width} × {full.Height}");
         Assert.Equal(320, Math.Max(thumb.Width, thumb.Height));
         watch.Restart();
+        var geometry = PhotoEditor.Core.Editing.EditStore.ReadGeometry(path);
+        Console.WriteLine($"RAW size query {geometry.Width} × {geometry.Height}: {watch.Elapsed.TotalMilliseconds:0} ms");
+        watch.Restart();
         using var decoded = ImageLoader.Load(path);
+        Assert.Equal((geometry.Width, geometry.Height), (decoded.Width, decoded.Height));
         Console.WriteLine($"full RAW decode {decoded.Width} × {decoded.Height}: {watch.Elapsed.TotalMilliseconds:0} ms");
         Console.WriteLine($"embedded preview {full.Width} × {full.Height}: {fullTime.TotalMilliseconds:0} ms; thumbnail {thumbTime.TotalMilliseconds:0} ms");
     }

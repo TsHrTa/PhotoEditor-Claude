@@ -27,9 +27,8 @@ public partial class MainWindow : Window
             Gesture = new KeyGesture(Key.O, KeyModifiers.Control | KeyModifiers.Shift),
             Command = new AsyncRelayCommand(OpenFolderAsync),
         });
-        // Arrow keys: a focused slider or list uses them itself; elsewhere they move through the folder.
-        AddPlainKeyBinding(Key.Right, () => ViewModel?.NextPhotoCommand.Execute(null));
-        AddPlainKeyBinding(Key.Left, () => ViewModel?.PreviousPhotoCommand.Execute(null));
+        // Arrow keys move through the folder. Handled before focus navigation (which would take them otherwise).
+        AddHandler(KeyDownEvent, OnArrowKey, RoutingStrategies.Tunnel);
         AddKeyBinding(Key.E, new AsyncRelayCommand(ExportAsync));
         AddKeyBinding(Key.S, new RelayCommand(() => ViewModel?.SaveEdits()));
         AddKeyBinding(Key.U, new RelayCommand(() => ViewModel?.AutoCommand.Execute(null)));
@@ -91,6 +90,22 @@ public partial class MainWindow : Window
         });
 
     private MainViewModel? ViewModel => DataContext as MainViewModel;
+
+    /// <summary>← / → open the previous / next photo, unless a control that uses arrow keys has the focus.</summary>
+    private void OnArrowKey(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyModifiers != KeyModifiers.None || e.Key is not (Key.Left or Key.Right) || ViewModel is not { } vm)
+            return;
+        for (var v = FocusManager?.GetFocusedElement() as Visual; v is not null; v = v.GetVisualParent())
+        {
+            if (v is TextBox or Slider or ListBox or ComboBox or NumericUpDown)
+                return;
+        }
+        var command = e.Key == Key.Right ? vm.NextPhotoCommand : vm.PreviousPhotoCommand;
+        if (command.CanExecute(null))
+            command.Execute(null);
+        e.Handled = true;
+    }
 
     protected override void OnClosing(WindowClosingEventArgs e)
     {

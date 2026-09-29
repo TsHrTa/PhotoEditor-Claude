@@ -31,13 +31,13 @@
             <Button Content="Undo" Command="{Binding UndoCommand}" ToolTip.Tip="Undo (Ctrl+Z)" />
             <Button Content="Redo" Command="{Binding RedoCommand}" ToolTip.Tip="Redo (Ctrl+Y / Ctrl+Shift+Z)" />
             <Border Width="16" />
-            <Button Content="Fit" Click="OnFitClick" ToolTip.Tip="Fit to window (Ctrl+0)" IsEnabled="{Binding HasImage}" />
-            <Button Content="100%" Click="OnActualSizeClick" ToolTip.Tip="Actual pixels (Ctrl+1)" IsEnabled="{Binding HasImage}" />
+            <Button Content="Fit" Click="OnFitClick" ToolTip.Tip="Fit to window (Ctrl+0)" IsEnabled="{Binding HasPreview}" />
+            <Button Content="100%" Click="OnActualSizeClick" ToolTip.Tip="Actual pixels (Ctrl+1)" IsEnabled="{Binding HasPreview}" />
             <ToggleButton Content="Before" IsChecked="{Binding ShowOriginal}" IsEnabled="{Binding HasImage}"
                           ToolTip.Tip="Show the original image (\)" />
             <Button Content="Auto" Command="{Binding AutoCommand}" IsEnabled="{Binding HasImage}"
                     ToolTip.Tip="Suggest exposure, contrast, highlights, shadows, whites, blacks, white balance and vibrance for this photo (Ctrl+U). Undo with Ctrl+Z." />
-            <Button Content="Reset all" Command="{Binding ResetAllCommand}"
+            <Button Content="Reset all" Command="{Binding ResetAllCommand}" IsEnabled="{Binding HasImage}"
                     ToolTip.Tip="Reset all adjustments. Double-click a slider to reset just that one." />
             <Border Width="16" />
             <Button x:Name="CopyButton" Content="Copy…" IsEnabled="{Binding HasImage}"
@@ -69,7 +69,7 @@
             <Button Grid.Column="1" Content="Cancel" Command="{Binding CancelRestoreCommand}"
                     IsVisible="{Binding IsRestoring}" Margin="8,0" Padding="8,2"
                     ToolTip.Tip="Stop the running AI denoise / deblur" />
-            <TextBlock Grid.Column="2" IsVisible="{Binding HasImage}" VerticalAlignment="Center"
+            <TextBlock Grid.Column="2" IsVisible="{Binding HasPreview}" VerticalAlignment="Center"
                        Text="{Binding #Viewer.Zoom, StringFormat='{}{0:P0}'}" />
         </Grid>
 
@@ -293,7 +293,12 @@
             <TextBlock Text="Drop a photo or a folder here"
                        Foreground="Gray"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                       IsVisible="{Binding !HasImage}" />
+                       IsVisible="{Binding !HasPreview}" />
+            <Border IsVisible="{Binding IsShowingCameraPreview}" Background="#C0202020" CornerRadius="4"
+                    Padding="8,4" Margin="8" HorizontalAlignment="Left" VerticalAlignment="Top"
+                    ToolTip.Tip="The JPEG preview the camera stored in the RAW file. Editing starts when the RAW is decoded.">
+                <TextBlock Text="Camera preview · decoding RAW…" Foreground="#E0E0E0" FontSize="12" />
+            </Border>
         </Panel>
     </DockPanel>
 </Window>

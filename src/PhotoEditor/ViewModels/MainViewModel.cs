@@ -46,7 +46,11 @@ public partial class MainViewModel : ViewModelBase
     public partial SKBitmap? Original { get; private set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPreview))]
     public partial PreviewImage? Preview { get; private set; }
+
+    /// <summary>Something is shown (maybe only the camera's preview of a RAW that is still decoding).</summary>
+    public bool HasPreview => Preview is not null;
 
     private readonly EditHistory<EditState> _history = new(EditState.Default);
 
@@ -581,6 +585,8 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     public void ApplyEdit(EditState state, string? coalesceKey = null)
     {
+        if (Original is null)
+            return; // nothing open, or only the camera preview of a RAW that is still decoding
         _history.Record(state, coalesceKey);
         State = state;
         UpdateHistoryCommands();
@@ -835,71 +841,6 @@ public partial class MainViewModel : ViewModelBase
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)
         {
             return (EditState.Default, $" – could not read saved edits: {ex.Message}");
-        }
-    }
-
-    [ObservableProperty]
-    public partial bool IsOpening { get; private set; }
-
-    /// <summary>
-    /// Loads the image at <paramref name="path"/> (decoding runs on a background thread; RAW files
-    /// take a few seconds); reports failures in <see cref="Status"/>.
-    /// </summary>
-    public async Task<bool> OpenFileAsync(string path)
-    {
-        // Latest request wins: while a photo is opening, a newer request replaces any waiting one.
-        _openRequest = path;
-        if (IsOpening)
-            return false;
-        bool opened = false;
-        while (_openRequest is { } next)
-        {
-            _openRequest = null;
-            opened = await OpenOneFileAsync(next);
-        }
-        return opened;
-    }
-
-    private string? _openRequest;
-
-    private async Task<bool> OpenOneFileAsync(string path)
-    {
-        IsOpening = true;
-        Status = $"Opening {Path.GetFileName(path)}…";
-        try
-        {
-            var (bitmap, preview, orientation) = await Task.Run(() =>
-            {
-                var b = ImageLoader.Load(path);
-                var o = ImageLoader.ReadOrientation(path);
-                return (b, PreviewImage.Create(b), o);
-            });
-            SaveEdits(); // flush edits of the previous image
-            _geometry = new ImageGeometry(bitmap.Width, bitmap.Height, orientation, RawImageLoader.IsRaw(path));
-            _lastXmpSkipped = "";
-            var (state, sidecarNote) = LoadSidecar(path, _geometry);
-            Original = bitmap;
-            Preview = preview;
-            SelectedMask = null;
-            _history.Reset(state);
-            State = state;
-            _hasUnsavedEdits = false;
-            UpdateHistoryCommands();
-            ShowOriginal = false;
-            FilePath = path;
-            ResetRestore(preview);
-            Status = $"{bitmap.Width} × {bitmap.Height}{sidecarNote}";
-            SyncFilmstrip(path);
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
-        {
-            Status = $"Could not open {Path.GetFileName(path)}: {ex.Message}";
-            return false;
-        }
-        finally
-        {
-            IsOpening = false;
         }
     }
 }

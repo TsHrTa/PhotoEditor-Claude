@@ -239,6 +239,7 @@ public class ImageViewer : Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
+        Focus(); // so keys (← / → between photos) are not left with a text box elsewhere
         if (Source is null)
             return;
         var point = e.GetCurrentPoint(this);
