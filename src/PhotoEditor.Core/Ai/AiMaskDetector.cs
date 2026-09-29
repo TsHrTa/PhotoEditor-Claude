@@ -60,7 +60,9 @@ public sealed class AiMaskDetector(ModelStore store, Action<string>? report = nu
             RasterMaskComponent Mask(int cls, string source)
             {
                 var coarse = ImageTensor.Resample(ImageTensor.ClassProbability(logits, cls), lw, lh, w, h);
-                var coverage = GuidedFilter.Apply(coarse, guide, w, h);
+                // Window ≈ 2.5 × the upscaling factor so it spans the blurry band of the coarse output.
+                int radius = Math.Max(4, (int)Math.Ceiling(2.5 * Math.Max((double)w / lw, (double)h / lh)));
+                var coverage = GuidedFilter.Apply(coarse, guide, w, h, radius, epsilon: 1e-4f);
                 return new RasterMaskComponent { Source = source, MaskPng = RasterMaskComponent.EncodePng(coverage, w, h) };
             }
             var result = new SceneMasks(Mask(ModelCatalog.AdeSky, "sky"), Mask(ModelCatalog.AdePerson, "people"));
