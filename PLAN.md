@@ -9,6 +9,8 @@ A simple Lightroom-style photo editor: light and color adjustments, masks (brush
 - ONNX Runtime + DirectML (AI models) – later
 - xUnit test project (`tests/PhotoEditor.Tests`) for the image math in `src/PhotoEditor.Core` (UI-free library)
 - Avoid ImageSharp (commercial license restrictions) and Ultralytics YOLO (AGPL)
+- The app is for the owner's personal use only (not distributed or sold). So non-commercial model licences are acceptable, e.g. NVIDIA SegFormer for Sky / People. Still verify each model's licence file before use, prefer the original authors' weights, pin every download by SHA-256, and list the models with their licences in a third-party notices file.
+- Models download on first use from Hugging Face into %LOCALAPPDATA%\PhotoEditor\models; photos never leave the PC. (The cloud dev environment cannot reach huggingface.co until it is allowed in its network settings.)
 
 ## Principles
 - Non-destructive: the original image is never modified; edits are a list of settings applied on render.
