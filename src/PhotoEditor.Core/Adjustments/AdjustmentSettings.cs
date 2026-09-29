@@ -45,6 +45,15 @@ public sealed record AdjustmentSettings
     /// <summary>0..100: width of the transition.</summary>
     public double VignetteFeather { get; init; } = 50;
 
+    /// <summary>Sharpening (unsharp mask on luminance): 0..150.</summary>
+    public double SharpenAmount { get; init; }
+
+    /// <summary>Blur radius of the unsharp mask in full-resolution pixels, 0.5..3.</summary>
+    public double SharpenRadius { get; init; } = 1;
+
+    /// <summary>0..100: higher values limit sharpening to edges (keeps smooth areas and noise unsharpened).</summary>
+    public double SharpenMasking { get; init; }
+
     // HSL panel, one entry per colour band (see HslBands).
     public HslBand Reds { get; init; } = HslBand.Zero;
     public HslBand Oranges { get; init; } = HslBand.Zero;

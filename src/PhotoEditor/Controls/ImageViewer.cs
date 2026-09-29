@@ -592,7 +592,8 @@ public class ImageViewer : Control
             .ToDictionary(m => m.Id, m => _maskCache.Get(m, mw, mh));
         var overlay = OverlayMask is { } om ? _maskCache.Get(om, mw, mh) : null;
         _maskCache.Retain(OverlayMask is { } keep ? state.Masks.Add(keep) : state.Masks);
-        context.Custom(new ImageDrawOperation(bounds, image, clip, toView, _view.Scale, state, maskImages, overlay));
+        context.Custom(new ImageDrawOperation(bounds, image, clip, toView, _view.Scale, (double)image.Width / source.Width,
+            state, maskImages, overlay));
 
         if (Tool == EditTool.Crop)
             DrawCropFrame(context, bounds);
@@ -664,7 +665,7 @@ public class ImageViewer : Control
     }
 
     private sealed class ImageDrawOperation(
-        Rect bounds, SKImage image, SKRect clip, SKMatrix toView, double scale, EditState state,
+        Rect bounds, SKImage image, SKRect clip, SKMatrix toView, double scale, double pixelScale, EditState state,
         Dictionary<Guid, SKImage> maskImages, SKImage? overlay)
         : ICustomDrawOperation
     {
@@ -684,7 +685,7 @@ public class ImageViewer : Control
                 ? new SKSamplingOptions(SKFilterMode.Nearest)
                 : new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear);
             var canvas = lease.SkCanvas;
-            using var shader = AdjustmentShader.CreateShader(image, state, sampling, m => maskImages.GetValueOrDefault(m.Id));
+            using var shader = AdjustmentShader.CreateShader(image, state, sampling, m => maskImages.GetValueOrDefault(m.Id), pixelScale);
             using var paint = new SKPaint { Shader = shader };
             canvas.Save();
             canvas.ClipRect(clip, antialias: true);

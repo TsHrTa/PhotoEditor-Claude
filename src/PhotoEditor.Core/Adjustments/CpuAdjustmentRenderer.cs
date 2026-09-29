@@ -27,6 +27,10 @@ public static class CpuAdjustmentRenderer
         var input = src ?? source;
         if (input.AlphaType != SKAlphaType.Premul && input.AlphaType != SKAlphaType.Opaque)
             throw new NotSupportedException($"Unsupported alpha type {input.AlphaType}");
+        var p = PreparedAdjustments.From(state.Adjustments);
+        // Sharpening works on the source pixels, before everything else (as the shader's global pass does).
+        using var sharpened = p.HasSharpening ? Sharpening.Apply(input, p) : null;
+        input = sharpened ?? input;
 
         int width = input.Width, height = input.Height;
         var layers = state.Masks
@@ -34,7 +38,6 @@ public static class CpuAdjustmentRenderer
             .Select(m => new MaskLayer(PreparedAdjustments.From(m.Adjustments), MaskRasterizer.RasterizeToBytes(m, width, height)))
             .ToArray();
         var result = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
-        var p = PreparedAdjustments.From(state.Adjustments);
         var frame = VignetteMath.Frame.From(state.Crop.Frame(width, height));
         int rowBytesIn = input.RowBytes, rowBytesOut = result.RowBytes;
         nint inPtr = input.GetPixels(), outPtr = result.GetPixels();

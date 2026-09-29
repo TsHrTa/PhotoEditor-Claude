@@ -39,6 +39,7 @@ public static class AdjustmentParameters
     public const string Light = "Light";
     public const string Color = "Color";
     public const string Vignette = "Vignette";
+    public const string Detail = "Detail";
     public const string HslHue = "HSL · Hue";
     public const string HslSaturation = "HSL · Saturation";
     public const string HslLuminance = "HSL · Luminance";
@@ -85,6 +86,18 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter VignetteFeather =
         new(Vignette, "Feather", 0, 100, s => s.VignetteFeather, (s, v) => s with { VignetteFeather = v }, defaultValue: 50);
 
+    public static readonly AdjustmentParameter SharpenAmount =
+        new(Detail, "Sharpening", 0, 150, s => s.SharpenAmount, (s, v) => s with { SharpenAmount = v });
+
+    public static readonly AdjustmentParameter SharpenRadius =
+        new(Detail, "Radius", 0.5, 3, s => s.SharpenRadius, (s, v) => s with { SharpenRadius = v }, defaultValue: 1, format: "0.0", step: 0.1);
+
+    public static readonly AdjustmentParameter SharpenMasking =
+        new(Detail, "Masking", 0, 100, s => s.SharpenMasking, (s, v) => s with { SharpenMasking = v });
+
+    /// <summary>Parameters that only apply to the whole image (not inside masks).</summary>
+    public static readonly IReadOnlyList<AdjustmentParameter> GlobalOnly = [SharpenAmount, SharpenRadius, SharpenMasking];
+
     public static readonly IReadOnlyList<AdjustmentParameter> Hsl = CreateHsl();
 
     public static readonly IReadOnlyList<AdjustmentParameter> All =
@@ -93,6 +106,7 @@ public static class AdjustmentParameters
         Temperature, Tint, Vibrance, Saturation,
         .. Hsl,
         VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
+        SharpenAmount, SharpenRadius, SharpenMasking,
     ];
 
     private static List<AdjustmentParameter> CreateHsl()

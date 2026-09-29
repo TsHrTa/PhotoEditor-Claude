@@ -57,7 +57,7 @@ Each item is meant to be one small, self-contained step.
 ### Phase 5 – AI enhance
 - [ ] Denoise (NAFNet or SCUNet), tiled processing with progress
 - [ ] Defocus deblur / sharpen (Restormer or NAFNet), strength blending
-- [ ] Classic sharpening (unsharp mask) in the normal pipeline
+- [x] Classic sharpening (unsharp mask) in the normal pipeline
 
 ## Where I left off
 - 2026-09-29: Open image done. New `PhotoEditor.Core` library (UI-free: `ImageLoader` decodes via SkiaSharp and applies EXIF orientation) + `tests/PhotoEditor.Tests` (xUnit). `ImageViewer` control draws an SKImage through Avalonia's Skia lease (custom draw op), fit-to-window. Open via button / Ctrl+O / drag & drop / command-line arg. Dark theme. Screenshots under Xvfb on Linux work (apt `xvfb x11-apps imagemagick`). Next: zoom & pan.
@@ -104,7 +104,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: ONNX Runtime integration done (Phase 4 item 1). ONNX Runtime 1.24.4: Core uses the managed API (`Microsoft.ML.OnnxRuntime.Managed`); the app references `Microsoft.ML.OnnxRuntime.DirectML` on Windows (ships DirectML.dll, checked with a win-x64 cross-build) and the CPU package elsewhere; tests use the CPU package. `Core/Ai/OnnxModel` loads a model on DirectML (memory pattern off, sequential, as DML requires) and falls back to CPU with a reason (`Device`, `FallbackReason`); `Run` takes/returns named float tensors. `Core/Ai/ModelStore` keeps models in `%LOCALAPPDATA%\PhotoEditor\models`, downloads on first use to a `.part` file with progress and SHA-256 check (rejects and deletes on mismatch). Tested with a tiny generated model (`tests/.../Assets/sigmoid2x.onnx`, sigmoid(2x)) and a fake HTTP handler. No UI yet: it comes with the first real model. BLOCKER for the next items: huggingface.co is not reachable from this cloud environment, so I cannot download the real models (MobileSAM, BiRefNet, SegFormer) to get their hashes and test inference here. Next: click/box select (MobileSAM) once the network allows Hugging Face.
 
+- 2026-09-29: Classic sharpening done (Phase 5 item 3; items 1–2 need models from Hugging Face, still blocked here). "Detail" panel: Sharpening 0–150 (strength 2 × detail at 100), Radius 0.5–3 px (full-resolution pixels), Masking 0–100 (smoothstep on |detail| so flat areas / noise stay unsharpened). Unsharp mask on luminance of the source pixels at the start of the global pass: shader samples a 5×5 Gaussian (sigma = radius) with the image child, radius scaled by `pixelScale` for the preview (so fine sharpening only shows near 100 %, like Lightroom); CPU `Sharpening.Apply` does the same separably in 64-row strips (+0.7 s on a 21 MP export). Whole image only: masks' sharpening is ignored and the Detail panel hides while a mask is selected (`AdjustmentParameters.GlobalOnly`). `RenderRaster` now samples linearly (same as nearest at pixel centres) so parity covers fractional radii. XMP: Sharpness / SharpenRadius / SharpenEdgeMasking (note: Lightroom's own default for RAW is 40; ours is 0). Next: copy / paste settings.
+
 ### To check visually (Windows)
+- Sharpening at 100 % on a real photo: amount / radius / masking feel right, no strong halos at defaults you would use.
 - (When the first AI model exists) status shows DirectML/GPU being used on your PC, not the CPU fallback.
 - Auto on a range of your own photos (daylight, backlit, night, snow, portraits): too strong / too weak? Tell me which and I'll tune the constants in `AutoAdjust`.
 - Lightroom with a JPEG / DNG edited here: does it pick up `IMG_0001.xmp` (Metadata → Read Metadata from File)? Lightroom Classic is documented to ignore sidecars for these formats.

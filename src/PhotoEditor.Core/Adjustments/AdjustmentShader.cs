@@ -36,6 +36,10 @@ public static class AdjustmentShader
         uniform float2 vignetteCenter;
         uniform float2 vignetteHalf;
         uniform float2 vignetteRotation;
+        // Unsharp mask (global pass only): strength, blur tap spacing in image pixels, edge masking 0..1.
+        uniform float sharpenAmount;
+        uniform float sharpenStep;
+        uniform float sharpenMasking;
 
         const float perceptualGamma = 2.2;
 
@@ -118,11 +122,33 @@ public static class AdjustmentShader
             return pow(pow(abs(uv.x), p) + pow(abs(uv.y), p), 1.0 / p) / pow(2.0, 1.0 / p);
         }
 
+        // 5 × 5 Gaussian (sigma = one tap step) around coord; returns unpremultiplied colour.
+        float3 blurred(float2 coord, float3 fallback) {
+            float4 sum = float4(0);
+            float wsum = 0.0;
+            for (int j = -2; j <= 2; j++) {
+                for (int i = -2; i <= 2; i++) {
+                    float w = exp(-0.5 * float(i * i + j * j));
+                    sum += w * float4(image.eval(coord + float2(float(i), float(j)) * sharpenStep));
+                    wsum += w;
+                }
+            }
+            sum /= wsum;
+            return sum.a > 0.0 ? sum.rgb / sum.a : fallback;
+        }
+
+        float3 sharpen(float3 s, float2 coord) {
+            float detail = dot(s - blurred(coord, s), float3(0.2126, 0.7152, 0.0722));
+            float weight = sharpenMasking > 0.0 ? smoothstep(sharpenMasking * 0.02, sharpenMasking * 0.08, abs(detail)) : 1.0;
+            return clamp(s + sharpenAmount * detail * weight, 0.0, 1.0);
+        }
+
         half4 main(float2 coord) {
             half4 src = image.eval(coord);
             float a = src.a;
             if (a <= 0.0) return half4(0);
             float3 s = float3(src.rgb) / a;
+            if (sharpenAmount > 0.0) s = sharpen(s, coord);
 
             // Linear light
             float3 c = float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b));
@@ -174,12 +200,17 @@ public static class AdjustmentShader
     /// adjusted result with the previous one by the mask. <paramref name="maskImage"/> supplies the
     /// rasterised mask (any resolution; it is stretched over the image); null skips that mask.
     /// </summary>
-    public static SKShader CreateShader(SKImage image, EditState state, SKSamplingOptions sampling, Func<Mask, SKImage?> maskImage)
+    /// <remarks>
+    /// <paramref name="pixelScale"/> = pixels of <paramref name="image"/> per full-resolution pixel (the preview
+    /// is smaller), so the sharpening radius stays the same relative to the photo.
+    /// </remarks>
+    public static SKShader CreateShader(SKImage image, EditState state, SKSamplingOptions sampling, Func<Mask, SKImage?> maskImage,
+        double pixelScale = 1)
     {
         using var imageShader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
         using var white = SKShader.CreateColor(SKColors.White);
         var frame = VignetteMath.Frame.From(state.Crop.Frame(image.Width, image.Height));
-        var current = CreatePass(imageShader, white, state.Adjustments, frame);
+        var current = CreatePass(imageShader, white, state.Adjustments, frame, (float)pixelScale, sharpen: true);
 
         foreach (var mask in state.Masks)
         {
@@ -188,7 +219,7 @@ public static class AdjustmentShader
             var toImage = SKMatrix.CreateScale((float)image.Width / maskImg.Width, (float)image.Height / maskImg.Height);
             using var maskShader = maskImg.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
                 MaskSampling(maskImg, image), toImage);
-            var next = CreatePass(current, maskShader, mask.Adjustments, frame);
+            var next = CreatePass(current, maskShader, mask.Adjustments, frame, (float)pixelScale, sharpen: false);
             current.Dispose();
             current = next;
         }
@@ -201,7 +232,8 @@ public static class AdjustmentShader
             ? new SKSamplingOptions(SKFilterMode.Nearest)
             : new SKSamplingOptions(SKFilterMode.Linear);
 
-    private static SKShader CreatePass(SKShader input, SKShader mask, AdjustmentSettings settings, VignetteMath.Frame frame)
+    private static SKShader CreatePass(SKShader input, SKShader mask, AdjustmentSettings settings, VignetteMath.Frame frame,
+        float pixelScale, bool sharpen)
     {
         var effect = Effect;
         var p = PreparedAdjustments.From(settings);
@@ -225,6 +257,9 @@ public static class AdjustmentShader
             ["vignetteCenter"] = new[] { frame.CenterX, frame.CenterY },
             ["vignetteHalf"] = new[] { frame.HalfWidth, frame.HalfHeight },
             ["vignetteRotation"] = new[] { frame.Cos, frame.Sin },
+            ["sharpenAmount"] = sharpen ? p.SharpenAmount : 0f,
+            ["sharpenStep"] = p.SharpenRadius * pixelScale,
+            ["sharpenMasking"] = p.SharpenMasking,
         };
         var children = new SKRuntimeEffectChildren(effect)
         {
@@ -249,7 +284,8 @@ public static class AdjustmentShader
         using var surface = SKSurface.Create(info);
         var masks = state.Masks.Where(m => m.IsActive).ToDictionary(
             m => m.Id, m => SKImage.FromBitmap(MaskRasterizer.RasterizeToBitmap(m, source.Width, source.Height)));
-        using var shader = CreateShader(image, state, new SKSamplingOptions(SKFilterMode.Nearest), m => masks[m.Id]);
+        // Linear sampling: identical to nearest at pixel centres, and matches the CPU's bilinear sharpening taps.
+        using var shader = CreateShader(image, state, new SKSamplingOptions(SKFilterMode.Linear), m => masks[m.Id]);
         using var paint = new SKPaint { Shader = shader, BlendMode = SKBlendMode.Src };
         surface.Canvas.DrawRect(0, 0, source.Width, source.Height, paint);
         var result = new SKBitmap(info);

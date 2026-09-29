@@ -18,8 +18,16 @@ public readonly record struct PreparedAdjustments(
     float VignetteStops,
     float VignetteLow,
     float VignetteHigh,
-    float VignetteRoundness)
+    float VignetteRoundness,
+    float SharpenAmount,
+    float SharpenRadius,
+    float SharpenMasking)
 {
+    /// <summary>Unsharp-mask strength at slider 100 (detail added = strength × (pixel − blurred)).</summary>
+    public const float SharpenStrengthAt100 = 2f;
+
+    public bool HasSharpening => SharpenAmount > 0f;
+
     /// <summary>Exposure change (stops) at full vignette weight for amount ±100.</summary>
     public const float MaxVignetteStops = 2f;
 
@@ -50,7 +58,10 @@ public readonly record struct PreparedAdjustments(
             VignetteStops: (float)s.VignetteAmount / 100f * MaxVignetteStops,
             VignetteLow: vLow,
             VignetteHigh: vHigh,
-            VignetteRoundness: (float)s.VignetteRoundness / 100f);
+            VignetteRoundness: (float)s.VignetteRoundness / 100f,
+            SharpenAmount: (float)s.SharpenAmount / 100f * SharpenStrengthAt100,
+            SharpenRadius: (float)s.SharpenRadius,
+            SharpenMasking: (float)s.SharpenMasking / 100f);
     }
 
     /// <summary>Transition band of the vignette weight (distance 0 = centre, 1 = corner).</summary>

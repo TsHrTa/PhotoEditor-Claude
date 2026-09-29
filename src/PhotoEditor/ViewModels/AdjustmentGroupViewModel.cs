@@ -10,6 +10,13 @@ public sealed partial class AdjustmentGroupViewModel(string title, IReadOnlyList
     [ObservableProperty]
     public partial bool IsExpanded { get; set; } = isExpanded;
 
+    /// <summary>False for whole-image-only groups (Detail) while a mask is selected.</summary>
+    [ObservableProperty]
+    public partial bool IsVisible { get; set; } = true;
+
+    /// <summary>The group only applies to the whole image, not inside masks.</summary>
+    public bool IsGlobalOnly { get; init; }
+
     public string Title { get; } = title;
     public IReadOnlyList<ParameterViewModel> Parameters { get; } = parameters;
 }

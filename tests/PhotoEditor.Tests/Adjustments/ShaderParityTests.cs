@@ -32,6 +32,9 @@ public class ShaderParityTests
         { "vignette dark", new AdjustmentSettings { VignetteAmount = -80 } },
         { "vignette light round", new AdjustmentSettings { VignetteAmount = 60, VignetteRoundness = 100, VignetteMidpoint = 20, VignetteFeather = 90 } },
         { "vignette rect hard", new AdjustmentSettings { VignetteAmount = -100, VignetteRoundness = -70, VignetteMidpoint = 70, VignetteFeather = 0 } },
+        { "sharpen", new AdjustmentSettings { SharpenAmount = 100 } },
+        { "sharpen wide masked", new AdjustmentSettings { SharpenAmount = 150, SharpenRadius = 1.7, SharpenMasking = 60 } },
+        { "sharpen + light", new AdjustmentSettings { SharpenAmount = 60, SharpenRadius = 2, Exposure = 0.5, Contrast = 30 } },
         { "all light", new AdjustmentSettings { Exposure = 0.4, Contrast = 25, Highlights = -40, Shadows = 35, Whites = 15, Blacks = -10 } },
     };
 

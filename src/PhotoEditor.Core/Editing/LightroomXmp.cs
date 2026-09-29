@@ -159,6 +159,9 @@ public static class LightroomXmp
         Set("PostCropVignetteFeather", Number(a.VignetteFeather, "0"));
         Set("PostCropVignetteStyle", "1");
         Set("PostCropVignetteHighlightContrast", "0");
+        Set("Sharpness", Number(a.SharpenAmount, "0"));
+        Set("SharpenRadius", Signed(a.SharpenRadius, "0.0"));
+        Set("SharpenEdgeMasking", Number(a.SharpenMasking, "0"));
 
         WriteCrop(state.Crop, geometry, Set);
         WriteMasks(state.Masks, geometry, description, notes);
@@ -278,6 +281,7 @@ public static class LightroomXmp
         if (a.Vibrance != 0) dropped.Add("vibrance");
         if (Enumerable.Range(0, HslBands.Count).Any(i => HslBands.Get(a, i) != HslBand.Zero)) dropped.Add("HSL");
         if (a.VignetteAmount != 0) dropped.Add("vignette");
+        if (a.SharpenAmount != 0) dropped.Add("sharpening");
         if (dropped.Count > 0)
             notes.Add($"{string.Join(", ", dropped)} of mask \"{mask.Name}\"");
 
@@ -389,6 +393,9 @@ public static class LightroomXmp
             VignetteMidpoint = Get("PostCropVignetteMidpoint", 50),
             VignetteRoundness = Get("PostCropVignetteRoundness"),
             VignetteFeather = Get("PostCropVignetteFeather", 50),
+            SharpenAmount = Get("Sharpness"),
+            SharpenRadius = Get("SharpenRadius", 1),
+            SharpenMasking = Get("SharpenEdgeMasking"),
         };
         for (int i = 0; i < HslBands.Count; i++)
         {

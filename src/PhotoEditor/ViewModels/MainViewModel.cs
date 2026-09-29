@@ -28,7 +28,10 @@ public partial class MainViewModel : ViewModelBase
         Groups = parameters
             .GroupBy(p => p.Parameter.Group)
             .Select(g => new AdjustmentGroupViewModel(g.Key, g.ToList(),
-                isExpanded: g.Key is AdjustmentParameters.Light or AdjustmentParameters.Color))
+                isExpanded: g.Key is AdjustmentParameters.Light or AdjustmentParameters.Color)
+            {
+                IsGlobalOnly = g.All(p => AdjustmentParameters.GlobalOnly.Contains(p.Parameter)),
+            })
             .ToList();
     }
 
@@ -99,6 +102,8 @@ public partial class MainViewModel : ViewModelBase
 
     partial void OnSelectedMaskChanged(MaskItemViewModel? value)
     {
+        foreach (var group in Groups.Where(g => g.IsGlobalOnly))
+            group.IsVisible = value is null;
         RefreshSliders();
         SelectedComponentIndex = -1;
         SelectedMaskComponents.Clear();

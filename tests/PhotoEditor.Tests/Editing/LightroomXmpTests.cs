@@ -21,6 +21,7 @@ public class LightroomXmpTests
             Vibrance = 25, Saturation = -10,
             Blues = new HslBand(-20, 30, -40), Oranges = new HslBand(5, -10, 15),
             VignetteAmount = -30, VignetteMidpoint = 40, VignetteRoundness = 20, VignetteFeather = 70,
+            SharpenAmount = 55, SharpenRadius = 1.3, SharpenMasking = 25,
         },
         Crop = new Crop { Left = 0.1, Top = 0.15, Right = 0.8, Bottom = 0.9, Angle = 3.5 },
         Masks =
@@ -181,7 +182,7 @@ public class LightroomXmpTests
                xmp:Rating="4"
                crs:WhiteBalance="Custom"
                crs:Temperature="5250"
-               crs:Sharpness="40"
+               crs:LuminanceSmoothing="40"
                crs:Exposure2012="+2.00"
                crs:HasSettings="True">
                <dc:subject><rdf:Bag><rdf:li>holiday</rdf:li></rdf:Bag></dc:subject>
@@ -197,7 +198,7 @@ public class LightroomXmpTests
         Assert.Equal("4", d.Attribute(xmp + "Rating")!.Value);
         Assert.Equal("Custom", d.Attribute(Crs + "WhiteBalance")!.Value); // Lightroom's white balance kept
         Assert.Equal("5250", d.Attribute(Crs + "Temperature")!.Value);
-        Assert.Equal("40", d.Attribute(Crs + "Sharpness")!.Value);
+        Assert.Equal("40", d.Attribute(Crs + "LuminanceSmoothing")!.Value);
         Assert.Equal("-0.50", d.Attribute(Crs + "Exposure2012")!.Value);
         Assert.Contains("holiday", xml);
         Assert.Single(XDocument.Parse(xml).Descendants(XName.Get("Description", "http://www.w3.org/1999/02/22-rdf-syntax-ns#")),

@@ -151,7 +151,7 @@
             <ItemsControl ItemsSource="{Binding Groups}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:AdjustmentGroupViewModel">
-                        <Expander Header="{Binding Title}" IsExpanded="{Binding IsExpanded}"
+                        <Expander Header="{Binding Title}" IsExpanded="{Binding IsExpanded}" IsVisible="{Binding IsVisible}"
                                   HorizontalAlignment="Stretch" Margin="0,0,0,4">
                             <ItemsControl ItemsSource="{Binding Parameters}">
                                 <ItemsControl.ItemTemplate>
