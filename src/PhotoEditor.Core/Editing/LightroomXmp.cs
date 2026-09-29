@@ -9,8 +9,11 @@ using SkiaSharp;
 
 namespace PhotoEditor.Core.Editing;
 
-/// <summary>Upright image size (as edited) and the file's EXIF orientation (sensor → upright).</summary>
-public readonly record struct ImageGeometry(int Width, int Height, SKEncodedOrigin Orientation = SKEncodedOrigin.TopLeft)
+/// <summary>
+/// Upright image size (as edited), the file's EXIF orientation (stored → upright) and whether it is a RAW
+/// file (Lightroom stores white balance differently for RAW and rendered images).
+/// </summary>
+public readonly record struct ImageGeometry(int Width, int Height, SKEncodedOrigin Orientation = SKEncodedOrigin.TopLeft, bool IsRaw = false)
 {
     /// <summary>True when the stored (sensor) image is turned by 90° relative to the upright one.</summary>
     public bool IsQuarterTurn => Orientation is SKEncodedOrigin.LeftTop or SKEncodedOrigin.RightTop
@@ -41,14 +44,16 @@ public readonly record struct ImageGeometry(int Width, int Height, SKEncodedOrig
 
 /// <summary>
 /// Reads and writes edits as Adobe Camera Raw settings (<c>crs:</c> namespace) in an XMP sidecar, the
-/// format Lightroom Classic / Camera Raw use for RAW files: <c>IMG_0001.CR3</c> → <c>IMG_0001.xmp</c>.
+/// format Lightroom Classic / Camera Raw use: <c>IMG_0001.CR3</c> → <c>IMG_0001.xmp</c>. Original image
+/// files are never modified.
 /// </summary>
 /// <remarks>
 /// Values are mapped slider-for-slider; the rendering math differs from Adobe's, so the look in Lightroom
 /// is similar in intent, not identical. Crop and gradient coordinates are converted to the unrotated
 /// (sensor) orientation Lightroom uses. Not representable (reported in <c>skipped</c>): brush masks, masks
 /// with several components, HSL / vibrance / vignette inside masks, and white balance changes on RAW files
-/// (Lightroom stores absolute Kelvin, which needs the camera's as-shot value).
+/// (Lightroom stores absolute Kelvin, which needs the camera's as-shot value; for JPEG etc. it stores relative
+/// IncrementalTemperature / IncrementalTint, which are written).
 /// When a sidecar already exists (e.g. written by Lightroom) only the settings this app owns are replaced;
 /// ratings, keywords and all other Lightroom settings are kept.
 /// </remarks>
@@ -65,13 +70,32 @@ public static class LightroomXmp
     private const double LocalExposureRange = 4;
 
     /// <summary>
-    /// True for files Lightroom reads sidecars for: proprietary RAW formats. JPEG / TIFF / PNG / DNG keep
-    /// their XMP inside the file, and Lightroom ignores a sidecar for them.
+    /// Proprietary RAW formats (CR3, NEF, …). Lightroom Classic reads sidecars automatically only for these;
+    /// for JPEG / PNG / DNG it expects XMP inside the file. Sidecars are written for every format anyway
+    /// (the originals are never changed).
     /// </summary>
-    public static bool AppliesTo(string imagePath) =>
+    public static bool IsProprietaryRaw(string imagePath) =>
         RawImageLoader.IsRaw(imagePath) && !Path.GetExtension(imagePath).Equals(".dng", StringComparison.OrdinalIgnoreCase);
 
-    public static string PathFor(string imagePath) => Path.ChangeExtension(imagePath, ".xmp");
+    /// <summary>
+    /// Sidecar path: <c>IMG_0001.xmp</c> (Lightroom's convention). A non-proprietary-RAW file that shares its base
+    /// name with another photo (RAW + JPEG pairs) uses <c>IMG_0001.JPG.xmp</c> instead, so the RAW keeps
+    /// <c>IMG_0001.xmp</c> and neither overwrites the other.
+    /// </summary>
+    public static string PathFor(string imagePath)
+    {
+        var plain = Path.ChangeExtension(imagePath, ".xmp");
+        if (IsProprietaryRaw(imagePath))
+            return plain;
+        var dir = Path.GetDirectoryName(Path.GetFullPath(imagePath));
+        var baseName = Path.GetFileNameWithoutExtension(imagePath);
+        bool shared = dir is not null && Directory.Exists(dir) && Directory
+            .EnumerateFiles(dir, baseName + ".*")
+            .Any(f => Path.GetFileNameWithoutExtension(f).Equals(baseName, StringComparison.OrdinalIgnoreCase)
+                && ImageLoader.IsSupported(f)
+                && !string.Equals(Path.GetFullPath(f), Path.GetFullPath(imagePath), StringComparison.OrdinalIgnoreCase));
+        return shared ? imagePath + ".xmp" : plain;
+    }
 
     // ---- Writing ----
 
@@ -84,6 +108,7 @@ public static class LightroomXmp
         var notes = new List<string>();
         var doc = existing is not null ? TryParse(existing) : null;
         doc ??= NewDocument();
+        doc.Nodes().OfType<XProcessingInstruction>().Where(pi => pi.Target == "xpacket").Remove();
         var description = FindDescription(doc) ?? AddDescription(doc);
         bool fresh = existing is null || description.Attribute(Crs + "HasSettings") is null;
 
@@ -96,10 +121,21 @@ public static class LightroomXmp
         Set("Version", "15.0");
         Set("ProcessVersion", "11.0");
         Set("HasSettings", "True");
-        if (fresh)
-            Set("WhiteBalance", "As Shot");
-
         var a = state.Adjustments;
+        if (geometry.IsRaw)
+        {
+            if (fresh)
+                Set("WhiteBalance", "As Shot");
+            if (a.Temperature != 0 || a.Tint != 0)
+                notes.Add("white balance (Lightroom needs absolute Kelvin for RAW files)");
+        }
+        else
+        {
+            Set("WhiteBalance", a.Temperature == 0 && a.Tint == 0 ? "As Shot" : "Custom");
+            Set("IncrementalTemperature", Signed(a.Temperature));
+            Set("IncrementalTint", Signed(a.Tint));
+        }
+
         Set("Exposure2012", Signed(a.Exposure, "0.00"));
         Set("Contrast2012", Signed(a.Contrast));
         Set("Highlights2012", Signed(a.Highlights));
@@ -108,8 +144,6 @@ public static class LightroomXmp
         Set("Blacks2012", Signed(a.Blacks));
         Set("Vibrance", Signed(a.Vibrance));
         Set("Saturation", Signed(a.Saturation));
-        if (a.Temperature != 0 || a.Tint != 0)
-            notes.Add("white balance (Lightroom needs absolute Kelvin for RAW files)");
 
         for (int i = 0; i < HslBands.Count; i++)
         {
@@ -348,6 +382,8 @@ public static class LightroomXmp
             Whites = Get("Whites2012"),
             Blacks = Get("Blacks2012"),
             Vibrance = Get("Vibrance"),
+            Temperature = geometry.IsRaw ? 0 : Get("IncrementalTemperature"),
+            Tint = geometry.IsRaw ? 0 : Get("IncrementalTint"),
             Saturation = Get("Saturation"),
             VignetteAmount = Get("PostCropVignetteAmount"),
             VignetteMidpoint = Get("PostCropVignetteMidpoint", 50),

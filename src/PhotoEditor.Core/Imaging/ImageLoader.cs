@@ -37,6 +37,15 @@ public static class ImageLoader
         return upright;
     }
 
+    /// <summary>The file's EXIF orientation (TopLeft when unknown), without decoding the pixels.</summary>
+    public static SKEncodedOrigin ReadOrientation(string path)
+    {
+        if (RawImageLoader.IsRaw(path))
+            return RawImageLoader.ReadOrientation(path);
+        using var codec = SKCodec.Create(path);
+        return codec?.EncodedOrigin ?? SKEncodedOrigin.TopLeft;
+    }
+
     /// <summary>Returns a bitmap rotated/flipped according to <paramref name="origin"/> (or the input if already upright).</summary>
     public static SKBitmap ApplyOrientation(SKBitmap source, SKEncodedOrigin origin)
     {

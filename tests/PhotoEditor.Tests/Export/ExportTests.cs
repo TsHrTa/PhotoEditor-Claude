@@ -117,4 +117,23 @@ public sealed class ExportTests : IDisposable
     [Fact]
     public void Read_NoExif_ReturnsNull() =>
         Assert.Null(ExifMetadata.Read(ImageExporter.Encode(RedBlue(), new ExportOptions())));
+
+    [Fact]
+    public void Export_RefusesToOverwriteTheOriginal()
+    {
+        var source = Path.Combine(_dir, "photo.jpg");
+        using var bmp = RedBlue();
+        File.WriteAllBytes(source, ImageExporter.Encode(bmp, new ExportOptions()));
+        var before = File.ReadAllBytes(source);
+
+        var same = Path.Combine(_dir, ".", "PHOTO.jpg");
+        Assert.Throws<InvalidOperationException>(() =>
+            ImageExporter.Export(bmp, new AdjustmentSettings { Exposure = 1 }, source, same, new ExportOptions()));
+        Assert.Equal(before, File.ReadAllBytes(source));
+
+        var other = Path.Combine(_dir, "photo-edited.jpg");
+        ImageExporter.Export(bmp, new AdjustmentSettings { Exposure = 1 }, source, other, new ExportOptions());
+        Assert.True(File.Exists(other));
+        Assert.Equal(before, File.ReadAllBytes(source));
+    }
 }

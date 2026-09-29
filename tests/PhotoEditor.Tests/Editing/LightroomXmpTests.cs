@@ -145,11 +145,27 @@ public class LightroomXmpTests
                 },
             ],
         };
-        var xml = LightroomXmp.Write(state, Landscape, null, out var skipped);
+        var raw = Landscape with { IsRaw = true };
+        var xml = LightroomXmp.Write(state, raw, null, out var skipped);
         Assert.Contains(skipped, s => s.Contains("white balance"));
         Assert.Contains(skipped, s => s.Contains("\"Brush\""));
         Assert.Contains(skipped, s => s.Contains("vibrance") && s.Contains("\"Grad\""));
-        Assert.Single(LightroomXmp.Read(xml, Landscape).Masks);
+        Assert.Single(LightroomXmp.Read(xml, raw).Masks);
+    }
+
+    [Fact]
+    public void WhiteBalance_NonRaw_UsesIncrementalValues()
+    {
+        var state = new EditState { Adjustments = new AdjustmentSettings { Temperature = 35, Tint = -12 } };
+        var xml = LightroomXmp.Write(state, Landscape, null, out var skipped);
+        Assert.Empty(skipped);
+        var d = XDocument.Parse(xml).Descendants().First(e => e.Attribute(Crs + "Exposure2012") is not null);
+        Assert.Equal("Custom", d.Attribute(Crs + "WhiteBalance")!.Value);
+        Assert.Equal("+35", d.Attribute(Crs + "IncrementalTemperature")!.Value);
+        Assert.Equal("-12", d.Attribute(Crs + "IncrementalTint")!.Value);
+        Assert.Equal(state.Adjustments, LightroomXmp.Read(xml, Landscape).Adjustments);
+        // A RAW file ignores them (its white balance is absolute Kelvin).
+        Assert.Equal(0, LightroomXmp.Read(xml, Landscape with { IsRaw = true }).Adjustments.Temperature);
     }
 
     [Fact]
@@ -173,7 +189,9 @@ public class LightroomXmpTests
              </rdf:RDF>
             </x:xmpmeta>
             """;
-        var xml = LightroomXmp.Write(new EditState { Adjustments = new AdjustmentSettings { Exposure = -0.5 } }, Landscape, existing, out _);
+        // A RAW sidecar written by Lightroom (white balance in Kelvin is Lightroom's; keep it).
+        var xml = LightroomXmp.Write(new EditState { Adjustments = new AdjustmentSettings { Exposure = -0.5 } },
+            Landscape with { IsRaw = true }, existing, out _);
         var d = XDocument.Parse(xml).Descendants().First(e => e.Attribute(Crs + "Exposure2012") is not null);
         XNamespace xmp = "http://ns.adobe.com/xap/1.0/";
         Assert.Equal("4", d.Attribute(xmp + "Rating")!.Value);
@@ -206,12 +224,35 @@ public class LightroomXmpTests
     [InlineData("a.nef", true)]
     [InlineData("a.dng", false)]
     [InlineData("a.jpg", false)]
-    public void AppliesTo_OnlyProprietaryRaw(string path, bool expected) =>
-        Assert.Equal(expected, LightroomXmp.AppliesTo(path));
+    public void IsProprietaryRaw(string path, bool expected) =>
+        Assert.Equal(expected, LightroomXmp.IsProprietaryRaw(path));
 
     [Fact]
-    public void PathFor_ReplacesExtension() =>
+    public void PathFor_ReplacesExtension()
+    {
         Assert.Equal(Path.Combine("x", "IMG_0001.xmp"), LightroomXmp.PathFor(Path.Combine("x", "IMG_0001.CR3")));
+        Assert.Equal(Path.GetFullPath(Path.Combine("x", "IMG_0001.xmp")),
+            Path.GetFullPath(LightroomXmp.PathFor(Path.Combine("x", "IMG_0001.jpg"))));
+    }
+
+    [Fact]
+    public void PathFor_RawPlusJpegPair_KeepsSeparateSidecars()
+    {
+        var dir = Directory.CreateTempSubdirectory("pe-xmp-").FullName;
+        try
+        {
+            var raw = Path.Combine(dir, "IMG_0001.CR3");
+            var jpg = Path.Combine(dir, "IMG_0001.JPG");
+            var dng = Path.Combine(dir, "IMG_0002.dng");
+            File.WriteAllText(raw, "");
+            File.WriteAllText(jpg, "");
+            File.WriteAllText(dng, "");
+            Assert.Equal(Path.Combine(dir, "IMG_0001.xmp"), LightroomXmp.PathFor(raw));
+            Assert.Equal(jpg + ".xmp", LightroomXmp.PathFor(jpg));
+            Assert.Equal(Path.Combine(dir, "IMG_0002.xmp"), LightroomXmp.PathFor(dng)); // alone: normal name
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
 
     [Fact]
     public void SaveAndLoad_UseSidecarFile()

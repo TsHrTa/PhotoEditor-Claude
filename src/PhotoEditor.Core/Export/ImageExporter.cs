@@ -26,6 +26,8 @@ public static class ImageExporter
 
     public static void Export(SKBitmap original, EditState state, string? sourcePath, string destinationPath, ExportOptions options)
     {
+        if (IsSameFile(sourcePath, destinationPath))
+            throw new InvalidOperationException("The export would overwrite the original photo; choose another file name.");
         using var rendered = CpuAdjustmentRenderer.Render(original, state);
         var cropped = CpuAdjustmentRenderer.ApplyCrop(rendered, state.Crop);
         byte[] bytes;
@@ -68,4 +70,9 @@ public static class ImageExporter
         } ?? throw new InvalidOperationException($"Could not encode image as {options.Format}.");
         return data.ToArray();
     }
+
+    /// <summary>True when both paths name the same file (case-insensitive, as on Windows).</summary>
+    public static bool IsSameFile(string? a, string? b) =>
+        a is not null && b is not null
+        && string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
 }

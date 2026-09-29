@@ -612,8 +612,8 @@ public partial class MainViewModel : ViewModelBase
     private string _lastXmpSkipped = "";
 
     /// <summary>
-    /// Writes the sidecar(s) now if anything changed (cancels a pending auto-save): the app's JSON and, for
-    /// RAW files, a Lightroom-compatible XMP. No file is created for an unedited image.
+    /// Writes the sidecars now if anything changed (cancels a pending auto-save): the app's JSON and a
+    /// Lightroom-compatible XMP. No file is created for an unedited image; the photo itself is never changed.
     /// </summary>
     [RelayCommand]
     public void SaveEdits()
@@ -626,7 +626,7 @@ public partial class MainViewModel : ViewModelBase
         {
             if (!State.IsDefault || SidecarFile.Exists(path))
                 SidecarFile.Save(path, EditDocument.From(State));
-            if (LightroomXmp.AppliesTo(path) && (!State.IsDefault || File.Exists(LightroomXmp.PathFor(path))))
+            if (!State.IsDefault || File.Exists(LightroomXmp.PathFor(path)))
             {
                 var skipped = string.Join("; ", LightroomXmp.Save(path, State, _geometry));
                 if (skipped != _lastXmpSkipped && skipped.Length > 0)
@@ -714,7 +714,7 @@ public partial class MainViewModel : ViewModelBase
         {
             if (SidecarFile.Load(imagePath) is { } doc)
                 return (doc.ToState(), " – edits loaded");
-            if (LightroomXmp.AppliesTo(imagePath) && LightroomXmp.Load(imagePath, geometry) is { IsDefault: false } imported)
+            if (LightroomXmp.Load(imagePath, geometry) is { IsDefault: false } imported)
                 return (imported, " – edits imported from Lightroom (.xmp)");
             return (EditState.Default, "");
         }
@@ -742,11 +742,11 @@ public partial class MainViewModel : ViewModelBase
             var (bitmap, preview, orientation) = await Task.Run(() =>
             {
                 var b = ImageLoader.Load(path);
-                var o = RawImageLoader.IsRaw(path) ? RawImageLoader.ReadOrientation(path) : SKEncodedOrigin.TopLeft;
+                var o = ImageLoader.ReadOrientation(path);
                 return (b, PreviewImage.Create(b), o);
             });
             SaveEdits(); // flush edits of the previous image
-            _geometry = new ImageGeometry(bitmap.Width, bitmap.Height, orientation);
+            _geometry = new ImageGeometry(bitmap.Width, bitmap.Height, orientation, RawImageLoader.IsRaw(path));
             _lastXmpSkipped = "";
             var (state, sidecarNote) = LoadSidecar(path, _geometry);
             Original = bitmap;
