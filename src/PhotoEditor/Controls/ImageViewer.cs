@@ -18,8 +18,8 @@ using SkiaSharp;
 namespace PhotoEditor.Controls;
 
 /// <summary>
-/// Draws an <see cref="SKBitmap"/> directly on Avalonia's Skia canvas, with zoom
-/// (fit / 100% / mouse wheel around the cursor) and drag-to-pan.
+/// Draws the edited image directly on Avalonia's Skia canvas (SkSL adjustment shader), with zoom
+/// (fit / 100% / mouse wheel around the cursor), drag-to-pan, brush painting and gradient handles.
 /// </summary>
 public class ImageViewer : Control
 {
@@ -32,8 +32,11 @@ public class ImageViewer : Control
     public static readonly StyledProperty<Mask?> OverlayMaskProperty =
         AvaloniaProperty.Register<ImageViewer, Mask?>(nameof(OverlayMask));
 
-    public static readonly StyledProperty<bool> IsBrushActiveProperty =
-        AvaloniaProperty.Register<ImageViewer, bool>(nameof(IsBrushActive));
+    public static readonly StyledProperty<EditTool> ToolProperty =
+        AvaloniaProperty.Register<ImageViewer, EditTool>(nameof(Tool));
+
+    public static readonly StyledProperty<MaskComponent?> EditableComponentProperty =
+        AvaloniaProperty.Register<ImageViewer, MaskComponent?>(nameof(EditableComponent));
 
     public static readonly StyledProperty<double> BrushRadiusProperty =
         AvaloniaProperty.Register<ImageViewer, double>(nameof(BrushRadius), 0.03);
@@ -45,6 +48,8 @@ public class ImageViewer : Control
         AvaloniaProperty.RegisterDirect<ImageViewer, double>(nameof(Zoom), v => v.Zoom);
 
     private const double WheelZoomStep = 1.25;
+    private const double HandleRadius = 6;
+    private const double HandleHitRadius = 10;
 
     private readonly ViewTransform _view = new();
     private readonly MaskImageCache _maskCache = new();
@@ -53,10 +58,15 @@ public class ImageViewer : Control
     private bool _stroking;
     private double _zoom = 1;
 
+    // Gradient creation / handle drag in progress
+    private GradientHandle _dragHandle;
+    private MaskComponent? _dragOriginal;
+    private BrushPoint _dragFrom;
+
     static ImageViewer()
     {
         AffectsRender<ImageViewer>(SourceProperty, StateProperty, OverlayMaskProperty,
-            IsBrushActiveProperty, BrushRadiusProperty, BrushFeatherProperty);
+            ToolProperty, EditableComponentProperty, BrushRadiusProperty, BrushFeatherProperty);
         ClipToBoundsProperty.OverrideDefaultValue<ImageViewer>(true);
         FocusableProperty.OverrideDefaultValue<ImageViewer>(true);
     }
@@ -82,11 +92,18 @@ public class ImageViewer : Control
         set => SetValue(OverlayMaskProperty, value);
     }
 
-    /// <summary>When true, left-drag paints (raises <see cref="BrushStroke"/>); middle/right-drag pans.</summary>
-    public bool IsBrushActive
+    /// <summary>What left-drag does: pan, paint (<see cref="BrushStroke"/>) or create a gradient (<see cref="ComponentEdit"/>).</summary>
+    public EditTool Tool
     {
-        get => GetValue(IsBrushActiveProperty);
-        set => SetValue(IsBrushActiveProperty, value);
+        get => GetValue(ToolProperty);
+        set => SetValue(ToolProperty, value);
+    }
+
+    /// <summary>Gradient whose on-canvas handles are shown and can be dragged.</summary>
+    public MaskComponent? EditableComponent
+    {
+        get => GetValue(EditableComponentProperty);
+        set => SetValue(EditableComponentProperty, value);
     }
 
     /// <summary>Brush radius as a fraction of the image's longer side (for the cursor).</summary>
@@ -105,6 +122,9 @@ public class ImageViewer : Control
 
     /// <summary>Brush input in normalised image coordinates (0..1).</summary>
     public event EventHandler<BrushStrokeEventArgs>? BrushStroke;
+
+    /// <summary>A gradient was created or its handles dragged.</summary>
+    public event EventHandler<ComponentEditEventArgs>? ComponentEdit;
 
     /// <summary>Current display scale (1 = 100%).</summary>
     public double Zoom
@@ -157,31 +177,56 @@ public class ImageViewer : Control
             return;
         var point = e.GetCurrentPoint(this);
         var props = point.Properties;
-        if (IsBrushActive && props.IsLeftButtonPressed)
+        var pos = point.Position;
+        if (props.IsLeftButtonPressed)
         {
-            _stroking = true;
-            e.Pointer.Capture(this);
-            RaiseStroke(BrushStrokePhase.Begin, point.Position, e.KeyModifiers.HasFlag(KeyModifiers.Alt));
-            e.Handled = true;
-            return;
+            if (Tool == EditTool.Brush)
+            {
+                _stroking = true;
+                e.Pointer.Capture(this);
+                RaiseStroke(BrushStrokePhase.Begin, pos, e.KeyModifiers.HasFlag(KeyModifiers.Alt));
+                e.Handled = true;
+                return;
+            }
+            if (EditableComponent is { } editable && HitTestHandle(editable, pos) is var handle and not GradientHandle.None)
+            {
+                BeginDrag(e, editable, handle, isNew: false);
+                return;
+            }
+            if (Tool == EditTool.LinearGradient)
+            {
+                var p = ToNormalized(pos);
+                BeginDrag(e, new LinearGradientComponent { Start = p, End = p }, GradientHandle.End, isNew: true);
+                return;
+            }
+            if (e.ClickCount == 2)
+            {
+                // Double-click toggles between fit and 100% at the clicked point.
+                if (_view.IsFit)
+                    Update(() => _view.ZoomTo(1, pos.X, pos.Y));
+                else
+                    Update(_view.ZoomToFit);
+                e.Handled = true;
+                return;
+            }
         }
-        if (!IsBrushActive && e.ClickCount == 2 && props.IsLeftButtonPressed)
+        if (props.IsLeftButtonPressed || props.IsMiddleButtonPressed || props.IsRightButtonPressed)
         {
-            // Double-click toggles between fit and 100% at the clicked point.
-            if (_view.IsFit)
-                Update(() => _view.ZoomTo(1, point.Position.X, point.Position.Y));
-            else
-                Update(_view.ZoomToFit);
-            e.Handled = true;
-            return;
-        }
-        if ((props.IsLeftButtonPressed && !IsBrushActive) || props.IsMiddleButtonPressed || props.IsRightButtonPressed)
-        {
-            _panStart = point.Position;
+            _panStart = pos;
             e.Pointer.Capture(this);
             Cursor = new Cursor(StandardCursorType.SizeAll);
             e.Handled = true;
         }
+    }
+
+    private void BeginDrag(PointerPressedEventArgs e, MaskComponent component, GradientHandle handle, bool isNew)
+    {
+        _dragHandle = handle;
+        _dragOriginal = component;
+        _dragFrom = ToNormalized(e.GetPosition(this));
+        e.Pointer.Capture(this);
+        e.Handled = true;
+        ComponentEdit?.Invoke(this, new ComponentEditEventArgs(component, EditPhase.Begin, isNew));
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
@@ -193,21 +238,39 @@ public class ImageViewer : Control
         {
             RaiseStroke(BrushStrokePhase.Move, p, false);
         }
+        else if (_dragOriginal is { } original)
+        {
+            ComponentEdit?.Invoke(this, new ComponentEditEventArgs(Dragged(original, p), EditPhase.Move, false));
+        }
         else if (_panStart is { } start)
         {
             _panStart = p;
             Update(() => _view.Pan(p.X - start.X, p.Y - start.Y));
             return;
         }
-        if (IsBrushActive)
+        else if (EditableComponent is { } editable)
+        {
+            Cursor = HitTestHandle(editable, p) != GradientHandle.None ? new Cursor(StandardCursorType.Hand) : null;
+        }
+        if (Tool == EditTool.Brush)
             InvalidateVisual(); // move the brush cursor
+    }
+
+    private MaskComponent Dragged(MaskComponent original, Point viewPoint)
+    {
+        var to = ToNormalized(viewPoint);
+        return original switch
+        {
+            LinearGradientComponent linear => linear.DragHandle(_dragHandle, _dragFrom, to),
+            _ => original,
+        };
     }
 
     protected override void OnPointerExited(PointerEventArgs e)
     {
         base.OnPointerExited(e);
         _pointer = null;
-        if (IsBrushActive)
+        if (Tool == EditTool.Brush)
             InvalidateVisual();
     }
 
@@ -221,6 +284,14 @@ public class ImageViewer : Control
             RaiseStroke(BrushStrokePhase.End, e.GetPosition(this), false);
             return;
         }
+        if (_dragOriginal is { } original)
+        {
+            var final = Dragged(original, e.GetPosition(this));
+            _dragOriginal = null;
+            e.Pointer.Capture(null);
+            ComponentEdit?.Invoke(this, new ComponentEditEventArgs(final, EditPhase.End, false));
+            return;
+        }
         EndPan(e.Pointer);
     }
 
@@ -232,14 +303,31 @@ public class ImageViewer : Control
             _stroking = false;
             BrushStroke?.Invoke(this, new BrushStrokeEventArgs(BrushStrokePhase.End, 0, 0, false));
         }
+        if (_dragOriginal is not null)
+        {
+            _dragOriginal = null;
+            ComponentEdit?.Invoke(this, new ComponentEditEventArgs(null, EditPhase.End, false));
+        }
         _panStart = null;
         Cursor = null;
     }
 
-    private void RaiseStroke(BrushStrokePhase phase, Point viewPoint, bool erase)
+    private BrushPoint ToNormalized(Point viewPoint)
     {
         var (ix, iy) = _view.ViewToImage(viewPoint.X, viewPoint.Y);
-        BrushStroke?.Invoke(this, new BrushStrokeEventArgs(phase, ix / _view.ImageWidth, iy / _view.ImageHeight, erase));
+        return new BrushPoint((float)(ix / _view.ImageWidth), (float)(iy / _view.ImageHeight));
+    }
+
+    private Point ToView(BrushPoint p)
+    {
+        var (x, y) = _view.ImageToView(p.X * _view.ImageWidth, p.Y * _view.ImageHeight);
+        return new Point(x, y);
+    }
+
+    private void RaiseStroke(BrushStrokePhase phase, Point viewPoint, bool erase)
+    {
+        var p = ToNormalized(viewPoint);
+        BrushStroke?.Invoke(this, new BrushStrokeEventArgs(phase, p.X, p.Y, erase));
     }
 
     private void EndPan(IPointer pointer)
@@ -249,6 +337,29 @@ public class ImageViewer : Control
         _panStart = null;
         pointer.Capture(null);
         Cursor = null;
+    }
+
+    /// <summary>View positions of the draggable handles of a gradient.</summary>
+    private IEnumerable<(GradientHandle Handle, Point Position)> Handles(MaskComponent component) => component switch
+    {
+        LinearGradientComponent g => [(GradientHandle.Start, ToView(g.Start)), (GradientHandle.End, ToView(g.End)), (GradientHandle.Move, ToView(g.Center))],
+        _ => [],
+    };
+
+    private GradientHandle HitTestHandle(MaskComponent component, Point viewPoint)
+    {
+        var best = GradientHandle.None;
+        double bestDistance = HandleHitRadius;
+        foreach (var (handle, pos) in Handles(component))
+        {
+            double d = Point.Distance(pos, viewPoint);
+            if (d <= bestDistance)
+            {
+                best = handle;
+                bestDistance = d;
+            }
+        }
+        return best;
     }
 
     public override void Render(DrawingContext context)
@@ -272,7 +383,10 @@ public class ImageViewer : Control
         _maskCache.Retain(OverlayMask is { } keep ? state.Masks.Add(keep) : state.Masks);
         context.Custom(new ImageDrawOperation(bounds, image, dest, _view.Scale, state, maskImages, overlay));
 
-        if (IsBrushActive && _pointer is { } p)
+        if (EditableComponent is { } editable)
+            DrawGradientGuides(context, editable);
+
+        if (Tool == EditTool.Brush && _pointer is { } p)
         {
             // Brush cursor: outer circle = radius, inner = where the feather starts.
             double r = BrushRadius * Math.Max(_view.ImageWidth, _view.ImageHeight) * _view.Scale;
@@ -283,6 +397,38 @@ public class ImageViewer : Control
             double inner = r * (1 - Math.Clamp(BrushFeather, 0, 1));
             if (inner > 1 && inner < r - 1)
                 context.DrawEllipse(null, new Pen(new SolidColorBrush(Color.FromArgb(160, 255, 255, 255)), 1), p, inner, inner);
+        }
+    }
+
+    private static readonly IPen GuideShadow = new Pen(new SolidColorBrush(Color.FromArgb(140, 0, 0, 0)), 3);
+    private static readonly IPen GuideLine = new Pen(Brushes.White, 1);
+    private static readonly IPen GuideDashed = new Pen(Brushes.White, 1, new DashStyle([4, 4], 0));
+
+    /// <summary>Lines/ellipses showing the gradient plus its handles.</summary>
+    private void DrawGradientGuides(DrawingContext context, MaskComponent component)
+    {
+        if (component is LinearGradientComponent linear)
+        {
+            // Three lines perpendicular to the gradient direction: start (full), centre, end (none).
+            var a = ToView(linear.Start);
+            var b = ToView(linear.End);
+            var d = b - a;
+            double length = Math.Sqrt(d.X * d.X + d.Y * d.Y);
+            if (length > 0.5)
+            {
+                var n = new Vector(-d.Y / length, d.X / length) * (Bounds.Width + Bounds.Height);
+                var c = ToView(linear.Center);
+                foreach (var (p, pen) in new[] { (a, GuideLine), (c, GuideDashed), (b, GuideLine) })
+                {
+                    context.DrawLine(GuideShadow, p - n, p + n);
+                    context.DrawLine(pen, p - n, p + n);
+                }
+            }
+        }
+
+        foreach (var (_, pos) in Handles(component))
+        {
+            context.DrawEllipse(Brushes.White, GuideShadow, pos, HandleRadius, HandleRadius);
         }
     }
 

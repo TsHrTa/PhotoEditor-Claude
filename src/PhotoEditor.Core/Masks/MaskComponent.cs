@@ -25,6 +25,7 @@ public enum MaskMode
 /// </remarks>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(BrushComponent), "brush")]
+[JsonDerivedType(typeof(LinearGradientComponent), "linear")]
 public abstract record MaskComponent
 {
     public MaskMode Mode { get; init; } = MaskMode.Add;

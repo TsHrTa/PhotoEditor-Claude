@@ -37,7 +37,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Mask model: list of masks, each with its own adjustment set; add/subtract/intersect components
 - [x] Mask overlay display (red tint) and mask list panel
 - [x] Brush (size, feather, flow, erase)
-- [ ] Linear gradient (on-canvas handles)
+- [x] Linear gradient (on-canvas handles)
 - [ ] Radial gradient (ellipse, feather, invert)
 - [ ] Vignette (amount, midpoint, roundness, feather)
 
@@ -79,7 +79,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Brush done. `Core/Masks/BrushComponent` (first real component, registered for polymorphic JSON as "brush"): strokes with radius (fraction of the long side), feather, flow, erase and normalised points; each stroke = round brush swept along the polyline (distance to segment, max within a stroke), composited with flow (strokes build up; erase multiplies down). Preview masks are rasterised at ≤ 1600 px (`MaskImageCache.MaxPreviewMaskSize`, ~11 ms per update), export at full resolution. UI: "Brush (B)" toggle with Size/Feather/Flow/Erase, left-drag paints (Alt = erase), middle/right-drag pans, circle cursor; the first stroke without a selected mask creates one (selected when the stroke ends). One stroke = one undo step (coalesced). Sliders/component list only refresh when what they show changes. Found under Xvfb: software rendering of the shader chain is slow (seconds of lag after painting); expected to be fine with a GPU but not verified. Next: linear gradient.
 
+- 2026-09-29: Linear gradient done. `Core/Masks/LinearGradientComponent` (JSON "linear"): full effect before Start, smoothstep fade to 0 at End, projection in pixel space; `DragHandle` (Start/End/Move) tested. `Core/Editing/EditTool` (None/Brush/LinearGradient/RadialGradient) drives the viewer (`Tool`); VM `ActiveTool` with `IsBrushActive` / `IsLinearGradientActive`. "Linear (L)" toggle: drag on the image creates a gradient in the selected mask (or a new one), then the tool switches off and the handles (start, centre = move, end; perpendicular guide lines) of the selected component (component list is now a ListBox) can be dragged; a click without drag gives a default 25 % gradient. Esc = no tool. One creation/drag = one undo step. Next: radial gradient (viewer code for it was drafted and removed to keep this commit to one item).
+
 ### To check visually (Windows)
+- Linear gradient: creating by drag, handle hit targets (10 px), guide lines readable on bright and dark photos.
 - Brush painting is smooth (no lag) on a real GPU with a 24 MP image; cursor circle size matches the painted stroke; Alt-erase works (Alt might trigger access keys).
 - Mask panel layout and ListBox selection; red overlay visible and aligned with the image at all zoom levels (verified under Xvfb only once a component type exists).
 - Export… save dialog: JPEG/PNG type choice, suggested name, overwrite prompt; exported JPEG opens in Windows Photos with EXIF (camera, date) intact and correct orientation.

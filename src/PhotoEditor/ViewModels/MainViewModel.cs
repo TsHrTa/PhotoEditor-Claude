@@ -53,6 +53,7 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DisplayState))]
     [NotifyPropertyChangedFor(nameof(OverlayMask))]
+    [NotifyPropertyChangedFor(nameof(EditableComponent))]
     public partial bool ShowOriginal { get; set; }
 
     /// <summary>What the viewer renders (respects the before/after toggle).</summary>
@@ -98,7 +99,10 @@ public partial class MainViewModel : ViewModelBase
     partial void OnSelectedMaskChanged(MaskItemViewModel? value)
     {
         RefreshSliders();
+        SelectedComponentIndex = -1;
+        SelectedMaskComponents.Clear();
         SyncComponents();
+        OnPropertyChanged(nameof(EditableComponent));
     }
 
     [RelayCommand]
@@ -124,9 +128,118 @@ public partial class MainViewModel : ViewModelBase
 
     // ---- Brush ----
 
-    /// <summary>When on, left-dragging on the image paints into the selected mask.</summary>
+    /// <summary>What left-dragging on the image does.</summary>
     [ObservableProperty]
-    public partial bool IsBrushActive { get; set; }
+    [NotifyPropertyChangedFor(nameof(IsBrushActive))]
+    [NotifyPropertyChangedFor(nameof(IsLinearGradientActive))]
+    public partial EditTool ActiveTool { get; set; }
+
+    /// <summary>When on, left-dragging on the image paints into the selected mask.</summary>
+    public bool IsBrushActive
+    {
+        get => ActiveTool == EditTool.Brush;
+        set => SetTool(EditTool.Brush, value);
+    }
+
+    /// <summary>When on, dragging on the image creates a linear gradient.</summary>
+    public bool IsLinearGradientActive
+    {
+        get => ActiveTool == EditTool.LinearGradient;
+        set => SetTool(EditTool.LinearGradient, value);
+    }
+
+    private void SetTool(EditTool tool, bool on)
+    {
+        if (on)
+            ActiveTool = tool;
+        else if (ActiveTool == tool)
+            ActiveTool = EditTool.None;
+    }
+
+    // ---- Gradients (created by dragging, edited with on-canvas handles) ----
+
+    /// <summary>Index of the selected component of the selected mask (-1 = none).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EditableComponent))]
+    public partial int SelectedComponentIndex { get; set; } = -1;
+
+    /// <summary>The selected component if it is a gradient: the viewer shows its handles.</summary>
+    public MaskComponent? EditableComponent =>
+        !ShowOriginal && SelectedMask is { } item && State.FindMask(item.Id) is { } mask
+        && SelectedComponentIndex >= 0 && SelectedComponentIndex < mask.Components.Count
+        && mask.Components[SelectedComponentIndex] is LinearGradientComponent component
+            ? component
+            : null;
+
+    private string? _componentEditKey;
+    private Guid? _componentEditMaskId;
+    private int _componentEditIndex = -1;
+    private bool _componentEditIsNew;
+
+    /// <summary>Handles gradient creation / handle drags from the viewer.</summary>
+    public void EditComponent(MaskComponent? component, bool begin, bool end, bool isNew)
+    {
+        if (!HasImage)
+            return;
+        if (begin)
+        {
+            _componentEditKey = $"component:{Guid.NewGuid()}";
+            _componentEditIsNew = isNew;
+            if (isNew && component is not null)
+            {
+                // Add to the selected mask, or to a new one (selected when the drag ends).
+                Guid maskId;
+                if (SelectedMask is { } selected)
+                {
+                    maskId = selected.Id;
+                }
+                else
+                {
+                    var created = new Mask { Name = State.NextMaskName() };
+                    ApplyEdit(State.AddMask(created), _componentEditKey);
+                    maskId = created.Id;
+                }
+                EditMask(maskId, m => m.AddComponent(component), _componentEditKey);
+                _componentEditMaskId = maskId;
+                _componentEditIndex = State.FindMask(maskId)!.Components.Count - 1;
+            }
+            else
+            {
+                _componentEditMaskId = SelectedMask?.Id;
+                _componentEditIndex = SelectedComponentIndex;
+            }
+            return;
+        }
+
+        if (_componentEditMaskId is { } id && _componentEditIndex >= 0 && component is not null)
+        {
+            if (end && _componentEditIsNew && component is LinearGradientComponent g && IsTiny(g))
+            {
+                // A click without dragging: use a default-length gradient downwards.
+                component = g with { End = new BrushPoint(g.Start.X, g.Start.Y + 0.25f) };
+            }
+            int index = _componentEditIndex;
+            EditMask(id, m => index < m.Components.Count ? m.ReplaceComponent(index, component) : m, _componentEditKey);
+        }
+
+        if (end)
+        {
+            if (_componentEditIsNew && _componentEditMaskId is { } maskId)
+            {
+                if (SelectedMask?.Id != maskId)
+                    SelectedMask = Masks.FirstOrDefault(m => m.Id == maskId);
+                SelectedComponentIndex = _componentEditIndex;
+                ActiveTool = EditTool.None; // now the handles can be dragged
+            }
+            _componentEditKey = null;
+            _componentEditMaskId = null;
+            _componentEditIndex = -1;
+            OnPropertyChanged(nameof(EditableComponent));
+        }
+    }
+
+    private static bool IsTiny(LinearGradientComponent g) =>
+        Math.Abs(g.End.X - g.Start.X) + Math.Abs(g.End.Y - g.Start.Y) < 0.01f;
 
     /// <summary>1..100; radius = size × 0.2% of the image's longer side.</summary>
     [ObservableProperty]
@@ -249,6 +362,7 @@ public partial class MainViewModel : ViewModelBase
         SyncComponents();
         OnPropertyChanged(nameof(OverlayMask));
         OnPropertyChanged(nameof(EditingLabel));
+        OnPropertyChanged(nameof(EditableComponent));
     }
 
     private void SyncComponents()
@@ -259,9 +373,11 @@ public partial class MainViewModel : ViewModelBase
             && components.Select((c, i) => (c, i)).All(x => SelectedMaskComponents[x.i].Shows(x.c));
         if (same)
             return;
+        int keep = SelectedComponentIndex;
         SelectedMaskComponents.Clear();
         for (int i = 0; i < components.Count; i++)
             SelectedMaskComponents.Add(new ComponentItemViewModel(i, components[i], EditSelectedComponent, DeleteSelectedComponent));
+        SelectedComponentIndex = keep >= 0 && keep < components.Count ? keep : components.Count - 1;
         OnPropertyChanged(nameof(SelectedMaskHasNoComponents));
     }
 

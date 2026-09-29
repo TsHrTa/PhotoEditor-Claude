@@ -52,8 +52,12 @@
                         <Button Content="Whole image" Command="{Binding EditWholeImageCommand}"
                                 ToolTip.Tip="Deselect the mask; sliders edit the whole image" />
                     </StackPanel>
-                    <ToggleButton Content="Brush (B)" IsChecked="{Binding IsBrushActive}"
-                                  ToolTip.Tip="Paint the selected mask (a new mask is created if none is selected). Alt = erase. Middle/right-drag pans." />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <ToggleButton Content="Brush (B)" IsChecked="{Binding IsBrushActive}"
+                                      ToolTip.Tip="Paint the selected mask (a new mask is created if none is selected). Alt = erase. Middle/right-drag pans." />
+                        <ToggleButton Content="Linear (L)" IsChecked="{Binding IsLinearGradientActive}"
+                                      ToolTip.Tip="Drag on the image to add a linear gradient to the selected mask (or a new one). Drag its handles to adjust." />
+                    </StackPanel>
                     <StackPanel Spacing="2" IsVisible="{Binding IsBrushActive}">
                         <Grid ColumnDefinitions="70,*,40">
                             <TextBlock Text="Size" VerticalAlignment="Center" />
@@ -88,20 +92,21 @@
                         <TextBlock Text="Components" FontWeight="SemiBold" />
                         <TextBlock Text="No components yet." Foreground="Gray"
                                    IsVisible="{Binding SelectedMaskHasNoComponents}" />
-                        <ItemsControl ItemsSource="{Binding SelectedMaskComponents}">
-                            <ItemsControl.ItemTemplate>
+                        <ListBox ItemsSource="{Binding SelectedMaskComponents}" SelectedIndex="{Binding SelectedComponentIndex}">
+                            <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="vm:ComponentItemViewModel">
-                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,2">
-                                        <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
-                                        <ComboBox Grid.Column="1" ItemsSource="{Binding Modes}" SelectedItem="{Binding Mode}"
-                                                  IsEnabled="{Binding CanChangeMode}" Margin="4,0" MinWidth="100" />
-                                        <CheckBox Grid.Column="2" Content="Invert" IsChecked="{Binding Invert}" />
-                                        <Button Grid.Column="3" Content="✕" Command="{Binding DeleteCommand}"
+                                    <Grid ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto,Auto" Margin="0,2">
+                                        <TextBlock Grid.ColumnSpan="3" Text="{Binding Title}" Margin="0,0,0,4" />
+                                        <ComboBox Grid.Row="1" ItemsSource="{Binding Modes}" SelectedItem="{Binding Mode}"
+                                                  IsEnabled="{Binding CanChangeMode}" HorizontalAlignment="Stretch"
+                                                  ToolTip.Tip="How this component combines with the ones above" />
+                                        <CheckBox Grid.Row="1" Grid.Column="1" Content="Invert" IsChecked="{Binding Invert}" Margin="6,0,0,0" />
+                                        <Button Grid.Row="1" Grid.Column="2" Content="✕" Command="{Binding DeleteCommand}"
                                                 ToolTip.Tip="Remove component" Margin="4,0,0,0" />
                                     </Grid>
                                 </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
                     </StackPanel>
                 </StackPanel>
             </Expander>
@@ -137,7 +142,8 @@
         <Panel Background="#202020">
             <controls:ImageViewer x:Name="Viewer" Source="{Binding Preview}" State="{Binding DisplayState}"
                                   OverlayMask="{Binding OverlayMask}"
-                                  IsBrushActive="{Binding IsBrushActive}"
+                                  Tool="{Binding ActiveTool}"
+                                  EditableComponent="{Binding EditableComponent}"
                                   BrushRadius="{Binding BrushRadius}"
                                   BrushFeather="{Binding BrushFeatherFraction}" />
             <TextBlock Text="Drop an image here"

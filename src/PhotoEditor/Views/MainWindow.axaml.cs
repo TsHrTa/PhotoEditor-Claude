@@ -9,6 +9,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.Input;
 using PhotoEditor.Controls;
+using PhotoEditor.Core.Editing;
 using PhotoEditor.Core.Imaging;
 using PhotoEditor.ViewModels;
 
@@ -39,7 +40,10 @@ public partial class MainWindow : Window
         // handledEventsToo: the slider thumb handles the pointer itself.
         AddHandler(DoubleTappedEvent, OnDoubleTapped, RoutingStrategies.Bubble, handledEventsToo: true);
         Viewer.BrushStroke += OnBrushStroke;
+        Viewer.ComponentEdit += OnComponentEdit;
         AddPlainKeyBinding(Key.B, () => { if (ViewModel is { } vm) vm.IsBrushActive = !vm.IsBrushActive; });
+        AddPlainKeyBinding(Key.L, () => { if (ViewModel is { } vm) vm.IsLinearGradientActive = !vm.IsLinearGradientActive; });
+        AddPlainKeyBinding(Key.Escape, () => { if (ViewModel is { } vm) vm.ActiveTool = EditTool.None; });
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
     }
@@ -122,6 +126,9 @@ public partial class MainWindow : Window
                 break;
         }
     }
+
+    private void OnComponentEdit(object? sender, ComponentEditEventArgs e) =>
+        ViewModel?.EditComponent(e.Component, e.Phase == EditPhase.Begin, e.Phase == EditPhase.End, e.IsNew);
 
     private void OnFitClick(object? sender, RoutedEventArgs e) => Viewer.ZoomToFit();
 
