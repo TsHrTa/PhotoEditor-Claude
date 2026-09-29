@@ -148,14 +148,17 @@ public static class AdjustmentShader
             return pow(pow(abs(uv.x), p) + pow(abs(uv.y), p), 1.0 / p) / pow(2.0, 1.0 / p);
         }
 
-        // 5 × 5 Gaussian (sigma = one tap step) around coord; returns unpremultiplied colour.
+        // 5 × 5 Gaussian (sigma = one tap step) of the original photo around coord; returns unpremultiplied colour.
+        // It samples `source`, never `image`: in mask passes `image` is the whole chain of previous passes, and
+        // GPU compilers (e.g. Direct3D's) inline every child call, so 25 taps per pass would multiply the shader's
+        // size with each mask (a freeze while compiling with two brush masks). Only `main` evaluates `image`, once.
         float3 blurred(float2 coord, float3 fallback) {
             float4 sum = float4(0);
             float wsum = 0.0;
             for (int j = -2; j <= 2; j++) {
                 for (int i = -2; i <= 2; i++) {
                     float w = exp(-0.5 * float(i * i + j * j));
-                    sum += w * float4(image.eval(coord + float2(float(i), float(j)) * sharpenStep));
+                    sum += w * float4(source.eval(coord + float2(float(i), float(j)) * sharpenStep));
                     wsum += w;
                 }
             }
