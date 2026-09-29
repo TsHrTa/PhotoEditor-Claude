@@ -47,7 +47,7 @@ public static class SettingsTransfer
         var a = target.Adjustments;
         var s = source.Adjustments;
         if (groups.HasFlag(SettingsGroups.Light))
-            a = a with { Exposure = s.Exposure, Contrast = s.Contrast, Highlights = s.Highlights, Shadows = s.Shadows, Whites = s.Whites, Blacks = s.Blacks };
+            a = a with { Exposure = s.Exposure, Contrast = s.Contrast, Highlights = s.Highlights, Shadows = s.Shadows, Whites = s.Whites, Blacks = s.Blacks, Dehaze = s.Dehaze };
         if (groups.HasFlag(SettingsGroups.Color))
             a = a with { Temperature = s.Temperature, Tint = s.Tint, Vibrance = s.Vibrance, Saturation = s.Saturation };
         if (groups.HasFlag(SettingsGroups.Hsl))

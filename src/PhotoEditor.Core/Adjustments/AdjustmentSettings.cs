@@ -72,6 +72,9 @@ public sealed record AdjustmentSettings
     /// </summary>
     public double Soften { get; init; }
 
+    /// <summary>Dehaze −100..100: removes (positive) or adds (negative) haze, based on the photo's haze map. Also in masks.</summary>
+    public double Dehaze { get; init; }
+
     // HSL panel, one entry per colour band (see HslBands).
     public HslBand Reds { get; init; } = HslBand.Zero;
     public HslBand Oranges { get; init; } = HslBand.Zero;

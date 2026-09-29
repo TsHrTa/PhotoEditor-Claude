@@ -158,6 +158,7 @@ public static class LightroomXmp
         Set("Vibrance", Signed(Limit(a.Vibrance, 100, "vibrance")));
         // Closest Lightroom equivalent of Soften: negative Texture (smooths fine detail, keeps edges).
         Set("Texture", Signed(-a.Soften));
+        Set("Dehaze", Signed(a.Dehaze));
         Set("Saturation", Signed(Limit(a.Saturation, 100, "saturation")));
 
         for (int i = 0; i < HslBands.Count; i++)
@@ -337,7 +338,8 @@ public static class LightroomXmp
             new XAttribute(Crs + "LocalTemperature", Local(a.Temperature / 100)),
             new XAttribute(Crs + "LocalTint", Local(a.Tint / 100)),
             new XAttribute(Crs + "LocalSaturation", Local(a.Saturation / 100)),
-            new XAttribute(Crs + "LocalTexture", Local(-a.Soften / 100)));
+            new XAttribute(Crs + "LocalTexture", Local(-a.Soften / 100)),
+            new XAttribute(Crs + "LocalDehaze", Local(a.Dehaze / 100)));
 
         static string Local(double value) => Number(Math.Clamp(value, -1, 1), "0.000000");
     }
@@ -428,6 +430,7 @@ public static class LightroomXmp
             Blacks = Get("Blacks2012"),
             Vibrance = Get("Vibrance"),
             Soften = Math.Max(0, -Get("Texture")),
+            Dehaze = Get("Dehaze"),
             Temperature = geometry.IsRaw ? 0 : Get("IncrementalTemperature"),
             Tint = geometry.IsRaw ? 0 : Get("IncrementalTint"),
             Saturation = Get("Saturation"),
@@ -491,6 +494,7 @@ public static class LightroomXmp
                         Tint = (ReadNumber(correction, "LocalTint") ?? 0) * 100,
                         Saturation = (ReadNumber(correction, "LocalSaturation") ?? 0) * 100,
                         Soften = Math.Max(0, -(ReadNumber(correction, "LocalTexture") ?? 0) * 100),
+                        Dehaze = (ReadNumber(correction, "LocalDehaze") ?? 0) * 100,
                     }),
                     Components = [component],
                 });

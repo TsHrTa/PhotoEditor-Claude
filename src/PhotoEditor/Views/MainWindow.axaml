@@ -58,7 +58,7 @@
                     <Flyout Placement="BottomEdgeAlignedLeft">
                         <StackPanel Spacing="4" MinWidth="200">
                             <TextBlock Text="Copy these settings:" FontWeight="SemiBold" />
-                            <CheckBox Content="Light" IsChecked="{Binding CopyLight}" />
+                            <CheckBox Content="Light (and dehaze)" IsChecked="{Binding CopyLight}" />
                             <CheckBox Content="Color (white balance, vibrance, saturation)" IsChecked="{Binding CopyColor}" />
                             <CheckBox Content="HSL" IsChecked="{Binding CopyHsl}" />
                             <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />
@@ -206,7 +206,7 @@
                                         <TextBlock Text="Preset name:" FontWeight="SemiBold" />
                                         <TextBox Text="{Binding NewPresetName}" />
                                         <TextBlock Text="Include:" FontWeight="SemiBold" Margin="0,4,0,0" />
-                                        <CheckBox Content="Light" IsChecked="{Binding CopyLight}" />
+                                        <CheckBox Content="Light (and dehaze)" IsChecked="{Binding CopyLight}" />
                                         <CheckBox Content="Color" IsChecked="{Binding CopyColor}" />
                                         <CheckBox Content="HSL" IsChecked="{Binding CopyHsl}" />
                                         <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />

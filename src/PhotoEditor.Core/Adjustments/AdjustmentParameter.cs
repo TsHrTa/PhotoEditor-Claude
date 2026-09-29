@@ -106,6 +106,9 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter DeblurAmount =
         new(Detail, "Deblur (AI)", 0, 100, s => s.DeblurAmount, (s, v) => s with { DeblurAmount = v }, id: "deblurAmount");
 
+    public static readonly AdjustmentParameter Dehaze =
+        new(Effects, "Dehaze", -100, 100, s => s.Dehaze, (s, v) => s with { Dehaze = v }, id: "dehaze");
+
     public static readonly AdjustmentParameter Soften =
         new(Effects, "Soften", 0, 100, s => s.Soften, (s, v) => s with { Soften = v }, id: "soften");
 
@@ -120,7 +123,7 @@ public static class AdjustmentParameters
         Temperature, Tint, Vibrance, Saturation,
         .. Hsl,
         VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
-        Soften,
+        Dehaze, Soften,
         DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking,
     ];
 

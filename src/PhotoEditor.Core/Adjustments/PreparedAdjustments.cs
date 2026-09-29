@@ -26,8 +26,11 @@ public readonly record struct PreparedAdjustments(
     float SharpenAmount,
     float SharpenRadius,
     float SharpenMasking,
-    float SoftenAmount)
+    float SoftenAmount,
+    float DehazeAmount)
 {
+    public bool HasDehaze => DehazeAmount != 0f;
+
     /// <summary>
     /// Tap spacing of the soften blur in pixels of an image with this long side: 6 px at 6000 px (the blur
     /// reaches ±3 taps with sigma 1.5 taps, i.e. ±18 px), at least 1. A whole number, so the CPU taps hit pixel centres.
@@ -88,7 +91,8 @@ public readonly record struct PreparedAdjustments(
             SharpenAmount: (float)s.SharpenAmount / 100f * SharpenStrengthAt100,
             SharpenRadius: (float)s.SharpenRadius,
             SharpenMasking: (float)s.SharpenMasking / 100f,
-            SoftenAmount: (float)Math.Clamp(s.Soften, 0, 100) / 100f);
+            SoftenAmount: (float)Math.Clamp(s.Soften, 0, 100) / 100f,
+            DehazeAmount: (float)Math.Clamp(s.Dehaze, -100, 100) / 100f);
     }
 
     /// <summary>

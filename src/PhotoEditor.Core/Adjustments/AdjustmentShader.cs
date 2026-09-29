@@ -48,6 +48,10 @@ public static class AdjustmentShader
         uniform float sharpenStep;
         uniform float sharpenMasking;
         // Soften: amount 0..1 and blur tap spacing in image pixels.
+        // Dehaze: transmission map (red, stretched over the image), haze colour (linear), amount −1..1.
+        uniform shader haze;
+        uniform float3 hazeLight;
+        uniform float dehazeAmount;
         uniform float softenAmount;
         uniform float softenStep;
         const float softenRangeSigma = 0.1;
@@ -189,6 +193,15 @@ public static class AdjustmentShader
             return center - sum / wsum;
         }
 
+        float3 dehaze(float3 c, float2 coord) {
+            if (dehazeAmount > 0.0) {
+                float t = float(haze.eval(coord).r);
+                float tt = max(1.0 - dehazeAmount * (1.0 - t), 0.1);
+                return max((c - hazeLight) / tt + hazeLight, 0.0);
+            }
+            return c + (hazeLight - c) * (-dehazeAmount * 0.6);
+        }
+
         half4 main(float2 coord) {
             half4 src = image.eval(coord);
             float a = src.a;
@@ -201,6 +214,7 @@ public static class AdjustmentShader
 
             // Linear light
             float3 c = float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b));
+            if (dehazeAmount != 0.0) c = dehaze(c, coord);
             c *= whiteBalance * exposureGain;
 
             // Tone curve on perceptual luminance, applied as a ratio
@@ -254,15 +268,26 @@ public static class AdjustmentShader
     /// is smaller), so the sharpening radius stays the same relative to the photo.
     /// </remarks>
     public static SKShader CreateShader(SKImage image, EditState state, SKSamplingOptions sampling, Func<Mask, SKImage?> maskImage,
-        double pixelScale = 1)
+        double pixelScale = 1, HazeMap? hazeMap = null)
     {
         using var imageShader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
         using var white = SKShader.CreateColor(SKColors.White);
+        // Dehaze (globally or in a mask) needs the photo's haze map; compute it here unless the caller has it.
+        bool dehaze = state.Adjustments.Dehaze != 0 || state.Masks.Any(m => m.IsActive && m.Adjustments.Dehaze != 0);
+        if (dehaze)
+            hazeMap ??= HazeMap.For(image);
+        else
+            hazeMap = null;
+        using var hazeShader = hazeMap is null
+            ? SKShader.CreateColor(SKColors.White)
+            : hazeMap.Image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, new SKSamplingOptions(SKFilterMode.Linear),
+                SKMatrix.CreateScale((float)image.Width / hazeMap.Width, (float)image.Height / hazeMap.Height));
+        var haze = new HazeInput(hazeShader, hazeMap);
         var frame = VignetteMath.Frame.From(state.Crop.Frame(image.Width, image.Height));
         // Soften taps are a whole number of full-resolution pixels apart (as on the CPU at export).
         int fullLongSide = (int)Math.Round(Math.Max(image.Width, image.Height) / pixelScale);
         float softenStep = (float)(PreparedAdjustments.SoftenStepFor(fullLongSide) * pixelScale);
-        var current = CreatePass(imageShader, imageShader, white, state.Adjustments, frame, (float)pixelScale, softenStep, sharpen: true);
+        var current = CreatePass(imageShader, imageShader, white, haze, state.Adjustments, frame, (float)pixelScale, softenStep, sharpen: true);
 
         foreach (var mask in state.Masks)
         {
@@ -271,7 +296,7 @@ public static class AdjustmentShader
             var toImage = SKMatrix.CreateScale((float)image.Width / maskImg.Width, (float)image.Height / maskImg.Height);
             using var maskShader = maskImg.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
                 MaskSampling(maskImg, image), toImage);
-            var next = CreatePass(current, imageShader, maskShader, mask.Adjustments, frame, (float)pixelScale, softenStep, sharpen: false);
+            var next = CreatePass(current, imageShader, maskShader, haze, mask.Adjustments, frame, (float)pixelScale, softenStep, sharpen: false);
             current.Dispose();
             current = next;
         }
@@ -284,8 +309,10 @@ public static class AdjustmentShader
             ? new SKSamplingOptions(SKFilterMode.Nearest)
             : new SKSamplingOptions(SKFilterMode.Linear);
 
-    private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, AdjustmentSettings settings, VignetteMath.Frame frame,
-        float pixelScale, float softenStep, bool sharpen)
+    private readonly record struct HazeInput(SKShader Shader, HazeMap? Map);
+
+    private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, HazeInput haze, AdjustmentSettings settings,
+        VignetteMath.Frame frame, float pixelScale, float softenStep, bool sharpen)
     {
         var effect = Effect;
         var p = PreparedAdjustments.From(settings);
@@ -317,12 +344,15 @@ public static class AdjustmentShader
             ["sharpenStep"] = p.SharpenRadius * pixelScale,
             ["sharpenMasking"] = p.SharpenMasking,
             ["softenAmount"] = p.SoftenAmount,
+            ["hazeLight"] = haze.Map is { } m ? new[] { m.LightR, m.LightG, m.LightB } : new[] { 1f, 1f, 1f },
+            ["dehazeAmount"] = haze.Map is null ? 0f : p.DehazeAmount,
             ["softenStep"] = softenStep,
         };
         var children = new SKRuntimeEffectChildren(effect)
         {
             ["image"] = input,
             ["source"] = source,
+            ["haze"] = haze.Shader,
             ["mask"] = mask,
         };
         return effect.ToShader(uniforms, children);

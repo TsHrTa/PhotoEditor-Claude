@@ -43,6 +43,8 @@ public static class CpuAdjustmentRenderer
         int rowBytesIn = input.RowBytes, rowBytesOut = result.RowBytes;
         nint inPtr = input.GetPixels(), outPtr = result.GetPixels();
         // Soften (global or in a mask) subtracts the original's fine detail.
+        // Dehaze (global or in a mask) uses the photo's haze map, computed from the original.
+        var haze = p.HasDehaze || layers.Any(l => l.Adjustments.HasDehaze) ? HazeMap.Compute(original) : null;
         Softening? soften = p.HasSoften || layers.Any(l => l.Adjustments.HasSoften)
             ? new Softening(original.GetPixels(), original.RowBytes, width, height, PreparedAdjustments.SoftenStepFor(Math.Max(width, height)))
             : null;
@@ -53,7 +55,7 @@ public static class CpuAdjustmentRenderer
             {
                 var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
                 var outRow = new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
-                ProcessRow(inRow, outRow, p, layers, y, frame, soften);
+                ProcessRow(inRow, outRow, p, layers, y, frame, soften, haze, height);
             }
         });
         return result;
@@ -64,10 +66,10 @@ public static class CpuAdjustmentRenderer
 
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
     public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
-        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null);
+        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1);
 
     private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y,
-        in VignetteMath.Frame frame, Softening? soften)
+        in VignetteMath.Frame frame, Softening? soften, HazeMap? haze, int height)
     {
         int width = input.Length / 4;
         for (int i = 0; i < input.Length; i += 4)
@@ -106,6 +108,13 @@ public static class CpuAdjustmentRenderer
                 b = ColorMath.SrgbToLinear(Math.Min(1f, input[i + 2] * inv / 255f));
             }
 
+            // Transmission at this pixel, sampled once when a pass dehazes.
+            float t = -1f;
+            if (p.HasDehaze && haze is not null)
+            {
+                t = haze.Sample(i / 4, y, width, height);
+                HazeMap.Apply(ref r, ref g, ref b, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
+            }
             ApplyLinear(ref r, ref g, ref b, p);
             if (p.HasVignette)
                 VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, p);
@@ -136,6 +145,12 @@ public static class CpuAdjustmentRenderer
                     r = ColorMath.SrgbToLinear(sr);
                     g = ColorMath.SrgbToLinear(sg);
                     b = ColorMath.SrgbToLinear(sb);
+                }
+                if (layer.Adjustments.HasDehaze && haze is not null)
+                {
+                    if (t < 0f)
+                        t = haze.Sample(i / 4, y, width, height);
+                    HazeMap.Apply(ref r, ref g, ref b, t, layer.Adjustments.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
                 }
                 ApplyLinear(ref r, ref g, ref b, layer.Adjustments);
                 if (layer.Adjustments.HasVignette)
