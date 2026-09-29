@@ -25,7 +25,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Adjustment pipeline: settings model + SkSL shader rendering on a preview-sized image
 - [x] Light: exposure, contrast, highlights, shadows, whites, blacks
 - [x] Color: temperature, tint, saturation, vibrance
-- [ ] HSL panel: hue / saturation / luminance per color band (reds, oranges, yellows, greens, aquas, blues, purples, magentas)
+- [x] HSL panel: hue / saturation / luminance per color band (reds, oranges, yellows, greens, aquas, blues, purples, magentas)
 - [ ] Before/after toggle, reset per slider (double-click) and reset all
 - [ ] Export full resolution (JPEG quality, PNG), keep EXIF
 
@@ -63,7 +63,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Color sliders done. Temperature/tint = linear RGB gains (luminance-normalised) applied with exposure; vibrance (weighted by 1 − current saturation) and saturation scale chroma around luminance after the tone curve. No skin-tone protection in vibrance. Next: HSL panel.
 
+- 2026-09-29: HSL panel done. `HslBand` record per band (8 properties on `AdjustmentSettings`), `HslMath` (C#) / `applyHsl` (SkSL, uniform arrays): HSV on gamma-2.2-encoded values, band adjustments blended with smoothstep between band centres (0,30,60,120,180,240,270,300°); hue ±30°, saturation ×(1±1), luminance ±1.5 stops scaled by saturation (greys unaffected). Panel groups are now Expanders (HSL collapsed by default). Next: before/after toggle, per-slider reset, reset all.
+
 ### To check visually (Windows)
+- HSL sliders on a real photo: sky (Blues luminance −), foliage (Greens/Yellows hue), skin (Oranges) behave as expected, no banding/artefacts at band borders.
 - Temperature/tint direction and strength look natural (±100 = exp(±0.35) red/blue gain).
 - Light slider strengths feel reasonable on real photos (constants in `PreparedAdjustments.From`).
 - Live preview is GPU-accelerated and smooth while dragging sliders on a 24MP JPEG (Xvfb here renders in software).

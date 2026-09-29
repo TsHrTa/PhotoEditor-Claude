@@ -12,7 +12,9 @@ public readonly record struct PreparedAdjustments(
     float WhiteBalanceG,
     float WhiteBalanceB,
     float SaturationFactor,
-    float VibranceAmount)
+    float VibranceAmount,
+    float[] Hsl,
+    bool HasHsl)
 {
     /// <summary>Largest shift (in perceptual units) the highlights slider applies at ±100.</summary>
     public const float MaxHighlightsShift = 0.3f;
@@ -32,7 +34,27 @@ public readonly record struct PreparedAdjustments(
             WhiteBalanceG: wbG,
             WhiteBalanceB: wbB,
             SaturationFactor: 1f + (float)s.Saturation / 100f,
-            VibranceAmount: (float)s.Vibrance / 100f);
+            VibranceAmount: (float)s.Vibrance / 100f,
+            Hsl: PrepareHsl(s, out bool hasHsl),
+            HasHsl: hasHsl);
+    }
+
+    /// <summary>
+    /// Per band (3 floats each): hue shift in degrees, saturation factor, luminance in stops.
+    /// </summary>
+    private static float[] PrepareHsl(AdjustmentSettings s, out bool any)
+    {
+        var values = new float[HslBands.Count * 3];
+        any = false;
+        for (int i = 0; i < HslBands.Count; i++)
+        {
+            var band = HslBands.Get(s, i);
+            any |= band != HslBand.Zero;
+            values[i * 3] = (float)band.Hue / 100f * HslBands.MaxHueShift;
+            values[i * 3 + 1] = 1f + (float)band.Saturation / 100f;
+            values[i * 3 + 2] = (float)band.Luminance / 100f * HslBands.MaxLuminanceStops;
+        }
+        return values;
     }
 
     /// <summary>

@@ -37,6 +37,9 @@ public static class AdjustmentParameters
 {
     public const string Light = "Light";
     public const string Color = "Color";
+    public const string HslHue = "HSL · Hue";
+    public const string HslSaturation = "HSL · Saturation";
+    public const string HslLuminance = "HSL · Luminance";
 
     public static readonly AdjustmentParameter Exposure =
         new(Light, "Exposure", -5, 5, s => s.Exposure, (s, v) => s with { Exposure = v }, format: "+0.00;-0.00;0.00", step: 0.01);
@@ -68,9 +71,33 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter Saturation =
         new(Color, "Saturation", -100, 100, s => s.Saturation, (s, v) => s with { Saturation = v });
 
+    public static readonly IReadOnlyList<AdjustmentParameter> Hsl = CreateHsl();
+
     public static readonly IReadOnlyList<AdjustmentParameter> All =
     [
         Exposure, Contrast, Highlights, Shadows, Whites, Blacks,
         Temperature, Tint, Vibrance, Saturation,
+        .. Hsl,
     ];
+
+    private static List<AdjustmentParameter> CreateHsl()
+    {
+        var list = new List<AdjustmentParameter>();
+        foreach (var (group, get, with) in new (string, Func<HslBand, double>, Func<HslBand, double, HslBand>)[]
+        {
+            (HslHue, b => b.Hue, (b, v) => b with { Hue = v }),
+            (HslSaturation, b => b.Saturation, (b, v) => b with { Saturation = v }),
+            (HslLuminance, b => b.Luminance, (b, v) => b with { Luminance = v }),
+        })
+        {
+            for (int i = 0; i < HslBands.Count; i++)
+            {
+                int band = i;
+                list.Add(new AdjustmentParameter(group, HslBands.Names[band], -100, 100,
+                    s => get(HslBands.Get(s, band)),
+                    (s, v) => HslBands.With(s, band, with(HslBands.Get(s, band), v))));
+            }
+        }
+        return list;
+    }
 }

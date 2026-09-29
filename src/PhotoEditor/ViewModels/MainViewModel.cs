@@ -19,7 +19,8 @@ public partial class MainViewModel : ViewModelBase
         Parameters = parameters;
         Groups = parameters
             .GroupBy(p => p.Parameter.Group)
-            .Select(g => new AdjustmentGroupViewModel(g.Key, g.ToList()))
+            .Select(g => new AdjustmentGroupViewModel(g.Key, g.ToList(),
+                isExpanded: g.Key is AdjustmentParameters.Light or AdjustmentParameters.Color))
             .ToList();
     }
 

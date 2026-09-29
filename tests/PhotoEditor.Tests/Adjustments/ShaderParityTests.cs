@@ -25,6 +25,10 @@ public class ShaderParityTests
         { "greyscale", new AdjustmentSettings { Saturation = -100 } },
         { "vibrance", new AdjustmentSettings { Vibrance = 100 } },
         { "vibrance-", new AdjustmentSettings { Vibrance = -70, Saturation = 20 } },
+        { "hsl reds", new AdjustmentSettings { Reds = new HslBand(60, 50, -40) } },
+        { "hsl blues", new AdjustmentSettings { Blues = new HslBand(-100, -100, -100), Aquas = new HslBand(30, 100, 100) } },
+        { "hsl magentas", new AdjustmentSettings { Magentas = new HslBand(100, 100, 50), Purples = new HslBand(-50, 20, 0) } },
+        { "hsl greens", new AdjustmentSettings { Greens = new HslBand(40, -60, 70), Yellows = new HslBand(-20, 30, -30) } },
         { "all light", new AdjustmentSettings { Exposure = 0.4, Contrast = 25, Highlights = -40, Shadows = 35, Whites = 15, Blacks = -10 } },
     };
 

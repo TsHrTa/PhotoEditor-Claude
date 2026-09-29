@@ -31,5 +31,15 @@ public sealed record AdjustmentSettings
     /// <summary>-100..+100; like saturation but affects muted colours more than saturated ones.</summary>
     public double Vibrance { get; init; }
 
+    // HSL panel, one entry per colour band (see HslBands).
+    public HslBand Reds { get; init; } = HslBand.Zero;
+    public HslBand Oranges { get; init; } = HslBand.Zero;
+    public HslBand Yellows { get; init; } = HslBand.Zero;
+    public HslBand Greens { get; init; } = HslBand.Zero;
+    public HslBand Aquas { get; init; } = HslBand.Zero;
+    public HslBand Blues { get; init; } = HslBand.Zero;
+    public HslBand Purples { get; init; } = HslBand.Zero;
+    public HslBand Magentas { get; init; } = HslBand.Zero;
+
     public bool IsDefault => this == Default;
 }

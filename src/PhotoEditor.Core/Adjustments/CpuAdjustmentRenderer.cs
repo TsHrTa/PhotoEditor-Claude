@@ -106,5 +106,8 @@ public static class CpuAdjustmentRenderer
         r = MathF.Max(y + (r - y) * factor, 0f);
         g = MathF.Max(y + (g - y) * factor, 0f);
         b = MathF.Max(y + (b - y) * factor, 0f);
+
+        if (p.HasHsl)
+            HslMath.Apply(ref r, ref g, ref b, p.Hsl);
     }
 }

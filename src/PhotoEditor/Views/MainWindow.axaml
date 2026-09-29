@@ -29,12 +29,12 @@
                        Text="{Binding #Viewer.Zoom, StringFormat='{}{0:P0}'}" />
         </Grid>
 
-        <ScrollViewer DockPanel.Dock="Right" Width="300" Padding="12,0" IsEnabled="{Binding HasImage}">
+        <ScrollViewer DockPanel.Dock="Right" Width="320" Padding="8,0,16,0" IsEnabled="{Binding HasImage}">
             <ItemsControl ItemsSource="{Binding Groups}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:AdjustmentGroupViewModel">
-                        <StackPanel Margin="0,0,0,16">
-                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Margin="0,0,0,4" />
+                        <Expander Header="{Binding Title}" IsExpanded="{Binding IsExpanded}"
+                                  HorizontalAlignment="Stretch" Margin="0,0,0,4">
                             <ItemsControl ItemsSource="{Binding Parameters}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:ParameterViewModel">
@@ -48,7 +48,7 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                        </StackPanel>
+                        </Expander>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>

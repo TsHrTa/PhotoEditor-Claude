@@ -19,6 +19,10 @@ public static class AdjustmentShader
         uniform float3 whiteBalance;
         uniform float saturationFactor;
         uniform float vibranceAmount;
+        // Per HSL band: hue shift (degrees), saturation factor, luminance (stops).
+        uniform float3 hsl[8];
+        // Band centre hues in degrees; hslCenters[8] = 360 closes the circle.
+        uniform float hslCenters[9];
 
         const float perceptualGamma = 2.2;
 
@@ -46,6 +50,49 @@ public static class AdjustmentShader
             return max(x, 0.0);
         }
 
+        float3 rgbToHsv(float3 c) {
+            float mx = max(c.r, max(c.g, c.b));
+            float mn = min(c.r, min(c.g, c.b));
+            float d = mx - mn;
+            float s = mx > 0.0 ? d / mx : 0.0;
+            if (d <= 0.0) return float3(0.0, s, mx);
+            float h;
+            if (mx == c.r) h = 60.0 * ((c.g - c.b) / d);
+            else if (mx == c.g) h = 60.0 * ((c.b - c.r) / d + 2.0);
+            else h = 60.0 * ((c.r - c.g) / d + 4.0);
+            if (h < 0.0) h += 360.0;
+            return float3(h, s, mx);
+        }
+
+        float hsvChannel(float n, float3 hsv) {
+            float k = mod(n + hsv.x / 60.0, 6.0);
+            return hsv.z - hsv.z * hsv.y * max(0.0, min(k, min(4.0 - k, 1.0)));
+        }
+
+        float3 hslAdjustment(float h) {
+            float3 result = hsl[0];
+            for (int i = 0; i < 8; i++) {
+                if (h >= hslCenters[i] && h < hslCenters[i + 1]) {
+                    float t = smoothstep(0.0, 1.0, (h - hslCenters[i]) / (hslCenters[i + 1] - hslCenters[i]));
+                    float3 next = i == 7 ? hsl[0] : hsl[i + 1];
+                    result = mix(hsl[i], next, t);
+                }
+            }
+            return result;
+        }
+
+        float3 applyHsl(float3 c) {
+            float3 hsv = rgbToHsv(pow(max(c, 0.0), float3(1.0 / perceptualGamma)));
+            float3 adj = hslAdjustment(hsv.x);
+            float s = hsv.y;
+            float h2 = hsv.x + adj.x;
+            if (h2 < 0.0) h2 += 360.0;
+            if (h2 >= 360.0) h2 -= 360.0;
+            float3 hsv2 = float3(h2, clamp(s * adj.y, 0.0, 1.0), hsv.z);
+            float3 e = float3(hsvChannel(5.0, hsv2), hsvChannel(3.0, hsv2), hsvChannel(1.0, hsv2));
+            return pow(e, float3(perceptualGamma)) * exp2(adj.z * s);
+        }
+
         half4 main(float2 coord) {
             half4 src = image.eval(coord);
             float a = src.a;
@@ -69,11 +116,15 @@ public static class AdjustmentShader
             y = dot(c, float3(0.2126, 0.7152, 0.0722));
             c = max(y + (c - y) * factor, 0.0);
 
+            c = applyHsl(c);
+
             c = clamp(c, 0.0, 1.0);
             c = float3(linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b));
             return half4(half3(c * a), half(a));
         }
         """;
+
+    private static readonly float[] HslCentersUniform = [.. HslBands.Centers, 360f];
 
     private static readonly Lazy<SKRuntimeEffect> LazyEffect = new(() =>
         SKRuntimeEffect.CreateShader(Source, out var errors)
@@ -97,6 +148,8 @@ public static class AdjustmentShader
             ["whiteBalance"] = new[] { p.WhiteBalanceR, p.WhiteBalanceG, p.WhiteBalanceB },
             ["saturationFactor"] = p.SaturationFactor,
             ["vibranceAmount"] = p.VibranceAmount,
+            ["hsl"] = p.Hsl,
+            ["hslCenters"] = HslCentersUniform,
         };
         using var imageShader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
         var children = new SKRuntimeEffectChildren(effect)
