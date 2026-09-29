@@ -57,6 +57,9 @@ public static class AdjustmentShader
         uniform float noiseColorAmount;
         uniform float defringePurple;
         uniform float defringeGreen;
+        // Hue ranges (degrees) of the purple / green defringe.
+        uniform float2 purpleHues;
+        uniform float2 greenHues;
         uniform float lumaNoiseStep;
         uniform float colorNoiseStep;
         uniform float fringeStep;
@@ -258,9 +261,12 @@ public static class AdjustmentShader
             return (c0 - y0) - sum / wsum;
         }
 
-        float hueDistance(float h, float centre) {
-            float d = abs(h - centre);
-            return min(d, 360.0 - d);
+        // Weight of hue h in [r.x, r.y] with 20° soft edges, across the 360° wrap.
+        float hueBand(float h, float2 r) {
+            return smoothstep(r.x - 20.0, r.x, h) * (1.0 - smoothstep(r.y, r.y + 20.0, h));
+        }
+        float hueRange(float h, float2 r) {
+            return max(hueBand(h, r), max(hueBand(h + 360.0, r), hueBand(h - 360.0, r)));
         }
 
         // Defringe: desaturates purple / green pixels next to a strong brightness edge (largest difference to the
@@ -276,8 +282,8 @@ public static class AdjustmentShader
             }
             float edge = smoothstep(0.08, 0.25, edgeDiff);
             float h = rgbToHsv(c0).x;
-            float purple = 1.0 - smoothstep(25.0, 45.0, hueDistance(h, 295.0));
-            float green = 1.0 - smoothstep(25.0, 45.0, hueDistance(h, 115.0));
+            float purple = hueRange(h, purpleHues);
+            float green = hueRange(h, greenHues);
             float k = clamp((defringePurple * purple + defringeGreen * green) * edge, 0.0, 1.0);
             return -k * (c0 - y0);
         }
@@ -435,6 +441,8 @@ public static class AdjustmentShader
             ["noiseColorAmount"] = sharpen ? p.NoiseColorAmount : 0f,
             ["defringePurple"] = sharpen ? p.DefringePurpleAmount : 0f,
             ["defringeGreen"] = sharpen ? p.DefringeGreenAmount : 0f,
+            ["purpleHues"] = new[] { p.PurpleHueFrom, p.PurpleHueTo },
+            ["greenHues"] = new[] { p.GreenHueFrom, p.GreenHueTo },
             ["lumaNoiseStep"] = PreparedAdjustments.LumaNoiseStep * pixelScale,
             ["colorNoiseStep"] = PreparedAdjustments.ColorNoiseStep * pixelScale,
             ["fringeStep"] = PreparedAdjustments.FringeStep * pixelScale,

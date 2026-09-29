@@ -84,6 +84,14 @@ public sealed record AdjustmentSettings
     /// <summary>Removes green fringes at high-contrast edges, 0..100. Whole image only.</summary>
     public double DefringeGreen { get; init; }
 
+    /// <summary>Purple defringe hue range in Lightroom's units 0..100 (0 = 240° blue-violet, 100 = 350° magenta-red).</summary>
+    public double DefringePurpleHueLow { get; init; } = 30;
+    public double DefringePurpleHueHigh { get; init; } = 70;
+
+    /// <summary>Green defringe hue range in Lightroom's units 0..100 (0 = 40° orange-yellow, 100 = 190° cyan).</summary>
+    public double DefringeGreenHueLow { get; init; } = 40;
+    public double DefringeGreenHueHigh { get; init; } = 60;
+
     /// <summary>Dehaze −100..100: removes (positive) or adds (negative) haze, based on the photo's haze map. Also in masks.</summary>
     public double Dehaze { get; init; }
 

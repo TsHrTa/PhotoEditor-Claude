@@ -109,7 +109,7 @@ public static class CpuAdjustmentRenderer
                     }
                     if (p.HasDefringe)
                     {
-                        df.Defringe(x, y, cr, cg, cb, p.DefringePurpleAmount, p.DefringeGreenAmount, out float fr, out float fg, out float fb);
+                        df.Defringe(x, y, cr, cg, cb, p, out float fr, out float fg, out float fb);
                         s0 += fr; s1 += fg; s2 += fb;
                     }
                     s0 = Math.Clamp(s0, 0f, 1f); s1 = Math.Clamp(s1, 0f, 1f); s2 = Math.Clamp(s2, 0f, 1f);

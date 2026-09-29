@@ -31,8 +31,35 @@ public readonly record struct PreparedAdjustments(
     float NoiseLuminanceAmount,
     float NoiseColorAmount,
     float DefringePurpleAmount,
-    float DefringeGreenAmount)
+    float DefringeGreenAmount,
+    float PurpleHueFrom,
+    float PurpleHueTo,
+    float GreenHueFrom,
+    float GreenHueTo)
 {
+    /// <summary>Hue (degrees) of Lightroom's purple / green defringe range ends 0 and 100.</summary>
+    public const float PurpleHue0 = 240f, PurpleHue100 = 350f, GreenHue0 = 40f, GreenHue100 = 190f;
+
+    /// <summary>Fade (degrees) outside a defringe hue range.</summary>
+    public const float DefringeHueFade = 20f;
+
+    /// <summary>A hue range in Lightroom's units as degrees, ends in order.</summary>
+    private static (float From, float To) HueRange(double low, double high, float hue0, float hue100)
+    {
+        double lo = Math.Clamp(Math.Min(low, high), 0, 100), hi = Math.Clamp(Math.Max(low, high), 0, 100);
+        return ((float)(hue0 + (hue100 - hue0) * lo / 100), (float)(hue0 + (hue100 - hue0) * hi / 100));
+    }
+
+    /// <summary>
+    /// Weight 0..1 of hue <paramref name="h"/> (degrees) in the range [from, to] with soft edges; handles the
+    /// wrap at 360°. Mirrored in the shader.
+    /// </summary>
+    public static float HueRangeWeight(float h, float from, float to)
+    {
+        float Band(float x) => ToneCurve.SmoothStep(from - DefringeHueFade, from, x) * (1f - ToneCurve.SmoothStep(to, to + DefringeHueFade, x));
+        return MathF.Max(Band(h), MathF.Max(Band(h + 360f), Band(h - 360f)));
+    }
+
     public bool HasNoiseReduction => NoiseLuminanceAmount > 0f || NoiseColorAmount > 0f;
     public bool HasDefringe => DefringePurpleAmount > 0f || DefringeGreenAmount > 0f;
 
@@ -106,7 +133,11 @@ public readonly record struct PreparedAdjustments(
             NoiseLuminanceAmount: (float)Math.Clamp(s.NoiseLuminance, 0, 100) / 100f,
             NoiseColorAmount: (float)Math.Clamp(s.NoiseColor, 0, 100) / 100f,
             DefringePurpleAmount: (float)Math.Clamp(s.DefringePurple, 0, 100) / 100f,
-            DefringeGreenAmount: (float)Math.Clamp(s.DefringeGreen, 0, 100) / 100f);
+            DefringeGreenAmount: (float)Math.Clamp(s.DefringeGreen, 0, 100) / 100f,
+            PurpleHueFrom: HueRange(s.DefringePurpleHueLow, s.DefringePurpleHueHigh, PurpleHue0, PurpleHue100).From,
+            PurpleHueTo: HueRange(s.DefringePurpleHueLow, s.DefringePurpleHueHigh, PurpleHue0, PurpleHue100).To,
+            GreenHueFrom: HueRange(s.DefringeGreenHueLow, s.DefringeGreenHueHigh, GreenHue0, GreenHue100).From,
+            GreenHueTo: HueRange(s.DefringeGreenHueLow, s.DefringeGreenHueHigh, GreenHue0, GreenHue100).To);
     }
 
     /// <summary>

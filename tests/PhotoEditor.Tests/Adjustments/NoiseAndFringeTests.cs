@@ -74,4 +74,33 @@ public sealed class NoiseAndFringeTests
         using var green = CpuAdjustmentRenderer.Render(src, new AdjustmentSettings { DefringeGreen = 100 });
         Assert.True(Chroma(green.GetPixel(20, 10)) > Chroma(src.GetPixel(20, 10)) * 0.9, "green defringe must leave purple alone");
     }
+
+    [Fact]
+    public void DefringeHueRange_ChoosesWhichHuesAreRemoved()
+    {
+        // The fringe colour (150, 60, 190) has hue ≈ 282°: inside the default purple range (273°–317°).
+        using var src = new SKBitmap(new SKImageInfo(40, 10, SKColorType.Rgba8888, SKAlphaType.Premul));
+        for (int y = 0; y < 10; y++)
+            for (int x = 0; x < 40; x++)
+                src.SetPixel(x, y, x < 20 ? new SKColor(250, 250, 250) : x < 22 ? new SKColor(150, 60, 190) : new SKColor(30, 30, 30));
+        using var moved = CpuAdjustmentRenderer.Render(src, new AdjustmentSettings
+        {
+            DefringePurple = 100, DefringePurpleHueLow = 85, DefringePurpleHueHigh = 100, // ≈ 334°–350°
+        });
+        Assert.True(Chroma(moved.GetPixel(20, 5)) > Chroma(src.GetPixel(20, 5)) * 0.9, "outside the chosen range: kept");
+        using var wide = CpuAdjustmentRenderer.Render(src, new AdjustmentSettings
+        {
+            DefringePurple = 100, DefringePurpleHueLow = 0, DefringePurpleHueHigh = 100,
+        });
+        Assert.True(Chroma(wide.GetPixel(20, 5)) < Chroma(src.GetPixel(20, 5)) / 3, "inside the range: removed");
+    }
+
+    [Fact]
+    public void HueRangeWeight_HasSoftEdges_AndWraps()
+    {
+        Assert.Equal(1f, PreparedAdjustments.HueRangeWeight(300, 280, 320), 3);
+        Assert.Equal(0f, PreparedAdjustments.HueRangeWeight(200, 280, 320), 3);
+        Assert.InRange(PreparedAdjustments.HueRangeWeight(330, 280, 320), 0.1f, 0.9f);
+        Assert.Equal(1f, PreparedAdjustments.HueRangeWeight(5, 340, 370), 3); // 370° = 10° across the wrap
+    }
 }

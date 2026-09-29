@@ -45,6 +45,8 @@ public class ShaderParityTests
         { "noise luminance", new AdjustmentSettings { NoiseLuminance = 100 } },
         { "noise color", new AdjustmentSettings { NoiseColor = 100 } },
         { "defringe", new AdjustmentSettings { DefringePurple = 100, DefringeGreen = 100 } },
+        { "defringe wide ranges", new AdjustmentSettings { DefringePurple = 80, DefringeGreen = 90,
+            DefringePurpleHueLow = 0, DefringePurpleHueHigh = 100, DefringeGreenHueLow = 10, DefringeGreenHueHigh = 95 } },
         { "all detail", new AdjustmentSettings { NoiseLuminance = 60, NoiseColor = 80, DefringePurple = 50, SharpenAmount = 70, Soften = 30, Exposure = 0.4 } },
         { "soften + sharpen + light", new AdjustmentSettings { Soften = 60, SharpenAmount = 80, Exposure = 0.3, Contrast = 20 } },
     };

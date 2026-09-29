@@ -113,6 +113,18 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter DefringeGreen =
         new(Lens, "Defringe green", 0, 100, s => s.DefringeGreen, (s, v) => s with { DefringeGreen = v }, id: "defringeGreen");
 
+    public static readonly AdjustmentParameter DefringePurpleHueLow =
+        new(Lens, "Purple hue from", 0, 100, s => s.DefringePurpleHueLow, (s, v) => s with { DefringePurpleHueLow = v }, defaultValue: 30, id: "defringePurpleHueLow");
+
+    public static readonly AdjustmentParameter DefringePurpleHueHigh =
+        new(Lens, "Purple hue to", 0, 100, s => s.DefringePurpleHueHigh, (s, v) => s with { DefringePurpleHueHigh = v }, defaultValue: 70, id: "defringePurpleHueHigh");
+
+    public static readonly AdjustmentParameter DefringeGreenHueLow =
+        new(Lens, "Green hue from", 0, 100, s => s.DefringeGreenHueLow, (s, v) => s with { DefringeGreenHueLow = v }, defaultValue: 40, id: "defringeGreenHueLow");
+
+    public static readonly AdjustmentParameter DefringeGreenHueHigh =
+        new(Lens, "Green hue to", 0, 100, s => s.DefringeGreenHueHigh, (s, v) => s with { DefringeGreenHueHigh = v }, defaultValue: 60, id: "defringeGreenHueHigh");
+
     public static readonly AdjustmentParameter DenoiseAmount =
         new(Detail, "Denoise (AI)", 0, 100, s => s.DenoiseAmount, (s, v) => s with { DenoiseAmount = v }, id: "denoiseAmount");
 
@@ -127,7 +139,8 @@ public static class AdjustmentParameters
 
     /// <summary>Parameters that only apply to the whole image (not inside masks).</summary>
     public static readonly IReadOnlyList<AdjustmentParameter> GlobalOnly =
-        [DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor, DefringePurple, DefringeGreen];
+        [DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor,
+         DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh];
 
     public static readonly IReadOnlyList<AdjustmentParameter> Hsl = CreateHsl();
 
@@ -139,7 +152,7 @@ public static class AdjustmentParameters
         VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
         Dehaze, Soften,
         DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor,
-        DefringePurple, DefringeGreen,
+        DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
     ];
 
     /// <summary>Parameter with the given <see cref="AdjustmentParameter.Id"/>, or null.</summary>

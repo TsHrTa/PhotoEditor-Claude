@@ -185,6 +185,10 @@ public static class LightroomXmp
         // Lightroom's defringe amounts run 0..20.
         Set("DefringePurpleAmount", Number(a.DefringePurple / 5, "0"));
         Set("DefringeGreenAmount", Number(a.DefringeGreen / 5, "0"));
+        Set("DefringePurpleHueLo", Number(a.DefringePurpleHueLow, "0"));
+        Set("DefringePurpleHueHi", Number(a.DefringePurpleHueHigh, "0"));
+        Set("DefringeGreenHueLo", Number(a.DefringeGreenHueLow, "0"));
+        Set("DefringeGreenHueHi", Number(a.DefringeGreenHueHigh, "0"));
         if (a.DenoiseAmount != 0)
             notes.Add("AI denoise (Lightroom has no equivalent setting; use its own Denoise)");
 
@@ -450,6 +454,10 @@ public static class LightroomXmp
             NoiseColor = Get("ColorNoiseReduction"),
             DefringePurple = Get("DefringePurpleAmount") * 5,
             DefringeGreen = Get("DefringeGreenAmount") * 5,
+            DefringePurpleHueLow = Get("DefringePurpleHueLo", 30),
+            DefringePurpleHueHigh = Get("DefringePurpleHueHi", 70),
+            DefringeGreenHueLow = Get("DefringeGreenHueLo", 40),
+            DefringeGreenHueHigh = Get("DefringeGreenHueHi", 60),
         };
         for (int i = 0; i < HslBands.Count; i++)
         {

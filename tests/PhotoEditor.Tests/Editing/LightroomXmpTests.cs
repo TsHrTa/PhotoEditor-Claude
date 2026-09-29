@@ -348,12 +348,14 @@ public class LightroomXmpTests
     {
         var state = new EditState
         {
-            Adjustments = new AdjustmentSettings { NoiseLuminance = 30, NoiseColor = 25, DefringePurple = 50, DefringeGreen = 20 },
+            Adjustments = new AdjustmentSettings { NoiseLuminance = 30, NoiseColor = 25, DefringePurple = 50, DefringeGreen = 20,
+                DefringePurpleHueLow = 20, DefringeGreenHueHigh = 75 },
         };
         var xml = LightroomXmp.Write(state, Landscape, null, out _);
         Assert.Contains("crs:DefringePurpleAmount=\"10\"", xml);
         var back = LightroomXmp.Read(xml, Landscape).Adjustments;
         Assert.Equal((30.0, 25.0, 50.0, 20.0), (back.NoiseLuminance, back.NoiseColor, back.DefringePurple, back.DefringeGreen));
+        Assert.Equal((20.0, 70.0, 40.0, 75.0), (back.DefringePurpleHueLow, back.DefringePurpleHueHigh, back.DefringeGreenHueLow, back.DefringeGreenHueHigh));
         Assert.Equal(0, back.DenoiseAmount); // Lightroom's luminance smoothing is the manual slider, not AI denoise
     }
 }

@@ -78,7 +78,7 @@ public readonly unsafe struct DetailFilters
     }
 
     /// <summary>The change that desaturates a purple / green pixel next to a strong brightness edge.</summary>
-    public void Defringe(int x, int y, float cr, float cg, float cb, float purpleAmount, float greenAmount,
+    public void Defringe(int x, int y, float cr, float cg, float cb, in PreparedAdjustments p,
         out float dr, out float dg, out float db)
     {
         const int step = PreparedAdjustments.FringeStep;
@@ -91,18 +91,12 @@ public readonly unsafe struct DetailFilters
             }
         float edge = ToneCurve.SmoothStep(0.08f, 0.25f, edgeDiff);
         float h = Hue(cr, cg, cb);
-        float purple = 1f - ToneCurve.SmoothStep(25f, 45f, HueDistance(h, 295f));
-        float green = 1f - ToneCurve.SmoothStep(25f, 45f, HueDistance(h, 115f));
-        float k = Math.Clamp((purpleAmount * purple + greenAmount * green) * edge, 0f, 1f);
+        float purple = PreparedAdjustments.HueRangeWeight(h, p.PurpleHueFrom, p.PurpleHueTo);
+        float green = PreparedAdjustments.HueRangeWeight(h, p.GreenHueFrom, p.GreenHueTo);
+        float k = Math.Clamp((p.DefringePurpleAmount * purple + p.DefringeGreenAmount * green) * edge, 0f, 1f);
         dr = -k * (cr - y0);
         dg = -k * (cg - y0);
         db = -k * (cb - y0);
-    }
-
-    private static float HueDistance(float h, float centre)
-    {
-        float d = MathF.Abs(h - centre);
-        return MathF.Min(d, 360f - d);
     }
 
     /// <summary>HSV hue in degrees, exactly as the shader's rgbToHsv.</summary>
