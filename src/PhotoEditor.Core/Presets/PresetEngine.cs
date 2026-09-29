@@ -147,7 +147,8 @@ public static class PresetEngine
     private static EditState ApplyGoal(EditState state, GoalStep goal, PhotoProbe probe, List<string> log)
     {
         string title = $"Goal: {goal.Region} {goal.Metric.ToString().ToLowerInvariant()} {RelationText(goal)}";
-        foreach (var name in new[] { goal.Region.Mask, goal.Reference?.Mask, goal.FixMask ?? FixMaskOf(goal) })
+        var fixMask = goal.FixWholeImage ? null : goal.FixMask ?? FixMaskOf(goal);
+        foreach (var name in new[] { goal.Region.Mask, goal.Reference?.Mask, fixMask })
         {
             if (name is not null && FindMask(state, name) is null)
             {
@@ -161,7 +162,6 @@ public static class PresetEngine
             return state;
         }
 
-        var fixMask = goal.FixMask ?? FixMaskOf(goal);
         // Signed distance from the goal: > 0 means "too high".
         double? Error(EditState s, out double value, out double desired)
         {

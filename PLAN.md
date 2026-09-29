@@ -52,7 +52,7 @@ Each item is meant to be one small, self-contained step.
 ### Phase 3c – Adaptive presets (user request)
 - [x] Recipe model + engine: steps Auto / set values / add mask / goal ("region metric ≥ reference + X %", corrected only when not met, within a max change), measuring on a small rendered copy
 - [x] Presets panel: list (built-in + user), apply, apply to many photos, save current edit as preset, delete
-- [ ] Preset editor window: add / remove / reorder steps, edit fields
+- [x] Preset editor window: add / remove / reorder steps, edit fields
 - [ ] AI mask sources in presets (Subject, People, Sky, Background) — needs Phase 4 models
 
 ### Phase 4 – AI masks
@@ -119,7 +119,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Presets panel done (`MainViewModel.Presets.cs`, a partial class). "Presets" expander at the top of the right panel: list (built-in first, marked), Apply (background thread, one undo step; the step log is shown under the list), Apply to… (multi-select; sidecars only, the open photo is updated live), Save as… (flyout: name + include checkboxes shared with Copy…; a built-in name gets " (copy)"; same name overwrites), Delete (user presets only). Verified under Xvfb: applying the gradient-sky preset (log lines appear), saving a preset writes readable JSON. Next: preset editor window.
 
+- 2026-09-29: Preset editor done. `PresetEditorWindow` (dialog) + `PresetEditorViewModel` with a view-model per step type (Auto, Create mask, Set sliders with slider/value rows, Goal with region / outside, metric, relation, target + unit hint, reference / outside, fix-by slider, fix target = region's mask / whole image / another mask, max change, tolerance); editable combo boxes offer the mask names defined by the steps; ↑ ↓ ✕ per step. "Try on this photo" runs the draft from the edit before the first try and shows the step log; Cancel restores that edit. Built-in presets are edited as "(copy)"; renaming a user preset renames its file. Goals can now fix the whole image explicitly (`GoalStep.FixWholeImage`). Verified under Xvfb: editor shows the built-in portrait preset, Try shows the log (AI steps skipped), Save writes a preset identical to the original apart from the name. Next: AI mask sources once Hugging Face is reachable (Phase 4).
+
 ### To check visually (Windows)
+- Preset editor: build "Auto → gradient from top named Sky → Goal Sky brightness at most whole image +10 % via Sky exposure" and try it on a real landscape; check the log reads sensibly.
 - "Paste to…" with several photos selected (JPEG + CR3): each gets its .json / .xmp, opening them shows the pasted edit, Lightroom picks up the CR3 ones.
 - Sharpening at 100 % on a real photo: amount / radius / masking feel right, no strong halos at defaults you would use.
 - (When the first AI model exists) status shows DirectML/GPU being used on your PC, not the CPU fallback.

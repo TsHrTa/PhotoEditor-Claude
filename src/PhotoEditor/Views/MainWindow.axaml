@@ -106,6 +106,9 @@
                                 </Flyout>
                             </Button.Flyout>
                         </Button>
+                        <Button Content="New…" Click="OnNewPresetClick" ToolTip.Tip="Create a preset step by step" />
+                        <Button Content="Edit…" Click="OnEditPresetClick" IsEnabled="{Binding HasSelectedPreset}"
+                                ToolTip.Tip="Edit the selected preset's steps (a built-in preset is edited as a copy)" />
                         <Button Content="Delete" Command="{Binding DeletePresetCommand}"
                                 ToolTip.Tip="Delete the selected preset (built-in presets cannot be deleted)" />
                     </WrapPanel>

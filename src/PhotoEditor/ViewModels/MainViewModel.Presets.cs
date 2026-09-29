@@ -145,6 +145,67 @@ public partial class MainViewModel
         }
     }
 
+    /// <summary>The edit before the editor's first "Try on this photo" (restored when the editor is cancelled).</summary>
+    private Core.Editing.EditState? _stateBeforeTry;
+
+    /// <summary>
+    /// Editor for <paramref name="source"/> (a built-in preset is edited as a copy), or for a new preset.
+    /// </summary>
+    public PresetEditorViewModel CreatePresetEditor(Preset? source)
+    {
+        _stateBeforeTry = null;
+        var preset = source switch
+        {
+            null => new Preset { Name = "New preset", Steps = [new AutoStep()] },
+            { IsBuiltIn: true } => source with { Name = source.Name + " (copy)", IsBuiltIn = false },
+            _ => source,
+        };
+        string? original = source is { IsBuiltIn: false } ? source.Name : null;
+        return new PresetEditorViewModel(preset, original, HasImage ? TryPresetAsync : null);
+    }
+
+    /// <summary>Runs a draft preset on the open photo, always starting from the edit before the first try.</summary>
+    private async Task<IReadOnlyList<string>> TryPresetAsync(Preset preset)
+    {
+        if (Original is not { } image)
+            return ["Open a photo first."];
+        _stateBeforeTry ??= State;
+        var start = _stateBeforeTry;
+        var detector = MaskDetector;
+        var result = await Task.Run(() => PresetEngine.Apply(preset, start, image, detector));
+        SelectedMask = null;
+        ApplyEdit(result.State);
+        return result.Log;
+    }
+
+    /// <summary>Closes an editor session: saves the preset (renaming its file if needed) or restores the edit after tries.</summary>
+    public void FinishPresetEditor(PresetEditorViewModel editor, bool save)
+    {
+        if (!save)
+        {
+            if (_stateBeforeTry is { } before)
+                ApplyEdit(before);
+            _stateBeforeTry = null;
+            return;
+        }
+        _stateBeforeTry = null;
+        var preset = editor.ToPreset();
+        if (PresetFactory.BuiltIn.Any(p => p.Name == preset.Name))
+            preset = preset with { Name = preset.Name + " (copy)" };
+        if (editor.OriginalName is { } oldName && oldName != preset.Name)
+        {
+            try
+            {
+                _presetStore.Delete(oldName);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Status = $"Could not remove the old preset file: {ex.Message}";
+            }
+        }
+        SavePreset(preset);
+    }
+
     [RelayCommand(CanExecute = nameof(CanDeleteSelectedPreset))]
     private void DeletePreset()
     {

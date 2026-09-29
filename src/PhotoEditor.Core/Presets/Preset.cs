@@ -147,8 +147,11 @@ public sealed record GoalStep : PresetStep
     /// <summary>Slider id used to correct, e.g. "exposure".</summary>
     public string FixBy { get; init; } = "exposure";
 
-    /// <summary>Mask whose slider is changed; null = the whole image. Usually the region's mask.</summary>
+    /// <summary>Mask whose slider is changed; null = the region's own mask (the whole image for "whole image" / "outside").</summary>
     public string? FixMask { get; init; }
+
+    /// <summary>Change the whole image's slider instead of a mask's (overrides <see cref="FixMask"/>).</summary>
+    public bool FixWholeImage { get; init; }
 
     /// <summary>Largest change of the slider (in slider units, e.g. 1.5 EV).</summary>
     public double MaxChange { get; init; } = 1.5;

@@ -165,6 +165,24 @@ public partial class MainWindow : Window
             await vm.PasteToFilesAsync(paths);
     }
 
+    private async void OnNewPresetClick(object? sender, RoutedEventArgs e) => await EditPresetAsync(null);
+
+    private async void OnEditPresetClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel?.SelectedPreset is { } preset)
+            await EditPresetAsync(preset);
+    }
+
+    private async Task EditPresetAsync(PhotoEditor.Core.Presets.Preset? preset)
+    {
+        if (ViewModel is not { } vm)
+            return;
+        var editor = vm.CreatePresetEditor(preset);
+        var window = new PresetEditorWindow { DataContext = editor };
+        bool saved = await window.ShowDialog<bool>(this);
+        vm.FinishPresetEditor(editor, saved);
+    }
+
     private void OnSavePresetClick(object? sender, RoutedEventArgs e)
     {
         ViewModel?.SaveEditAsPresetCommand.Execute(null);

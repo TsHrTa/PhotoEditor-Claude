@@ -233,4 +233,19 @@ public sealed class PresetEngineTests : IDisposable
         Assert.Equal("Sky", Assert.Single(saved.Masks).Name);
         Assert.True(File.Exists(LightroomXmp.PathFor(path)));
     }
+
+    [Fact]
+    public void Goal_FixWholeImage_ChangesTheGlobalSlider()
+    {
+        using var img = Portrait(subject: 0.2f, background: 0.3f);
+        var goal = new GoalStep
+        {
+            Region = Subject, Metric = GoalMetric.Brightness, Relation = GoalRelation.AtLeast, Target = 40,
+            FixBy = "exposure", FixWholeImage = true, MaxChange = 3,
+        };
+        var r = PresetEngine.Apply(Recipe(new AddMaskStep { Name = "Subject" }, goal), EditState.Default, img, new DiscDetector());
+        Assert.True(r.State.Adjustments.Exposure > 0.5);
+        Assert.Equal(0, r.State.Masks[0].Adjustments.Exposure);
+        Assert.InRange(Brightness(img, r.State, Subject), 39, 42);
+    }
 }
