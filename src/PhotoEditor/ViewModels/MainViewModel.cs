@@ -641,6 +641,7 @@ public partial class MainViewModel : ViewModelBase
                 Status = $"{Status} — not in the Lightroom XMP: {skipped}";
             _lastXmpSkipped = skipped;
             _hasUnsavedEdits = false;
+            OnEditsSaved(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -846,8 +847,23 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     public async Task<bool> OpenFileAsync(string path)
     {
+        // Latest request wins: while a photo is opening, a newer request replaces any waiting one.
+        _openRequest = path;
         if (IsOpening)
             return false;
+        bool opened = false;
+        while (_openRequest is { } next)
+        {
+            _openRequest = null;
+            opened = await OpenOneFileAsync(next);
+        }
+        return opened;
+    }
+
+    private string? _openRequest;
+
+    private async Task<bool> OpenOneFileAsync(string path)
+    {
         IsOpening = true;
         Status = $"Opening {Path.GetFileName(path)}…";
         try
@@ -873,6 +889,7 @@ public partial class MainViewModel : ViewModelBase
             FilePath = path;
             ResetRestore(preview);
             Status = $"{bitmap.Width} × {bitmap.Height}{sidecarNote}";
+            SyncFilmstrip(path);
             return true;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)

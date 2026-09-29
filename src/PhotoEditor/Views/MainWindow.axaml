@@ -19,7 +19,9 @@
 
     <DockPanel>
         <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" ItemSpacing="8" LineSpacing="6" Margin="8">
-            <Button Content="Open…" Click="OnOpenClick" ToolTip.Tip="Open image (Ctrl+O)" />
+            <Button Content="Open…" Click="OnOpenClick" ToolTip.Tip="Open image (Ctrl+O). Its folder is shown in the filmstrip." />
+            <Button Content="Open folder…" Click="OnOpenFolderClick"
+                    ToolTip.Tip="Show all photos of a folder in the filmstrip (Ctrl+Shift+O). ← / → move between them." />
             <Button Content="Export…" Click="OnExportClick" IsEnabled="{Binding CanExport}"
                     ToolTip.Tip="Export full resolution JPEG or PNG (Ctrl+E)" />
             <TextBlock Text="JPEG quality" VerticalAlignment="Center" Margin="4,0,0,0" />
@@ -70,6 +72,31 @@
             <TextBlock Grid.Column="2" IsVisible="{Binding HasImage}" VerticalAlignment="Center"
                        Text="{Binding #Viewer.Zoom, StringFormat='{}{0:P0}'}" />
         </Grid>
+
+        <Border DockPanel.Dock="Bottom" IsVisible="{Binding HasFolder}" Background="#181818">
+            <ListBox x:Name="Filmstrip" ItemsSource="{Binding Photos}" SelectedItem="{Binding CurrentPhoto}"
+                     Height="132" Background="Transparent"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:FilmstripItem">
+                        <Grid Width="116" RowDefinitions="92,Auto" ToolTip.Tip="{Binding Path}">
+                            <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
+                            <Border Width="10" Height="10" CornerRadius="5" Background="#E0A030"
+                                    BorderBrush="#181818" BorderThickness="1"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,2,0"
+                                    IsVisible="{Binding HasEdits}" ToolTip.Tip="Edited" />
+                            <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="11" Margin="0,3,0,0"
+                                       HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
 
         <ScrollViewer DockPanel.Dock="Right" Width="320" Padding="8,0,16,0" IsEnabled="{Binding HasImage}">
           <StackPanel Spacing="4">
@@ -263,7 +290,7 @@
                                   EditableComponent="{Binding EditableComponent}"
                                   BrushRadius="{Binding BrushRadius}"
                                   BrushFeather="{Binding BrushFeatherFraction}" />
-            <TextBlock Text="Drop an image here"
+            <TextBlock Text="Drop a photo or a folder here"
                        Foreground="Gray"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        IsVisible="{Binding !HasImage}" />

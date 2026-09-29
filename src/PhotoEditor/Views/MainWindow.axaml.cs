@@ -22,6 +22,14 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         AddKeyBinding(Key.O, new AsyncRelayCommand(OpenAsync));
+        KeyBindings.Add(new KeyBinding
+        {
+            Gesture = new KeyGesture(Key.O, KeyModifiers.Control | KeyModifiers.Shift),
+            Command = new AsyncRelayCommand(OpenFolderAsync),
+        });
+        // Arrow keys: a focused slider or list uses them itself; elsewhere they move through the folder.
+        AddPlainKeyBinding(Key.Right, () => ViewModel?.NextPhotoCommand.Execute(null));
+        AddPlainKeyBinding(Key.Left, () => ViewModel?.PreviousPhotoCommand.Execute(null));
         AddKeyBinding(Key.E, new AsyncRelayCommand(ExportAsync));
         AddKeyBinding(Key.S, new RelayCommand(() => ViewModel?.SaveEdits()));
         AddKeyBinding(Key.U, new RelayCommand(() => ViewModel?.AutoCommand.Execute(null)));
@@ -91,6 +99,19 @@ public partial class MainWindow : Window
     }
 
     private async void OnOpenClick(object? sender, RoutedEventArgs e) => await OpenAsync();
+
+    private async void OnOpenFolderClick(object? sender, RoutedEventArgs e) => await OpenFolderAsync();
+
+    private async Task OpenFolderAsync()
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Open folder",
+            AllowMultiple = false,
+        });
+        if (folders.FirstOrDefault()?.TryGetLocalPath() is { } folder && ViewModel is { } vm)
+            await vm.OpenFolderAsync(folder);
+    }
 
     /// <summary>Double-clicking a slider (or its label) resets that adjustment.</summary>
     private static void OnDoubleTapped(object? sender, TappedEventArgs e)
@@ -239,21 +260,26 @@ public partial class MainWindow : Window
             await vm.OpenFileAsync(path);
     }
 
-    private static string? FirstImagePath(DragEventArgs e) =>
+    /// <summary>The first dropped photo or folder.</summary>
+    private static string? FirstDroppedPath(DragEventArgs e) =>
         e.DataTransfer.TryGetFiles()?
             .Select(f => f.TryGetLocalPath())
-            .FirstOrDefault(p => p is not null && ImageLoader.IsSupported(p));
+            .FirstOrDefault(p => p is not null && (ImageLoader.IsSupported(p) || System.IO.Directory.Exists(p)));
 
     private void OnDragOver(object? sender, DragEventArgs e)
     {
-        e.DragEffects = FirstImagePath(e) is not null ? DragDropEffects.Copy : DragDropEffects.None;
+        e.DragEffects = FirstDroppedPath(e) is not null ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
     private async void OnDrop(object? sender, DragEventArgs e)
     {
         e.Handled = true;
-        if (FirstImagePath(e) is { } path && ViewModel is { } vm)
+        if (FirstDroppedPath(e) is not { } path || ViewModel is not { } vm)
+            return;
+        if (System.IO.Directory.Exists(path))
+            await vm.OpenFolderAsync(path);
+        else
             await vm.OpenFileAsync(path);
     }
 }
