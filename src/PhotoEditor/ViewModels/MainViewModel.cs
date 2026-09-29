@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PhotoEditor.Core.Adjustments;
+using PhotoEditor.Core.Export;
 using PhotoEditor.Core.Imaging;
 using SkiaSharp;
 
@@ -28,6 +31,7 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>Full-resolution decoded original (never modified).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasImage))]
+    [NotifyPropertyChangedFor(nameof(CanExport))]
     public partial SKBitmap? Original { get; private set; }
 
     [ObservableProperty]
@@ -48,6 +52,16 @@ public partial class MainViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial string? FilePath { get; set; }
+
+    /// <summary>JPEG export quality, 1..100.</summary>
+    [ObservableProperty]
+    public partial int JpegQuality { get; set; } = 90;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanExport))]
+    public partial bool IsExporting { get; private set; }
+
+    public bool CanExport => HasImage && !IsExporting;
 
     [ObservableProperty]
     public partial string Status { get; set; } = "Open an image (Ctrl+O) or drop one onto the window.";
@@ -75,6 +89,36 @@ public partial class MainViewModel : ViewModelBase
     private void ResetAll() => Settings = AdjustmentSettings.Default;
 
     private bool CanResetAll() => !Settings.IsDefault;
+
+    /// <summary>Suggested export file name, e.g. "IMG_0001-edited.jpg".</summary>
+    public string SuggestedExportName =>
+        FilePath is null ? "export.jpg" : Path.GetFileNameWithoutExtension(FilePath) + "-edited.jpg";
+
+    /// <summary>Renders the full-resolution image with the current settings and writes it to <paramref name="path"/>.</summary>
+    public async Task ExportAsync(string path)
+    {
+        if (Original is not { } original || IsExporting)
+            return;
+        var settings = Settings;
+        var source = FilePath;
+        var options = new ExportOptions(ExportOptions.FormatFromPath(path), JpegQuality);
+        IsExporting = true;
+        Status = $"Exporting {Path.GetFileName(path)}…";
+        try
+        {
+            var watch = Stopwatch.StartNew();
+            await Task.Run(() => ImageExporter.Export(original, settings, source, path, options));
+            Status = $"Exported {Path.GetFileName(path)} ({watch.Elapsed.TotalSeconds:0.0} s)";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            Status = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            IsExporting = false;
+        }
+    }
 
     /// <summary>Loads the image at <paramref name="path"/>; reports failures in <see cref="Status"/>.</summary>
     public bool OpenFile(string path)

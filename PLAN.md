@@ -27,7 +27,7 @@ Each item is meant to be one small, self-contained step.
 - [x] Color: temperature, tint, saturation, vibrance
 - [x] HSL panel: hue / saturation / luminance per color band (reds, oranges, yellows, greens, aquas, blues, purples, magentas)
 - [x] Before/after toggle, reset per slider (double-click) and reset all
-- [ ] Export full resolution (JPEG quality, PNG), keep EXIF
+- [x] Export full resolution (JPEG quality, PNG), keep EXIF
 
 ### Phase 2 – Edit stack
 - [ ] Undo / redo
@@ -67,7 +67,10 @@ Each item is meant to be one small, self-contained step.
 
 - 2026-09-29: Before/after + resets done. `Before` toggle button and `\` key (viewer renders `DisplaySettings` = Default while on); double-click on a slider or its label resets it (window-level DoubleTapped handler with handledEventsToo, finds the `ParameterViewModel` DataContext); `Reset all` button. Verified under Xvfb. Next: export full resolution (JPEG quality, PNG), keep EXIF.
 
+- 2026-09-29: Export done (Phase 1 complete). `Core/Export/ImageExporter` renders the full-res original with `CpuAdjustmentRenderer` (~1.8 s for 24 MP on 4 cores), encodes JPEG (4:4:4 at quality ≥ 90) or PNG by extension, writes via temp file. `Core/Imaging/ExifMetadata` reads EXIF from JPEG APP1 / PNG eXIf / WebP EXIF, sets orientation to 1 (pixels are already upright) and embeds it into JPEG (APP1) or PNG (eXIf). Not handled: ICC profiles (everything is treated as sRGB), stale EXIF thumbnail / pixel-dimension tags, EXIF blocks > 64 KB in JPEG are dropped. UI: Export… button, Ctrl+E, JPEG quality box; export runs on a background thread. Next: Phase 2 undo/redo.
+
 ### To check visually (Windows)
+- Export… save dialog: JPEG/PNG type choice, suggested name, overwrite prompt; exported JPEG opens in Windows Photos with EXIF (camera, date) intact and correct orientation.
 - `\` key toggles before/after on a Windows keyboard layout (bound to OemPipe and OemBackslash).
 - HSL sliders on a real photo: sky (Blues luminance −), foliage (Greens/Yellows hue), skin (Oranges) behave as expected, no banding/artefacts at band borders.
 - Temperature/tint direction and strength look natural (±100 = exp(±0.35) red/blue gain).

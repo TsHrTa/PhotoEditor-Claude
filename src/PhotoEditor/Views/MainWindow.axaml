@@ -19,6 +19,12 @@
     <DockPanel>
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8">
             <Button Content="Open…" Click="OnOpenClick" ToolTip.Tip="Open image (Ctrl+O)" />
+            <Button Content="Export…" Click="OnExportClick" IsEnabled="{Binding CanExport}"
+                    ToolTip.Tip="Export full resolution JPEG or PNG (Ctrl+E)" />
+            <TextBlock Text="JPEG quality" VerticalAlignment="Center" Margin="4,0,0,0" />
+            <NumericUpDown Value="{Binding JpegQuality}" Minimum="1" Maximum="100" Increment="5"
+                           FormatString="0" Width="120" VerticalAlignment="Center" />
+            <Border Width="16" />
             <Button Content="Fit" Click="OnFitClick" ToolTip.Tip="Fit to window (Ctrl+0)" IsEnabled="{Binding HasImage}" />
             <Button Content="100%" Click="OnActualSizeClick" ToolTip.Tip="Actual pixels (Ctrl+1)" IsEnabled="{Binding HasImage}" />
             <ToggleButton Content="Before" IsChecked="{Binding ShowOriginal}" IsEnabled="{Binding HasImage}"

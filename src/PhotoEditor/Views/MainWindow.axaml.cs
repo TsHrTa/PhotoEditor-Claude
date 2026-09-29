@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         AddKeyBinding(Key.O, new AsyncRelayCommand(OpenAsync));
+        AddKeyBinding(Key.E, new AsyncRelayCommand(ExportAsync));
         AddKeyBinding(Key.D0, new RelayCommand(Viewer.ZoomToFit));
         AddKeyBinding(Key.NumPad0, new RelayCommand(Viewer.ZoomToFit));
         AddKeyBinding(Key.D1, new RelayCommand(Viewer.ZoomToActualSize));
@@ -49,6 +50,28 @@ public partial class MainWindow : Window
                 return;
             }
         }
+    }
+
+    private async void OnExportClick(object? sender, RoutedEventArgs e) => await ExportAsync();
+
+    private async Task ExportAsync()
+    {
+        if (ViewModel is not { CanExport: true } vm)
+            return;
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Export image",
+            SuggestedFileName = vm.SuggestedExportName,
+            DefaultExtension = "jpg",
+            ShowOverwritePrompt = true,
+            FileTypeChoices =
+            [
+                new FilePickerFileType("JPEG") { Patterns = ["*.jpg", "*.jpeg"] },
+                new FilePickerFileType("PNG") { Patterns = ["*.png"] },
+            ],
+        });
+        if (file?.TryGetLocalPath() is { } path)
+            await vm.ExportAsync(path);
     }
 
     private void OnFitClick(object? sender, RoutedEventArgs e) => Viewer.ZoomToFit();
