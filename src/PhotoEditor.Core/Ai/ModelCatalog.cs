@@ -44,6 +44,19 @@ public static class ModelCatalog
     /// <summary>Files needed for Select Sky / People (≈ 110 MB).</summary>
     public static IReadOnlyList<ModelInfo> SelectScene { get; } = [Scene];
 
+    private const string ScunetBase = "https://huggingface.co/Heliosoph/scunet-onnx/resolve/6d11417ee2fbcc73783c502a238ac115097754fe/";
+    private const string ScunetLicense = "Apache-2.0 / MIT (SCUNet by Kai Zhang et al.; ONNX export by Heliosoph)";
+
+    /// <summary>SCUNet real-photo denoiser (PSNR variant, faithful to the input): graph + external weights.</summary>
+    public static readonly ModelInfo DenoiseGraph = new("scunet-real-psnr/scunet_color_real_psnr.onnx", "AI Denoise",
+        ScunetBase + "scunet_color_real_psnr.onnx", "231be201ab413dbc999d7951caa9844846b93a12a40a41e037d6b5888ed4e88c", 3_798_678, ScunetLicense);
+
+    public static readonly ModelInfo DenoiseData = new("scunet-real-psnr/scunet_color_real_psnr.onnx.data", "AI Denoise weights",
+        ScunetBase + "scunet_color_real_psnr.onnx.data", "98825ea1210b641c71e5f052f582c70c49fd44b35387ebe2c034268c17df3feb", 73_138_176, ScunetLicense);
+
+    /// <summary>Files needed for AI Denoise (≈ 77 MB).</summary>
+    public static IReadOnlyList<ModelInfo> Denoise { get; } = [DenoiseGraph, DenoiseData];
+
     /// <summary>ADE20K class indices (0-based, as in the model's output).</summary>
     public const int AdeSky = 2, AdePerson = 12;
 }

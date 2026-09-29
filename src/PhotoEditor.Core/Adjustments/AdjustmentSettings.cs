@@ -54,6 +54,12 @@ public sealed record AdjustmentSettings
     /// <summary>0..100: higher values limit sharpening to edges (keeps smooth areas and noise unsharpened).</summary>
     public double SharpenMasking { get; init; }
 
+    /// <summary>
+    /// AI noise reduction 0..100: blend between the original and the AI-denoised photo (computed once per photo).
+    /// Applied to the source pixels before everything else; whole image only.
+    /// </summary>
+    public double DenoiseAmount { get; init; }
+
     // HSL panel, one entry per colour band (see HslBands).
     public HslBand Reds { get; init; } = HslBand.Zero;
     public HslBand Oranges { get; init; } = HslBand.Zero;

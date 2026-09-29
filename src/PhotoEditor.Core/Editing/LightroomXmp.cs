@@ -162,6 +162,8 @@ public static class LightroomXmp
         Set("Sharpness", Number(a.SharpenAmount, "0"));
         Set("SharpenRadius", Signed(a.SharpenRadius, "0.0"));
         Set("SharpenEdgeMasking", Number(a.SharpenMasking, "0"));
+        // Closest Lightroom equivalent of the AI denoise amount: classic luminance noise reduction.
+        Set("LuminanceSmoothing", Number(a.DenoiseAmount, "0"));
 
         WriteCrop(state.Crop, geometry, Set);
         WriteMasks(state.Masks, geometry, description, notes);
@@ -396,6 +398,7 @@ public static class LightroomXmp
             SharpenAmount = Get("Sharpness"),
             SharpenRadius = Get("SharpenRadius", 1),
             SharpenMasking = Get("SharpenEdgeMasking"),
+            DenoiseAmount = Get("LuminanceSmoothing"),
         };
         for (int i = 0; i < HslBands.Count; i++)
         {
