@@ -69,6 +69,13 @@ public static class RawImageLoader
         try
         {
             using var image = new MagickImage(path, ReadSettings);
+            // ImageMagick reads the orientation but leaves the sensor image as it is: turn it upright here, with
+            // the orientation the embedded previews use (ImageMagick's only for files that reader doesn't know).
+            var origin = ReadOrientation(path);
+            if (origin == SKEncodedOrigin.TopLeft && image.Orientation is > OrientationType.TopLeft and <= OrientationType.LeftBottom)
+                origin = (SKEncodedOrigin)(int)image.Orientation;
+            image.Orientation = (OrientationType)(int)origin;
+            image.AutoOrient();
             width = (int)image.Width;
             height = (int)image.Height;
             rgb = image.GetPixelsUnsafe().ToShortArray("RGB")
@@ -177,8 +184,8 @@ public static class RawImageLoader
     }
 
     /// <summary>
-    /// The EXIF orientation of a RAW file (how the sensor image is turned to be upright; LibRaw applies it
-    /// when decoding). Reads IFD0 of TIFF-based files (CR2, NEF, ARW, DNG, …) and the CMT1 box of CR3.
+    /// The EXIF orientation of a RAW file (how the sensor image is turned to be upright; <see cref="Load"/> applies
+    /// it). Reads IFD0 of TIFF-based files (CR2, NEF, ARW, DNG, …) and the CMT1 box of CR3.
     /// Returns <see cref="SKEncodedOrigin.TopLeft"/> when unknown.
     /// </summary>
     public static SKEncodedOrigin ReadOrientation(string path)

@@ -763,6 +763,8 @@ public partial class MainViewModel : ViewModelBase
     {
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
+        // "Reset all" also depends on the photo (a RAW's defaults), which may change without the edit changing.
+        ResetAllCommand.NotifyCanExecuteChanged();
     }
 
     [RelayCommand]
