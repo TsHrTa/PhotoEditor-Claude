@@ -19,6 +19,36 @@ public static class ToneCurve
         return MathF.Max(x, 0f);
     }
 
+    /// <summary>
+    /// The global part of the tone curve: contrast, whites and blacks. Highlights / shadows are applied locally
+    /// (<see cref="LocalGain"/>) on the photo's base brightness.
+    /// </summary>
+    public static float ApplyGlobal(float x, in PreparedAdjustments p)
+    {
+        x = Contrast(x, p.ContrastGamma);
+        x = Whites(Whites(x, p.WhitesAmount), p.WhitesAmount2);
+        x = Blacks(Blacks(x, p.BlacksAmount), p.BlacksAmount2);
+        return MathF.Max(x, 0f);
+    }
+
+    /// <summary>Largest brightening / darkening (factor) the local highlights / shadows may apply to a pixel.</summary>
+    public const float MaxLocalGain = 8f;
+
+    /// <summary>
+    /// Highlights / shadows as a brightness factor for a pixel whose base (area) luminance is
+    /// <paramref name="baseLuminance"/> (linear): the curve moves the base, the pixel follows by the same factor,
+    /// so its detail relative to the area is kept. Mirrored in the shader.
+    /// </summary>
+    public static float LocalGain(float baseLuminance, in PreparedAdjustments p)
+    {
+        float yb = MathF.Max(baseLuminance, 1e-6f);
+        float x = MathF.Pow(yb, 1f / PerceptualGamma);
+        x = Highlights(Highlights(x, p.HighlightsAmount), p.HighlightsAmount2);
+        x = Shadows(Shadows(x, p.ShadowsAmount), p.ShadowsAmount2);
+        float y2 = MathF.Pow(MathF.Max(x, 0f), PerceptualGamma);
+        return Math.Clamp(y2 / yb, 1f / MaxLocalGain, MaxLocalGain);
+    }
+
     /// <summary>Shifts the upper range, fully at and above white (recovers over-exposure).</summary>
     public static float Highlights(float x, float amount) => x + amount * SmoothStep(0.35f, 1f, x);
 

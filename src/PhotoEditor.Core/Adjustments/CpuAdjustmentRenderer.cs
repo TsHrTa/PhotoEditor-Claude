@@ -45,6 +45,9 @@ public static class CpuAdjustmentRenderer
         // Soften (global or in a mask) subtracts the original's fine detail.
         // Dehaze (global or in a mask) uses the photo's haze map, computed from the original.
         var haze = p.HasDehaze || layers.Any(l => l.Adjustments.HasDehaze) ? HazeMap.Compute(original) : null;
+        // Local highlights / shadows (global or in a mask) use the photo's base brightness map.
+        var toneBase = p.HasLocalTone || layers.Any(l => l.Adjustments.HasLocalTone) ? ToneBaseMap.Compute(original) : null;
+        var originalPixels = new ToneSource(original.GetPixels(), original.RowBytes);
         DetailFilters? detailFilters = p.HasNoiseReduction || p.HasDefringe
             ? new DetailFilters(original.GetPixels(), original.RowBytes, width, height)
             : null;
@@ -58,7 +61,7 @@ public static class CpuAdjustmentRenderer
             {
                 var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
                 var outRow = new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
-                ProcessRow(inRow, outRow, p, layers, y, frame, soften, haze, height, detailFilters);
+                ProcessRow(inRow, outRow, p, layers, y, frame, soften, haze, height, detailFilters, toneBase, originalPixels);
             }
         });
         return result;
@@ -69,10 +72,11 @@ public static class CpuAdjustmentRenderer
 
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
     public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
-        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null);
+        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null, null, default);
 
     private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y,
-        in VignetteMath.Frame frame, Softening? soften, HazeMap? haze, int height, DetailFilters? detailFilters)
+        in VignetteMath.Frame frame, Softening? soften, HazeMap? haze, int height, DetailFilters? detailFilters,
+        ToneBaseMap? toneBase, ToneSource originalPixels)
     {
         int width = input.Length / 4;
         for (int i = 0; i < input.Length; i += 4)
@@ -147,7 +151,9 @@ public static class CpuAdjustmentRenderer
                 t = haze.Sample(i / 4, y, width, height);
                 HazeMap.Apply(ref r, ref g, ref b, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
             }
-            ApplyLinear(ref r, ref g, ref b, p);
+            // Base / pixel brightness from the original, computed once per pixel when a pass needs it.
+            float baseRatio = toneBase is not null ? originalPixels.BaseRatio(toneBase, i / 4, y, width, height) : 1f;
+            ApplyLinear(ref r, ref g, ref b, p, baseRatio);
             if (p.HasVignette)
                 VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, p);
             // Result of the global pass as unpremultiplied sRGB, like the shader hands to the next pass.
@@ -184,7 +190,7 @@ public static class CpuAdjustmentRenderer
                         t = haze.Sample(i / 4, y, width, height);
                     HazeMap.Apply(ref r, ref g, ref b, t, layer.Adjustments.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
                 }
-                ApplyLinear(ref r, ref g, ref b, layer.Adjustments);
+                ApplyLinear(ref r, ref g, ref b, layer.Adjustments, baseRatio);
                 if (layer.Adjustments.HasVignette)
                     VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, layer.Adjustments);
                 sr = Mix(sr, ColorMath.LinearToSrgb(Math.Clamp(r, 0f, 1f)), m);
@@ -200,20 +206,44 @@ public static class CpuAdjustmentRenderer
         }
     }
 
+    /// <summary>The original photo's pixels, for the base / pixel brightness ratio.</summary>
+    private readonly unsafe struct ToneSource(nint pixels, int rowBytes)
+    {
+        public float BaseRatio(ToneBaseMap map, int x, int y, int width, int height)
+        {
+            byte* p = (byte*)pixels + (long)y * rowBytes + x * 4;
+            return map.BaseRatio(x, y, width, height, ToneBaseMap.LogLuminance(p[0], p[1], p[2], p[3]));
+        }
+    }
+
     /// <summary>Same formula as SkSL <c>mix</c>.</summary>
     private static float Mix(float x, float y, float t) => x * (1f - t) + y * t;
 
     /// <summary>The per-pixel adjustment math on linear-light RGB.</summary>
-    public static void ApplyLinear(ref float r, ref float g, ref float b, in PreparedAdjustments p)
+    /// <param name="baseRatio">
+    /// The photo's base (area) brightness over this pixel's brightness, from <see cref="ToneBaseMap"/> (1 = no map:
+    /// highlights / shadows then act on the pixel itself, like a global curve).
+    /// </param>
+    public static void ApplyLinear(ref float r, ref float g, ref float b, in PreparedAdjustments p, float baseRatio = 1f)
     {
         r *= p.WhiteBalanceR * p.ExposureGain;
         g *= p.WhiteBalanceG * p.ExposureGain;
         b *= p.WhiteBalanceB * p.ExposureGain;
 
-        // Tone: curve on perceptual luminance, applied to RGB as a ratio (keeps hue).
+        // Highlights / shadows: local, a factor from the curve on the base brightness (keeps local detail).
         float y = ToneCurve.Luminance(r, g, b);
+        if (p.HasLocalTone)
+        {
+            float gain = ToneCurve.LocalGain(y * baseRatio, p);
+            r *= gain;
+            g *= gain;
+            b *= gain;
+            y *= gain;
+        }
+
+        // Tone: contrast / whites / blacks curve on perceptual luminance, applied to RGB as a ratio (keeps hue).
         float yp = MathF.Pow(MathF.Max(y, 0f), 1f / ToneCurve.PerceptualGamma);
-        float yp2 = ToneCurve.Apply(yp, p);
+        float yp2 = ToneCurve.ApplyGlobal(yp, p);
         float y2 = MathF.Pow(yp2, ToneCurve.PerceptualGamma);
         if (y > 1e-6f)
         {

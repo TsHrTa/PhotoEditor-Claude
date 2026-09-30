@@ -63,6 +63,10 @@ public static class AdjustmentShader
         uniform float lumaNoiseStep;
         uniform float colorNoiseStep;
         uniform float fringeStep;
+        // Local highlights / shadows: the photo's base-brightness coefficients (a in red, (b + 16) / 16 in green),
+        // stretched over the image; useToneBase = 1 when bound.
+        uniform shader toneBase;
+        uniform float useToneBase;
         uniform float softenAmount;
         uniform float softenStep;
         const float softenRangeSigma = 0.1;
@@ -95,10 +99,9 @@ public static class AdjustmentShader
             return x + a * inv * inv * inv * inv;
         }
 
+        // The global curve: contrast, whites, blacks (highlights / shadows are local, see localGain).
         float toneCurve(float x) {
             x = contrastCurve(x, contrastGamma);
-            x = highlightsStep(highlightsStep(x, highlightsAmount), highlightsAmount2);
-            x = shadowsStep(shadowsStep(x, shadowsAmount), shadowsAmount2);
             x = whitesStep(whitesStep(x, whitesAmount), whitesAmount2);
             x = blacksStep(blacksStep(x, blacksAmount), blacksAmount2);
             return max(x, 0.0);
@@ -288,6 +291,30 @@ public static class AdjustmentShader
             return -k * (c0 - y0);
         }
 
+        // Base (area) brightness over the pixel's own brightness, both from the original photo.
+        float baseRatioAt(float2 coord) {
+            if (useToneBase < 0.5) return 1.0;
+            half4 o = source.eval(coord);
+            float l = log2(1e-4);
+            if (o.a > 0.0) {
+                float3 c = min(float3(o.rgb) / o.a, 1.0);
+                l = log2(max(dot(float3(srgbToLinear(c.r), srgbToLinear(c.g), srgbToLinear(c.b)),
+                    float3(0.2126, 0.7152, 0.0722)), 1e-4));
+            }
+            float4 ab = float4(toneBase.eval(coord));
+            return exp2(ab.r * l + (ab.g * 16.0 - 16.0) - l);
+        }
+
+        // Highlights / shadows as a factor: the curve moves the base brightness, the pixel follows (detail kept).
+        float localGain(float baseLuminance) {
+            float yb = max(baseLuminance, 1e-6);
+            float x = pow(yb, 1.0 / perceptualGamma);
+            x = highlightsStep(highlightsStep(x, highlightsAmount), highlightsAmount2);
+            x = shadowsStep(shadowsStep(x, shadowsAmount), shadowsAmount2);
+            float y2 = pow(max(x, 0.0), perceptualGamma);
+            return clamp(y2 / yb, 0.125, 8.0);
+        }
+
         half4 main(float2 coord) {
             half4 src = image.eval(coord);
             float a = src.a;
@@ -310,8 +337,13 @@ public static class AdjustmentShader
             if (dehazeAmount != 0.0) c = dehaze(c, coord);
             c *= whiteBalance * exposureGain;
 
-            // Tone curve on perceptual luminance, applied as a ratio
+            // Local highlights / shadows, then the tone curve on perceptual luminance, applied as a ratio
             float y = dot(c, float3(0.2126, 0.7152, 0.0722));
+            if (highlightsAmount != 0.0 || shadowsAmount != 0.0) {
+                float gain = localGain(y * baseRatioAt(coord));
+                c *= gain;
+                y *= gain;
+            }
             float y2 = pow(toneCurve(pow(max(y, 0.0), 1.0 / perceptualGamma)), perceptualGamma);
             c = y > 1e-6 ? c * (y2 / y) : float3(y2);
 
@@ -376,11 +408,19 @@ public static class AdjustmentShader
             : hazeMap.Image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, new SKSamplingOptions(SKFilterMode.Linear),
                 SKMatrix.CreateScale((float)image.Width / hazeMap.Width, (float)image.Height / hazeMap.Height));
         var haze = new HazeInput(hazeShader, hazeMap);
+        // Local highlights / shadows need the photo's base-brightness map.
+        bool localTone = LocalTone(state.Adjustments) || state.Masks.Any(m => m.IsActive && LocalTone(m.Adjustments));
+        var toneMap = localTone ? ToneBaseMap.For(image) : null;
+        using var toneShader = toneMap is null
+            ? SKShader.CreateColor(SKColors.Black)
+            : toneMap.Image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, new SKSamplingOptions(SKFilterMode.Linear),
+                SKMatrix.CreateScale((float)image.Width / toneMap.Width, (float)image.Height / toneMap.Height));
+        var tone = new ToneInput(toneShader, toneMap is not null);
         var frame = VignetteMath.Frame.From(state.Crop.Frame(image.Width, image.Height));
         // Soften taps are a whole number of full-resolution pixels apart (as on the CPU at export).
         int fullLongSide = (int)Math.Round(Math.Max(image.Width, image.Height) / pixelScale);
         float softenStep = (float)(PreparedAdjustments.SoftenStepFor(fullLongSide) * pixelScale);
-        var current = CreatePass(imageShader, imageShader, white, haze, state.Adjustments, frame, (float)pixelScale, softenStep, sharpen: true);
+        var current = CreatePass(imageShader, imageShader, white, haze, tone, state.Adjustments, frame, (float)pixelScale, softenStep, sharpen: true);
 
         foreach (var mask in state.Masks)
         {
@@ -389,7 +429,7 @@ public static class AdjustmentShader
             var toImage = SKMatrix.CreateScale((float)image.Width / maskImg.Width, (float)image.Height / maskImg.Height);
             using var maskShader = maskImg.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
                 MaskSampling(maskImg, image), toImage);
-            var next = CreatePass(current, imageShader, maskShader, haze, mask.Adjustments, frame, (float)pixelScale, softenStep, sharpen: false);
+            var next = CreatePass(current, imageShader, maskShader, haze, tone, mask.Adjustments, frame, (float)pixelScale, softenStep, sharpen: false);
             current.Dispose();
             current = next;
         }
@@ -404,7 +444,11 @@ public static class AdjustmentShader
 
     private readonly record struct HazeInput(SKShader Shader, HazeMap? Map);
 
-    private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, HazeInput haze, AdjustmentSettings settings,
+    private readonly record struct ToneInput(SKShader Shader, bool Bound);
+
+    private static bool LocalTone(AdjustmentSettings s) => s.Highlights != 0 || s.Shadows != 0;
+
+    private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, HazeInput haze, ToneInput tone, AdjustmentSettings settings,
         VignetteMath.Frame frame, float pixelScale, float softenStep, bool sharpen)
     {
         var effect = Effect;
@@ -437,6 +481,7 @@ public static class AdjustmentShader
             ["sharpenStep"] = p.SharpenRadius * pixelScale,
             ["sharpenMasking"] = p.SharpenMasking,
             ["softenAmount"] = p.SoftenAmount,
+            ["useToneBase"] = tone.Bound ? 1f : 0f,
             ["noiseLumaAmount"] = sharpen ? p.NoiseLuminanceAmount : 0f,
             ["noiseColorAmount"] = sharpen ? p.NoiseColorAmount : 0f,
             ["defringePurple"] = sharpen ? p.DefringePurpleAmount : 0f,
@@ -455,6 +500,7 @@ public static class AdjustmentShader
             ["image"] = input,
             ["source"] = source,
             ["haze"] = haze.Shader,
+            ["toneBase"] = tone.Shader,
             ["mask"] = mask,
         };
         return effect.ToShader(uniforms, children);

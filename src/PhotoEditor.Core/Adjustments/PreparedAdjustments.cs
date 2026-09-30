@@ -60,6 +60,9 @@ public readonly record struct PreparedAdjustments(
         return MathF.Max(Band(h), MathF.Max(Band(h + 360f), Band(h - 360f)));
     }
 
+    /// <summary>Highlights or shadows are set (applied locally on the base brightness).</summary>
+    public bool HasLocalTone => HighlightsAmount != 0f || ShadowsAmount != 0f;
+
     public bool HasNoiseReduction => NoiseLuminanceAmount > 0f || NoiseColorAmount > 0f;
     public bool HasDefringe => DefringePurpleAmount > 0f || DefringeGreenAmount > 0f;
 
