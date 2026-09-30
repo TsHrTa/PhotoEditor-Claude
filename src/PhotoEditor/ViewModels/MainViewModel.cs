@@ -31,6 +31,7 @@ public partial class MainViewModel : ViewModelBase
                 isExpanded: g.Key is AdjustmentParameters.Light or AdjustmentParameters.Color)
             {
                 IsGlobalOnly = g.All(p => AdjustmentParameters.GlobalOnly.Contains(p.Parameter)),
+                Lens = g.Key == AdjustmentParameters.Lens ? this : null,
             })
             .ToList();
         LoadPresets();
@@ -615,6 +616,12 @@ public partial class MainViewModel : ViewModelBase
             ScheduleRestoreUpdate();
         if (!ReferenceEquals(oldValue.Spots, newValue.Spots))
             OnSpotsChanged();
+        var (a, b) = (oldValue.Adjustments, newValue.Adjustments);
+        if (a.LensProfile != b.LensProfile || a.RemoveChromaticAberration != b.RemoveChromaticAberration || a.LensDistortion != b.LensDistortion)
+        {
+            RefreshLens();
+            UpdateLensPreview();
+        }
         if (oldValue.Crop != newValue.Crop || oldValue.Orientation != newValue.Orientation)
         {
             if (!_settingCropAngle)

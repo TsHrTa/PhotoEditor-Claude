@@ -330,6 +330,21 @@ public class LightroomXmpTests
     }
 
     [Fact]
+    public void LensCorrections_RoundTrip()
+    {
+        var state = new EditState { Adjustments = new AdjustmentSettings { LensProfile = true, RemoveChromaticAberration = true, LensDistortion = -12, LensVignetting = 30 } };
+        var xml = LightroomXmp.Write(state, Landscape, null, out _);
+        Assert.Contains("crs:LensProfileEnable=\"1\"", xml);
+        Assert.Contains("crs:LensProfileSetup=\"LensDefaults\"", xml);
+        Assert.Contains("crs:AutoLateralCA=\"1\"", xml);
+        Assert.Contains("crs:LensManualDistortionAmount=\"-12\"", xml);
+        Assert.Contains("crs:VignetteAmount=\"+30\"", xml);
+        var read = LightroomXmp.Read(xml, Landscape).Adjustments;
+        Assert.True(read.LensProfile && read.RemoveChromaticAberration);
+        Assert.Equal((-12.0, 30.0), (read.LensDistortion, read.LensVignetting));
+    }
+
+    [Fact]
     public void TextureAndClarity_RoundTrip_GlobalAndInAMask()
     {
         var local = new AdjustmentSettings { Texture = -40, Clarity = 60 };

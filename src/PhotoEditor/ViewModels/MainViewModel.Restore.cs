@@ -46,7 +46,7 @@ public partial class MainViewModel
 
     private void ShowPreview()
     {
-        var preview = ShowOriginal ? _originalPreview : _retouchedPreview ?? _workingPreview ?? _originalPreview;
+        var preview = ShowOriginal ? _originalPreview : _retouchedPreview ?? RetouchBase;
         if (preview is not null && !ReferenceEquals(Preview, preview))
             Preview = preview;
     }
@@ -64,6 +64,11 @@ public partial class MainViewModel
         _workingPreview = null;
         _retouchedPreview = null;
         _retouchedFrom = default;
+        _lensPreview = null;
+        _lensFull = null;
+        _lensFrom = default;
+        RefreshLens();
+        UpdateLensPreview();
         UpdateRetouchedPreview();
         ScheduleRestoreUpdate();
     }
@@ -86,6 +91,7 @@ public partial class MainViewModel
             _working = null;
             _workingAmounts = (0, 0);
             _workingPreview = null;
+            UpdateLensPreview();
             UpdateRetouchedPreview();
             ShowPreview();
             return;
@@ -101,6 +107,7 @@ public partial class MainViewModel
         _working = working;
         _workingAmounts = amounts;
         _workingPreview = preview;
+        UpdateLensPreview();
         UpdateRetouchedPreview();
         ShowPreview();
     }

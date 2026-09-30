@@ -143,7 +143,7 @@ public partial class MainViewModel
         {
             case SpotEditKind.Add:
             {
-                var image = _working ?? Original;
+                var image = EditBase!;
                 var source = Retouching.FindSource(image, point, _newSpotRadius, State.Spots);
                 var spot = new Spot
                 {
@@ -193,7 +193,7 @@ public partial class MainViewModel
     /// </summary>
     private void UpdateRetouchedPreview()
     {
-        var basePreview = _workingPreview ?? _originalPreview;
+        var basePreview = RetouchBase;
         var spots = State.Spots;
         if (spots.Count == 0 || basePreview is null)
         {
@@ -235,7 +235,7 @@ public partial class MainViewModel
                 return PreviewImage.FromImages(full, _canvasPreview.Snapshot(basePreview.Preview));
             });
             Timings.Log($"retouched preview ({spots.Count} spots) in {watch.Elapsed.TotalMilliseconds:0} ms");
-            if (ReferenceEquals(basePreview, _workingPreview ?? _originalPreview) && State.Spots.Count > 0)
+            if (ReferenceEquals(basePreview, RetouchBase) && State.Spots.Count > 0)
             {
                 _retouchedPreview = retouched;
                 _retouchedFrom = (basePreview, spots);
@@ -252,7 +252,7 @@ public partial class MainViewModel
             _retouchRunning = false;
         }
         // Spots or the base changed meanwhile: build again.
-        if (!ReferenceEquals(_retouchedFrom.Spots, State.Spots) || !ReferenceEquals(_retouchedFrom.Base, _workingPreview ?? _originalPreview))
+        if (!ReferenceEquals(_retouchedFrom.Spots, State.Spots) || !ReferenceEquals(_retouchedFrom.Base, RetouchBase))
             UpdateRetouchedPreview();
     }
 }

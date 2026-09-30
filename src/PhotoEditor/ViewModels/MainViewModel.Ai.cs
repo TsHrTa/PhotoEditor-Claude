@@ -35,14 +35,14 @@ public partial class MainViewModel
 
     private async Task AddDetectedAsync(string maskName, Func<AiMaskDetector, Func<SKBitmap, RasterMaskComponent>> detect, string done)
     {
-        if (Original is not { } image || _selecting)
+        if (Original is not { } original || EditBase is not { } image || _selecting)
             return;
         _selecting = true;
         try
         {
             var detector = Detector;
             var subject = await Task.Run(() => detect(detector)(image));
-            if (!ReferenceEquals(Original, image))
+            if (!ReferenceEquals(Original, original))
                 return;
             Guid targetId;
             if (SelectedMask is { } current)
@@ -138,7 +138,7 @@ public partial class MainViewModel
     /// </summary>
     public async Task SelectObjectAsync(SelectPoint? point, SelectBox? box)
     {
-        if (Original is not { } image || _selecting)
+        if (Original is not { } original || EditBase is not { } image || _selecting)
             return;
         _selecting = true;
         try
@@ -169,7 +169,7 @@ public partial class MainViewModel
             if (firstForPhoto)
                 Status = "Analysing the photo…";
             var embedding = await EmbeddingAsync(sam, image);
-            if (!ReferenceEquals(Original, image))
+            if (!ReferenceEquals(Original, original))
                 return; // another photo was opened meanwhile
             var selected = await Task.Run(() => sam.Select(embedding, points, selectBox, image.Width, image.Height));
             if (existing is not null)

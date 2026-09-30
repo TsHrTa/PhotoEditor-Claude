@@ -162,6 +162,13 @@ public static class LightroomXmp
         Set("Texture", Signed(Limit(a.Texture - a.Soften, 100, "texture")));
         Set("Clarity2012", Signed(Limit(a.Clarity, 100, "clarity")));
         Set("Dehaze", Signed(a.Dehaze));
+        // Lens corrections: Lightroom finds the profile for the lens itself ("LensDefaults").
+        Set("LensProfileEnable", a.LensProfile ? "1" : "0");
+        if (a.LensProfile)
+            Set("LensProfileSetup", "LensDefaults");
+        Set("AutoLateralCA", a.RemoveChromaticAberration ? "1" : "0");
+        Set("LensManualDistortionAmount", Signed(a.LensDistortion));
+        Set("VignetteAmount", Signed(a.LensVignetting));
         Set("Saturation", Signed(Limit(a.Saturation, 100, "saturation")));
 
         for (int i = 0; i < HslBands.Count; i++)
@@ -445,6 +452,10 @@ public static class LightroomXmp
             Texture = Get("Texture"),
             Clarity = Get("Clarity2012"),
             Dehaze = Get("Dehaze"),
+            LensProfile = Get("LensProfileEnable") != 0,
+            RemoveChromaticAberration = Get("AutoLateralCA") != 0,
+            LensDistortion = Get("LensManualDistortionAmount"),
+            LensVignetting = Get("VignetteAmount"),
             Temperature = geometry.IsRaw ? 0 : Get("IncrementalTemperature"),
             Tint = geometry.IsRaw ? 0 : Get("IncrementalTint"),
             Saturation = Get("Saturation"),

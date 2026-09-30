@@ -17,6 +17,9 @@ public sealed partial class AdjustmentGroupViewModel(string title, IReadOnlyList
     /// <summary>The group only applies to the whole image, not inside masks.</summary>
     public bool IsGlobalOnly { get; init; }
 
+    /// <summary>For the lens corrections group: the view model with the profile switches (null for other groups).</summary>
+    public MainViewModel? Lens { get; init; }
+
     public string Title { get; } = title;
     public IReadOnlyList<ParameterViewModel> Parameters { get; } = parameters;
 }

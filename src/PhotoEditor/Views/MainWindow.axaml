@@ -383,6 +383,22 @@
                     <DataTemplate x:DataType="vm:AdjustmentGroupViewModel">
                         <Expander Header="{Binding Title}" IsExpanded="{Binding IsExpanded}" IsVisible="{Binding IsVisible}"
                                   HorizontalAlignment="Stretch" Margin="0,0,0,4">
+                          <StackPanel Spacing="4">
+                            <!-- Lens corrections: profile switches above the sliders -->
+                            <Border IsVisible="{Binding Lens, Converter={x:Static ObjectConverters.IsNotNull}}">
+                            <Panel DataContext="{Binding Lens}">
+                            <StackPanel Spacing="4" x:DataType="vm:MainViewModel">
+                                <CheckBox Content="Enable profile corrections" IsChecked="{Binding LensProfileEnabled}"
+                                          ToolTip.Tip="Remove the lens's distortion and vignetting using its lensfun profile (found from the camera and lens names in the photo)" />
+                                <CheckBox Content="Remove chromatic aberration" IsChecked="{Binding RemoveChromaticAberration}"
+                                          ToolTip.Tip="Line up the red and blue images with the green one (colour edges towards the corners): from the lens profile, or measured in the photo" />
+                                <TextBlock Text="{Binding LensProfileText}" Foreground="Gray" TextWrapping="Wrap" />
+                                <Button Content="Download lens profiles (5 MB)" Command="{Binding DownloadLensProfilesCommand}"
+                                        IsVisible="{Binding IsLensDatabaseMissing}"
+                                        ToolTip.Tip="The lensfun database (lensfun.github.io, CC BY-SA 3.0): about 1,500 lenses" />
+                            </StackPanel>
+                            </Panel>
+                            </Border>
                             <ItemsControl ItemsSource="{Binding Parameters}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:ParameterViewModel">
@@ -397,6 +413,7 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                          </StackPanel>
                         </Expander>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
