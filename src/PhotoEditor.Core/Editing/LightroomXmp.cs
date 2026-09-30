@@ -5,6 +5,7 @@ using System.Xml.Linq;
 using PhotoEditor.Core.Adjustments;
 using PhotoEditor.Core.Imaging;
 using PhotoEditor.Core.Masks;
+using PhotoEditor.Core.Retouch;
 using SkiaSharp;
 
 namespace PhotoEditor.Core.Editing;
@@ -148,8 +149,6 @@ public static class LightroomXmp
         }
         if (a.DeblurAmount != 0)
             notes.Add("AI deblur (Lightroom has no equivalent setting)");
-        if (state.Spots.Count > 0)
-            notes.Add("spot removal (not written for Lightroom yet)");
 
         Set("Exposure2012", Signed(Limit(a.Exposure, 5, "exposure"), "0.00"));
         Set("Contrast2012", Signed(Limit(a.Contrast, 100, "contrast")));
@@ -242,6 +241,7 @@ public static class LightroomXmp
 
         WriteCrop(state.Crop, geometry, Set);
         WriteMasks(state.Masks, geometry, description, notes);
+        WriteSpots(state.Spots, geometry, description, notes);
 
         skipped = notes;
         return Serialize(doc);
@@ -624,7 +624,7 @@ public static class LightroomXmp
             var file = PhotoOrientation.FromOrigin(geometry.Orientation);
             orientation = PhotoOrientation.FromOrigin((SKEncodedOrigin)code).After(file.Inverse());
         }
-        return new EditState { Adjustments = a, Crop = crop, Masks = masks.ToImmutable(), Orientation = orientation };
+        return new EditState { Adjustments = a, Crop = crop, Masks = masks.ToImmutable(), Orientation = orientation, Spots = ReadSpots(d, geometry) };
     }
 
     private static LinearGradientComponent ReadLinear(XElement m, ImageGeometry g)
@@ -668,6 +668,143 @@ public static class LightroomXmp
         foreach (var p in AdjustmentParameters.All)
             s = p.Set(s, p.Get(s));
         return s;
+    }
+
+    // ---- Spot removal ----
+    // Lightroom Classic 9+ writes crs:RetouchAreas: per spot an rdf:Description with SpotType (heal / clone /
+    // heal_patchmatch = Content-Aware Remove), the source position in SourceX / OffsetY (sic), Opacity, Feather and
+    // a Mask/Ellipse with centre X / Y and radius SizeX (= SizeY). Positions are normalised to the stored (sensor)
+    // frame, the radius to its longer side (checked against a Lightroom sample: the circles land where Lightroom
+    // shows them). Content-Aware Remove keeps its generated pixels in crs:Table_… blobs this app can't produce, so
+    // such spots (and brushed spots) are kept as they are in the XMP; the app shows them as Remove spots without a
+    // fill. The older crs:RetouchInfo text lines are read when RetouchAreas is missing, and written for older readers.
+
+    private const string RetouchAreas = "RetouchAreas";
+    private const string RetouchInfo = "RetouchInfo";
+
+    private static ImmutableList<Spot> ReadSpots(XElement d, ImageGeometry g)
+    {
+        var spots = ImmutableList.CreateBuilder<Spot>();
+        var areas = d.Element(Crs + RetouchAreas)?.Element(Rdf + "Seq")?.Elements(Rdf + "li");
+        if (areas is not null)
+        {
+            foreach (var item in areas)
+            {
+                var area = item.Element(Rdf + "Description") ?? item;
+                var mask = area.Element(Crs + "Masks")?.Element(Rdf + "Seq")?.Elements(Rdf + "li").FirstOrDefault();
+                var m = mask?.Element(Rdf + "Description") ?? mask;
+                if (m is null || ReadText(m, "What") != "Mask/Ellipse")
+                    continue; // brushed spots: kept in the file, not shown
+                var type = ReadText(area, "SpotType") ?? "heal";
+                var mode = type switch { "clone" => SpotMode.Clone, "heal" => SpotMode.Heal, _ => SpotMode.Remove };
+                var center = g.ToUpright(ReadNumber(m, "X") ?? 0.5, ReadNumber(m, "Y") ?? 0.5);
+                var source = mode == SpotMode.Remove ? center
+                    : g.ToUpright(ReadNumber(area, "SourceX") ?? 0.5, ReadNumber(area, "OffsetY") ?? 0.5);
+                var id = Guid.TryParseExact(ReadText(m, "MaskSyncID"), "N", out var sync) ? sync : Guid.NewGuid();
+                var c = new BrushPoint((float)center.X, (float)center.Y);
+                spots.Add(new Spot
+                {
+                    Id = id,
+                    Mode = mode,
+                    Center = c,
+                    Source = new BrushPoint((float)source.X, (float)source.Y),
+                    Radius = (float)(ReadNumber(m, "SizeX") ?? 0.02),
+                    Feather = (float)(ReadNumber(area, "Feather") ?? 0),
+                    Opacity = (float)(ReadNumber(area, "Opacity") ?? 1),
+                    Path = mode == SpotMode.Remove ? [c] : [],
+                }.Normalized());
+            }
+            return spots.ToImmutable();
+        }
+
+        foreach (var line in d.Element(Crs + RetouchInfo)?.Element(Rdf + "Seq")?.Elements(Rdf + "li") ?? [])
+        {
+            var fields = line.Value.Split(',').Select(f => f.Split('=', 2)).Where(f => f.Length == 2)
+                .ToDictionary(f => f[0].Trim(), f => f[1].Trim());
+            double Field(string name, double fallback) =>
+                fields.TryGetValue(name, out var v) && double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var x) ? x : fallback;
+            var center = g.ToUpright(Field("centerX", 0.5), Field("centerY", 0.5));
+            var source = g.ToUpright(Field("sourceX", 0.5), Field("sourceY", 0.5));
+            spots.Add(new Spot
+            {
+                Mode = fields.GetValueOrDefault("spotType") == "clone" ? SpotMode.Clone : SpotMode.Heal,
+                Center = new BrushPoint((float)center.X, (float)center.Y),
+                Source = new BrushPoint((float)source.X, (float)source.Y),
+                Radius = (float)Field("radius", 0.02),
+                Feather = 0,
+                Opacity = (float)Field("opacity", 1),
+            }.Normalized());
+        }
+        return spots.ToImmutable();
+    }
+
+    private static void WriteSpots(ImmutableList<Spot> spots, ImageGeometry g, XElement description, List<string> notes)
+    {
+        // Lightroom's own spots this app can't write (Content-Aware Remove, brushed) stay as they are while the
+        // spot still exists here (matched by MaskSyncID = Spot.Id).
+        var kept = new Dictionary<Guid, XElement>();
+        foreach (var item in description.Element(Crs + RetouchAreas)?.Element(Rdf + "Seq")?.Elements(Rdf + "li") ?? [])
+        {
+            var sync = item.Descendants().Select(e => ReadText(e, "MaskSyncID")).FirstOrDefault(v => v is not null);
+            if (Guid.TryParseExact(sync, "N", out var id))
+                kept[id] = new XElement(item);
+        }
+        description.Attributes(Crs + RetouchAreas).Remove();
+        description.Elements(Crs + RetouchAreas).Remove();
+        description.Attributes(Crs + RetouchInfo).Remove();
+        description.Elements(Crs + RetouchInfo).Remove();
+
+        var areas = new List<XElement>();
+        var info = new List<string>();
+        int unwritten = 0;
+        foreach (var spot in spots)
+        {
+            if (spot.Mode == SpotMode.Remove || spot.Path.Count > 0)
+            {
+                if (kept.TryGetValue(spot.Id, out var original))
+                    areas.Add(original);
+                else
+                    unwritten++;
+                continue;
+            }
+            var (cx, cy) = g.ToStored(spot.Center.X, spot.Center.Y);
+            var (sx, sy) = g.ToStored(spot.Source.X, spot.Source.Y);
+            string type = spot.Mode == SpotMode.Clone ? "clone" : "heal";
+            string F(double v) => Number(v, "0.######");
+            areas.Add(new XElement(Rdf + "li", new XElement(Rdf + "Description",
+                new XAttribute(Crs + "SpotType", type),
+                new XAttribute(Crs + "SourceState", "sourceSetExplicitly"),
+                new XAttribute(Crs + "Method", "gaussian"),
+                new XAttribute(Crs + "HealVersion", "2"),
+                new XAttribute(Crs + "SourceX", F(sx)),
+                new XAttribute(Crs + "OffsetY", F(sy)),
+                new XAttribute(Crs + "Opacity", F(spot.Opacity)),
+                new XAttribute(Crs + "Feather", F(spot.Feather)),
+                new XAttribute(Crs + "Seed", "2"),
+                new XElement(Crs + "Masks", new XElement(Rdf + "Seq", new XElement(Rdf + "li", new XElement(Rdf + "Description",
+                    new XAttribute(Crs + "What", "Mask/Ellipse"),
+                    new XAttribute(Crs + "MaskActive", "true"),
+                    new XAttribute(Crs + "MaskBlendMode", "0"),
+                    new XAttribute(Crs + "MaskInverted", "false"),
+                    new XAttribute(Crs + "MaskSyncID", spot.Id.ToString("N").ToUpperInvariant()),
+                    new XAttribute(Crs + "MaskValue", "1"),
+                    new XAttribute(Crs + "X", F(cx)),
+                    new XAttribute(Crs + "Y", F(cy)),
+                    new XAttribute(Crs + "SizeX", F(spot.Radius)),
+                    new XAttribute(Crs + "SizeY", F(spot.Radius)),
+                    new XAttribute(Crs + "Alpha", "0"),
+                    new XAttribute(Crs + "CenterValue", "1"),
+                    new XAttribute(Crs + "PerimeterValue", "0"))))))));
+            info.Add(string.Create(CultureInfo.InvariantCulture,
+                $"centerX = {cx:0.000000}, centerY = {cy:0.000000}, radius = {spot.Radius:0.000000}, sourceState = sourceSetExplicitly, sourceX = {sx:0.000000}, sourceY = {sy:0.000000}, spotType = {type}")
+                + (spot.Opacity < 1 ? string.Create(CultureInfo.InvariantCulture, $", opacity = {spot.Opacity:0.0000}") : ""));
+        }
+        if (unwritten > 0)
+            notes.Add($"{unwritten} brushed / AI Remove spot(s) (Lightroom can't recreate them)");
+        if (areas.Count > 0)
+            description.Add(new XElement(Crs + RetouchAreas, new XElement(Rdf + "Seq", areas)));
+        if (info.Count > 0)
+            description.Add(new XElement(Crs + RetouchInfo, new XElement(Rdf + "Seq", info.Select(t => new XElement(Rdf + "li", t)))));
     }
 
     // ---- Files ----
