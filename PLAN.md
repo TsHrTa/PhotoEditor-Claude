@@ -94,8 +94,10 @@ Each item is meant to be one small, self-contained step.
 - [x] RAW shadow precision: keep the fraction of an 8-bit step the photo rounds away (≈ 16-bit shadows)
 - [x] Texture and Clarity sliders (also in masks)
 - [x] Retouching: spot removal (heal / clone circles with automatic source)
+- [ ] Lens corrections: lensfun profiles (distortion, chromatic aberration, vignetting), manual distortion / vignetting, automatic chromatic aberration (user request)
+- [ ] Retouching: AI remove — brush over an object, an inpainting model (LaMa, ONNX) fills the hole (user request)
 - [ ] Retouching: Lightroom XMP for spots (crs:RetouchAreas), brush-shaped spots (paint over a stroke / wire)
-- [ ] Later (not planned yet): Lightroom-like default sharpening / colour NR for RAWs, Tone Curve, lens profile corrections (lensfun), automatic chromatic aberration removal, Transform / Upright
+- [ ] Later (not planned yet): Lightroom-like default sharpening / colour NR for RAWs, Tone Curve, Transform / Upright
 
 ## Where I left off
 - 2026-09-29: Open image done. New `PhotoEditor.Core` library (UI-free: `ImageLoader` decodes via SkiaSharp and applies EXIF orientation) + `tests/PhotoEditor.Tests` (xUnit). `ImageViewer` control draws an SKImage through Avalonia's Skia lease (custom draw op), fit-to-window. Open via button / Ctrl+O / drag & drop / command-line arg. Dark theme. Screenshots under Xvfb on Linux work (apt `xvfb x11-apps imagemagick`). Next: zoom & pan.
