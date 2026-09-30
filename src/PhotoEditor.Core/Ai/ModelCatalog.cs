@@ -66,6 +66,15 @@ public static class ModelCatalog
     /// <summary>Files needed for AI Deblur (≈ 92 MB).</summary>
     public static IReadOnlyList<ModelInfo> Deblur { get; } = [DeblurGraph];
 
+    /// <summary>LaMa (big-lama) inpainting, fixed 512 × 512: image RGB 0..1 and mask (1 = fill) in, RGB 0..255 out.</summary>
+    public static readonly ModelInfo Inpaint = new("lama/lama_fp32.onnx", "AI Remove",
+        "https://huggingface.co/Carve/LaMa-ONNX/resolve/c3c0c9e468934d62e79c329e35d82dd09ff8c444/lama_fp32.onnx",
+        "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6", 208_044_816,
+        "Apache-2.0 (LaMa by Samsung AI / Suvorov et al.; ONNX port by Carve)");
+
+    /// <summary>Files needed for AI Remove (≈ 208 MB).</summary>
+    public static IReadOnlyList<ModelInfo> Remove { get; } = [Inpaint];
+
     /// <summary>ADE20K class indices (0-based, as in the model's output).</summary>
     public const int AdeSky = 2, AdePerson = 12;
 }

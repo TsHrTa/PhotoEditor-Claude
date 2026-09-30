@@ -69,6 +69,7 @@ public partial class MainWindow : Window
         Viewer.ComponentEdit += OnComponentEdit;
         Viewer.CropEdit += OnCropEdit;
         Viewer.SpotEdit += (_, e) => ViewModel?.EditSpot(e.Kind, e.Spot, e.Point, e.Phase);
+        Viewer.SpotPainted += async (_, path) => { if (ViewModel is { } vm) await vm.RemoveAsync(path); };
         AddPlainKeyBinding(Key.Q, () => { if (ViewModel is { } vm) vm.IsSpotActive = !vm.IsSpotActive; });
         AddPlainKeyBinding(Key.Delete, () => { if (ViewModel is { IsSpotActive: true } vm) vm.DeleteSpotCommand.Execute(null); });
         AddPlainKeyBinding(Key.Back, () => { if (ViewModel is { IsSpotActive: true } vm) vm.DeleteSpotCommand.Execute(null); });

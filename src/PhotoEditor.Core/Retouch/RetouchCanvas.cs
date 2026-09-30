@@ -96,9 +96,9 @@ public sealed class RetouchCanvas : IDisposable
         {
             Retouching.ApplySpot(Bitmap, spot);
             if (HeadroomBitmap is not null)
-                Retouching.ApplySpot(HeadroomBitmap, spot);
+                Retouching.ApplySpot(HeadroomBitmap, spot, SpotLayer.Above);
             if (FineBitmap is not null)
-                Retouching.ApplySpot(FineBitmap, spot);
+                Retouching.ApplySpot(FineBitmap, spot, SpotLayer.Fine);
         }
         _applied = [.. spots];
         return true;

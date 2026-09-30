@@ -13,6 +13,9 @@ public enum SpotEditKind
 
     /// <summary>The spot's source circle is dragged (<see cref="SpotEditEventArgs.Point"/> = the source's new centre).</summary>
     MoveSource,
+
+    /// <summary>A click on a spot that can't be dragged (a Remove spot): select it.</summary>
+    Select,
 }
 
 /// <summary>Spot removal tool input from <see cref="ImageViewer"/>, in normalised full-image coordinates.</summary>

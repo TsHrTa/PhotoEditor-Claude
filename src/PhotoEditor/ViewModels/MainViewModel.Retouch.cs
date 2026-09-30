@@ -1,9 +1,12 @@
 using System;
+using System.Collections.Generic;
+using System.Net.Http;
 using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PhotoEditor.Controls;
+using PhotoEditor.Core.Ai;
 using PhotoEditor.Core.Editing;
 using PhotoEditor.Core.Imaging;
 using PhotoEditor.Core.Masks;
@@ -42,23 +45,53 @@ public partial class MainViewModel
 
     private Spot? SelectedSpot => SelectedSpotId is { } id ? State.Spots.Find(s => s.Id == id) : null;
 
-    /// <summary>Heal (texture from the source, colours fitted) instead of Clone.</summary>
+    private SpotMode ShownSpotMode => SelectedSpot?.Mode ?? _newSpotMode;
+
+    /// <summary>Heal: texture from the source, colours fitted to the surroundings.</summary>
     public bool SpotHeal
     {
-        get => (SelectedSpot?.Mode ?? _newSpotMode) == SpotMode.Heal;
-        set => ChangeSpot(s => s with { Mode = value ? SpotMode.Heal : SpotMode.Clone }, () => _newSpotMode = value ? SpotMode.Heal : SpotMode.Clone, null);
+        get => ShownSpotMode == SpotMode.Heal;
+        set { if (value) SetSpotMode(SpotMode.Heal); }
     }
 
+    /// <summary>Clone: an exact copy of the source.</summary>
     public bool SpotClone
     {
-        get => !SpotHeal;
-        set => SpotHeal = !value;
+        get => ShownSpotMode == SpotMode.Clone;
+        set { if (value) SetSpotMode(SpotMode.Clone); }
+    }
+
+    /// <summary>Remove (AI): paint over something; an inpainting model fills it in.</summary>
+    public bool SpotRemove
+    {
+        get => ShownSpotMode == SpotMode.Remove;
+        set { if (value) SetSpotMode(SpotMode.Remove); }
+    }
+
+    /// <summary>New spots are painted (Remove) rather than clicked (Heal / Clone).</summary>
+    public bool IsSpotPainting => _newSpotMode == SpotMode.Remove;
+
+    /// <summary>
+    /// Sets the mode for new spots; a selected heal / clone spot switches between the two (a Remove spot stays one,
+    /// and choosing Remove deselects a heal / clone spot so the next stroke paints).
+    /// </summary>
+    private void SetSpotMode(SpotMode mode)
+    {
+        _newSpotMode = mode;
+        if (SelectedSpot is { } spot && (spot.Mode == SpotMode.Remove) != (mode == SpotMode.Remove))
+            SelectedSpotId = null;
+        else if (SelectedSpot is { } selected && selected.Mode != mode)
+            ApplyEdit(UpdateSpot(State, selected.Id, s => s with { Mode = mode }));
+        if (mode == SpotMode.Remove && HasImage)
+            IsSpotActive = true; // ready to paint
+        RefreshSpotSliders();
+        OnPropertyChanged(nameof(IsSpotPainting));
     }
 
     /// <summary>Size: radius in % of the photo's longer side.</summary>
     public double SpotSize
     {
-        get => Math.Round((SelectedSpot?.Radius ?? _newSpotRadius) * 100, 2);
+        get => Math.Round(SpotCursorRadius * 100, 2);
         set
         {
             float r = Math.Clamp((float)value / 100, Spot.MinRadius, Spot.MaxRadius);
@@ -89,13 +122,14 @@ public partial class MainViewModel
     }
 
     /// <summary>Radius of the cursor / a new spot, as a fraction of the longer side (for the viewer).</summary>
-    public double SpotCursorRadius => SelectedSpot?.Radius ?? _newSpotRadius;
+    public double SpotCursorRadius => SelectedSpot is { Mode: not SpotMode.Remove } s ? s.Radius : _newSpotRadius;
 
     /// <summary>Changes the selected spot (undoable) and the settings for new spots.</summary>
     private void ChangeSpot(Func<Spot, Spot> update, Action setDefault, string? key)
     {
         setDefault();
-        if (SelectedSpot is { } spot)
+        // A Remove spot's fill was made for its stroke: only its opacity can change.
+        if (SelectedSpot is { } spot && (spot.Mode != SpotMode.Remove || key == "spot-opacity"))
             ApplyEdit(UpdateSpot(State, spot.Id, update), key);
         RefreshSpotSliders();
     }
@@ -108,7 +142,7 @@ public partial class MainViewModel
 
     private void RefreshSpotSliders()
     {
-        foreach (var name in new[] { nameof(SpotHeal), nameof(SpotClone), nameof(SpotSize), nameof(SpotFeather), nameof(SpotOpacity),
+        foreach (var name in new[] { nameof(SpotHeal), nameof(SpotClone), nameof(SpotRemove), nameof(SpotSize), nameof(SpotFeather), nameof(SpotOpacity),
             nameof(SpotCursorRadius), nameof(HasSpots), nameof(SpotCountText) })
             OnPropertyChanged(name);
     }
@@ -154,6 +188,9 @@ public partial class MainViewModel
                 SelectedSpotId = spot.Id;
                 break;
             }
+            case SpotEditKind.Select:
+                SelectedSpotId = id;
+                break;
             case SpotEditKind.Move or SpotEditKind.MoveSource when id is { } spotId:
                 if (phase == EditPhase.Begin)
                 {
@@ -167,6 +204,106 @@ public partial class MainViewModel
     }
 
     private string? _spotDragKey;
+
+    // ---- AI Remove ----
+
+    private Inpainter? _inpainter;
+    private Task<Inpainter>? _inpainterLoading;
+    private bool _removing;
+
+    /// <summary>A stroke painted with the Remove mode: the model fills it, then the spot is added (one undo step).</summary>
+    public async Task RemoveAsync(IReadOnlyList<BrushPoint> path)
+    {
+        if (Original is not { } original || path.Count == 0 || _removing)
+            return;
+        _removing = true;
+        var spot = new Spot
+        {
+            Mode = SpotMode.Remove, Radius = _newSpotRadius, Opacity = _newSpotOpacity,
+            Path = [.. SimplifiedPath(path, _newSpotRadius)],
+            Center = new BrushPoint(path.Average(p => p.X), path.Average(p => p.Y)),
+        };
+        try
+        {
+            PendingRemove = spot;
+            var inpainter = await LoadInpainterAsync();
+            Status = "Removing (AI)…";
+            // What the photo looks like under the stroke now: corrected, with the earlier spots.
+            var photo = _canvasFull is { } canvas && ReferenceEquals(_canvasBase, RetouchBase) && State.Spots.Count > 0
+                ? canvas.Bitmap
+                : EditBase!;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var fill = await Task.Run(() => inpainter.FillSpot(photo, spot));
+            if (!ReferenceEquals(Original, original))
+                return;
+            spot = spot with { Fill = fill };
+            ApplyEdit(State with { Spots = State.Spots.Add(spot) });
+            SelectedSpotId = null; // ready for the next stroke
+            Status = $"Removed in {watch.Elapsed.TotalSeconds:0.0} s ({(inpainter.Device == Core.Ai.InferenceDevice.DirectML ? "GPU" : "CPU")}).";
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.IO.IOException
+            or System.IO.InvalidDataException or Microsoft.ML.OnnxRuntime.OnnxRuntimeException or UnauthorizedAccessException)
+        {
+            Status = $"Remove failed: {ex.Message}";
+        }
+        finally
+        {
+            PendingRemove = null;
+            _removing = false;
+        }
+    }
+
+    /// <summary>The stroke being filled (drawn by the viewer until the spot exists).</summary>
+    [ObservableProperty]
+    public partial Spot? PendingRemove { get; private set; }
+
+    /// <summary>Stroke points at least a third of the radius apart (the rest adds nothing but work).</summary>
+    private static IEnumerable<BrushPoint> SimplifiedPath(IReadOnlyList<BrushPoint> path, float radius)
+    {
+        var last = path[0];
+        yield return last;
+        float min = radius / 3;
+        for (int i = 1; i < path.Count; i++)
+        {
+            var p = path[i];
+            bool isLast = i == path.Count - 1;
+            if (isLast || MathF.Sqrt((p.X - last.X) * (p.X - last.X) + (p.Y - last.Y) * (p.Y - last.Y)) >= min)
+            {
+                yield return p;
+                last = p;
+            }
+        }
+    }
+
+    private Task<Inpainter> LoadInpainterAsync()
+    {
+        if (_inpainter is not null)
+            return Task.FromResult(_inpainter);
+        return _inpainterLoading ??= LoadInpainterCoreAsync();
+    }
+
+    private async Task<Inpainter> LoadInpainterCoreAsync()
+    {
+        try
+        {
+            if (!ModelCatalog.Remove.All(_models.IsAvailable))
+            {
+                long total = ModelCatalog.Remove.Where(m => !_models.IsAvailable(m)).Sum(m => m.SizeBytes);
+                Status = $"Downloading the AI Remove model ({total / 1_000_000} MB, only the first time)…";
+                var progress = new Progress<DownloadProgress>(p =>
+                    Status = $"Downloading the AI Remove model… {p.Fraction ?? 0:P0} of {total / 1_000_000} MB");
+                await _models.GetAllAsync(ModelCatalog.Remove, progress);
+            }
+            Status = "Loading the AI Remove model…";
+            _inpainter = await Task.Run(() => Inpainter.Load(_models.PathOf(ModelCatalog.Inpaint)));
+            return _inpainter;
+        }
+        catch
+        {
+            _inpainterLoading = null; // allow a retry
+            throw;
+        }
+    }
 
     // ---- Retouched preview ----
 

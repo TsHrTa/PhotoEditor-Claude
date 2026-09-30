@@ -27,16 +27,16 @@ public static class Retouching
         var result = source.Copy(SKColorType.Rgba8888) ?? throw new InvalidOperationException("Could not copy the photo.");
         Lens.LensVignetting.Attach(result, Lens.LensVignetting.Of(source));
         foreach (var spot in spots)
-            ApplySpotCore(result, spot);
+            ApplySpot(result, spot);
         if (Headroom.Of(source) is { } headroom && headroom.Width == source.Width && headroom.Height == source.Height)
         {
             var extra = headroom.Bitmap.Copy();
             var fine = headroom.Fine?.Copy();
             foreach (var spot in spots)
             {
-                ApplySpotCore(extra, spot);
+                ApplySpot(extra, spot, SpotLayer.Above);
                 if (fine is not null)
-                    ApplySpotCore(fine, spot);
+                    ApplySpot(fine, spot, SpotLayer.Fine);
             }
             Headroom.Attach(result, new Headroom(extra, headroom.Scale, fine));
         }
@@ -54,6 +54,8 @@ public static class Retouching
     /// <summary>The pixels a spot writes (its circle), in an image of the given size.</summary>
     public static SKRectI DestinationBounds(Spot spot, int width, int height)
     {
+        if (spot.Mode == SpotMode.Remove)
+            return RemoveFill.Bounds(spot, width, height);
         var c = Circle.Of(spot, width, height);
         return Bounds(c.X, c.Y, c.Radius, width, height);
     }
@@ -61,16 +63,27 @@ public static class Retouching
     /// <summary>The pixels a spot reads: its circle and its source, each with the ring around it.</summary>
     public static (SKRectI Destination, SKRectI Source) ReadBounds(Spot spot, int width, int height)
     {
+        if (spot.Mode == SpotMode.Remove)
+        {
+            var own = RemoveFill.Bounds(spot, width, height); // the fill is stored; it only blends over its own pixels
+            return (own, own);
+        }
         var c = Circle.Of(spot, width, height);
         return (Bounds(c.X, c.Y, c.Radius + 4, width, height), Bounds(c.SourceX, c.SourceY, c.Radius + 4, width, height));
     }
 
-    /// <summary>Applies one spot to <paramref name="bitmap"/> (RGBA8888) in place.</summary>
-    public static void ApplySpot(SKBitmap bitmap, Spot spot)
+    /// <summary>
+    /// Applies one spot to <paramref name="bitmap"/> (RGBA8888) in place: the photo, or one of its headroom layers
+    /// (<paramref name="layer"/>; heal / clone treat them like the photo, Remove clears them).
+    /// </summary>
+    public static void ApplySpot(SKBitmap bitmap, Spot spot, SpotLayer layer = SpotLayer.Photo)
     {
         if (bitmap.ColorType != SKColorType.Rgba8888)
             throw new ArgumentException("Spot removal needs an RGBA8888 bitmap.", nameof(bitmap));
-        ApplySpotCore(bitmap, spot);
+        if (spot.Mode == SpotMode.Remove)
+            RemoveFill.Apply(bitmap, spot, layer);
+        else
+            ApplySpotCore(bitmap, spot);
     }
 
     private static unsafe void ApplySpotCore(SKBitmap bitmap, Spot spot)
