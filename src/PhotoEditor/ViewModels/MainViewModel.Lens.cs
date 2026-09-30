@@ -128,7 +128,8 @@ public partial class MainViewModel
             return;
         var settings = State.Adjustments;
         var lens = PhotoLensInfo;
-        var full = LensSetup.For(lens, settings, basePreview.Width, basePreview.Height);
+        // (a quick check without measuring: measuring only matters once something is to be corrected)
+        var full = LensSetup.For(lens, settings, basePreview.Width, basePreview.Height, measureCa: () => (1.001, 1));
         if (full is null)
         {
             _lensPreview = null;
@@ -148,8 +149,17 @@ public partial class MainViewModel
         try
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
+            // The chromatic aberration is measured once, on the full-size photo, as the export does (the measurement
+            // uses a fixed-size copy, so the result is the same).
+            Func<(double, double)> measure = () =>
+            {
+                using var bitmap = SKBitmap.FromImage(basePreview.Full);
+                return ChromaticAberration.Measure(bitmap);
+            };
+            (double, double)? measured = null;
+            Func<(double, double)> once = () => measured ??= measure();
             // 1. The preview size (what the fitted view shows); the full size follows.
-            var small = await Task.Run(() => Corrected(basePreview.Preview, lens, settings));
+            var small = await Task.Run(() => Corrected(basePreview.Preview, lens, settings, once));
             if (Current())
             {
                 _lensPreview = PreviewImage.FromImages(ReferenceEquals(basePreview.Preview, basePreview.Full) ? small.Image : basePreview.Full, small.Image);
@@ -160,7 +170,7 @@ public partial class MainViewModel
             if (!ReferenceEquals(basePreview.Preview, basePreview.Full) && Current())
             {
                 // 2. The full size (zoomed-in view, AI masks, spot sources).
-                var large = await Task.Run(() => Corrected(basePreview.Full, lens, settings));
+                var large = await Task.Run(() => Corrected(basePreview.Full, lens, settings, once));
                 if (Current())
                 {
                     _lensPreview = PreviewImage.FromImages(large.Image, small.Image);
@@ -188,9 +198,11 @@ public partial class MainViewModel
     }
 
     /// <summary>One image of the shown photo corrected; its headroom and vignetting table attached, maps shared.</summary>
-    private static (SKImage Image, SKBitmap? Bitmap) Corrected(SKImage image, PhotoLens lens, AdjustmentSettings settings)
+    private static (SKImage Image, SKBitmap? Bitmap) Corrected(SKImage image, PhotoLens lens, AdjustmentSettings settings,
+        Func<(double, double)> measureCa)
     {
-        var correction = LensSetup.For(lens, settings, image.Width, image.Height)!;
+        var correction = LensSetup.For(lens, settings, image.Width, image.Height, measureCa: measureCa)
+            ?? new LensCorrection(image.Width, image.Height, null, 1); // nothing measured after all
         if (correction.IsGeometryIdentity)
         {
             // Only vignetting: the same pixels under a new image object that carries the table.

@@ -643,14 +643,13 @@ public static class AdjustmentShader
     /// <summary>As above, with masks rasterised at the image size.</summary>
     /// <remarks>
     /// Lens corrections and spot removal are applied to <paramref name="source"/> first, as
-    /// <see cref="CpuAdjustmentRenderer.Render(SKBitmap, EditState, Lens.PhotoLens?, (double Red, double Blue)?)"/>
+    /// <see cref="CpuAdjustmentRenderer.Render(SKBitmap, EditState, Lens.PhotoLens?)"/>
     /// does (the app shows a corrected, retouched image).
     /// </remarks>
-    public static SKBitmap RenderRaster(SKBitmap source, EditState state, Lens.PhotoLens? lens = null,
-        (double Red, double Blue)? chromaticAberration = null)
+    public static SKBitmap RenderRaster(SKBitmap source, EditState state, Lens.PhotoLens? lens = null)
     {
         var correction = Lens.LensSetup.For(lens ?? Lens.PhotoLens.Unknown, state.Adjustments, source.Width, source.Height,
-            autoCa: chromaticAberration);
+            measureCa: () => Lens.ChromaticAberration.Measure(source));
         var corrected = correction?.Apply(source) ?? source;
         var retouched = Retouch.Retouching.Apply(corrected, state.Spots);
         try

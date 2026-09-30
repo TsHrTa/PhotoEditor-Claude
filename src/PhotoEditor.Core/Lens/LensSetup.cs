@@ -63,11 +63,12 @@ public static class LensSetup
     /// <summary>
     /// The corrections <paramref name="settings"/> ask for on a <paramref name="width"/> × <paramref name="height"/>
     /// photo, or null when nothing moves or changes brightness (manual vignetting alone is done by the renderers
-    /// from the settings). <paramref name="autoCa"/> = measured red / blue scales, used when the profile has no
-    /// chromatic aberration data.
+    /// from the settings). <paramref name="measureCa"/> measures the red / blue scales in the photo (see
+    /// <see cref="ChromaticAberration"/>); it is called only when chromatic aberration is to be removed and the
+    /// profile has no data for it.
     /// </summary>
     public static LensCorrection? For(PhotoLens photo, AdjustmentSettings settings, int width, int height,
-        LensDatabase? database = null, (double Red, double Blue)? autoCa = null)
+        LensDatabase? database = null, Func<(double Red, double Blue)>? measureCa = null)
     {
         LensProfile? profile = null;
         double crop = 1;
@@ -87,8 +88,8 @@ public static class LensSetup
             }
         }
         double red = 1, blue = 1;
-        if (settings.RemoveChromaticAberration && profile?.TcaModel is null && autoCa is { } ca)
-            (red, blue) = ca;
+        if (settings.RemoveChromaticAberration && profile?.TcaModel is null && measureCa is not null)
+            (red, blue) = measureCa();
         double manual = Math.Clamp(settings.LensDistortion, -100, 100) / 100;
         bool anything = profile is { DistortionModel: not null } or { TcaModel: not null } or { Vignetting: not null }
             || manual != 0 || red != 1 || blue != 1;

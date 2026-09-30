@@ -14,6 +14,12 @@ PhotoEditor is for personal use. AI models are downloaded on first use into
 | AI Denoise | SCUNet real-world PSNR (Kai Zhang et al.), ONNX export | [Heliosoph/scunet-onnx](https://huggingface.co/Heliosoph/scunet-onnx) @ `6d11417e` | Apache-2.0 (repo) / MIT (upstream KAIR code and weights) |
 | AI Deblur | NAFNet deblurring (Megvii Research), ONNX by the OpenCV model zoo | [opencv/deblurring_nafnet](https://huggingface.co/opencv/deblurring_nafnet) @ `f1f25511` | MIT |
 
+## Data
+
+| Feature | Data | Source | Licence |
+|---|---|---|---|
+| Lens profile corrections | lensfun lens database (downloaded on first use into `%LOCALAPPDATA%\PhotoEditor\lensfun`) | [lensfun/lensfun](https://github.com/lensfun/lensfun) `data/db` | CC BY-SA 3.0 |
+
 ## Libraries
 
 | Library | Licence |

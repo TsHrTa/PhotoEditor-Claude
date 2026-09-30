@@ -21,13 +21,11 @@ public static class CpuAdjustmentRenderer
     /// vignette follows the crop frame.
     /// </summary>
     /// <param name="lens">The photo's lens information, for the lens corrections (null = unknown).</param>
-    /// <param name="chromaticAberration">Measured red / blue scales, for "remove chromatic aberration" without profile data.</param>
-    public static SKBitmap Render(SKBitmap source, EditState state, Lens.PhotoLens? lens = null,
-        (double Red, double Blue)? chromaticAberration = null)
+    public static SKBitmap Render(SKBitmap source, EditState state, Lens.PhotoLens? lens = null)
     {
         // Lens corrections, then spot removal, work on the photo's pixels, before everything else.
         var correction = Lens.LensSetup.For(lens ?? Lens.PhotoLens.Unknown, state.Adjustments, source.Width, source.Height,
-            autoCa: chromaticAberration);
+            measureCa: () => Lens.ChromaticAberration.Measure(source));
         var corrected = correction?.Apply(source) ?? source;
         try
         {

@@ -197,8 +197,31 @@ public sealed class LensCorrection
         return result;
     }
 
+    /// <summary>Entries of the radial table (factors by squared distance from the centre).</summary>
+    private const int RadialTableSize = 4096;
+
+    /// <summary>
+    /// Red, green and blue factors (see <see cref="Factors"/>) at squared distances 0 … half-diagonal² — the
+    /// corrections are radial, so the warp interpolates this table instead of evaluating them per pixel.
+    /// </summary>
+    private float[] RadialTable()
+    {
+        var table = new float[RadialTableSize * 3];
+        for (int i = 0; i < RadialTableSize; i++)
+        {
+            double d = Math.Sqrt((double)i / (RadialTableSize - 1)) * _halfDiagonal;
+            var (r, g, b) = Factors(d, 0);
+            table[i * 3] = (float)r;
+            table[i * 3 + 1] = (float)g;
+            table[i * 3 + 2] = (float)b;
+        }
+        return table;
+    }
+
     private unsafe void Warp(SKBitmap photo, SKBitmap? above, SKBitmap? fine, SKBitmap outPhoto, SKBitmap? outAbove, SKBitmap? outFine)
     {
+        var table = RadialTable();
+        bool sameForAll = Profile?.TcaModel is null && RedScale == 1 && BlueScale == 1;
         var inP = new Plane(photo);
         var outP = new Plane(outPhoto);
         var inA = above is null ? default : new Plane(above);
@@ -206,41 +229,62 @@ public sealed class LensCorrection
         var inF = fine is null ? default : new Plane(fine);
         var outF = outFine is null ? default : new Plane(outFine);
         int w = Width, h = Height;
-        double cx = w / 2.0, cy = h / 2.0;
+        float cx = w / 2f, cy = h / 2f;
+        float toIndex = (RadialTableSize - 1) / (float)(_halfDiagonal * _halfDiagonal);
         Parallel.For(0, h, y =>
         {
-            double dy = y + 0.5 - cy;
-            for (int x = 0; x < w; x++)
+            float dy = y + 0.5f - cy;
+            byte* o = outP.At(0, y);
+            byte* oa = outA.IsSet ? outA.At(0, y) : null;
+            byte* of = outF.IsSet ? outF.At(0, y) : null;
+            for (int x = 0; x < w; x++, o += 4)
             {
-                double dx = x + 0.5 - cx;
-                var f = Factors(dx, dy);
-                for (int ch = 0; ch < 3; ch++)
+                float dx = x + 0.5f - cx;
+                float t = MathF.Min((dx * dx + dy * dy) * toIndex, RadialTableSize - 1.001f);
+                int i = (int)t;
+                float frac = t - i;
+                float kg = table[i * 3 + 1] + (table[i * 3 + 4] - table[i * 3 + 1]) * frac;
+                var tapsG = new Taps(cx + dx * kg, cy + dy * kg, w, h);
+                if (sameForAll)
                 {
-                    double k = ch == 0 ? f.Red : ch == 1 ? f.Green : f.Blue;
-                    var t = new Taps(cx + dx * k, cy + dy * k, w, h);
-                    float value = inP.Sample(t, ch);
-                    byte* o = outP.At(x, y);
-                    if (inF.IsSet)
-                    {
-                        // The photo and its fine layer together (their sum is the real value), then split again.
-                        float exact = value + (inF.Sample(t, ch) - Headroom.FineZero) / 255f; // in 8-bit steps
-                        byte rounded = (byte)Math.Clamp(MathF.Round(exact), 0, 255);
-                        o[ch] = rounded;
-                        outF.At(x, y)[ch] = (byte)Math.Clamp(MathF.Round(Headroom.FineZero + (exact - rounded) * 255f), 0, 255);
-                    }
-                    else
-                        o[ch] = (byte)Math.Clamp(MathF.Round(value), 0, 255);
-                    if (inA.IsSet)
-                        outA.At(x, y)[ch] = (byte)Math.Clamp(MathF.Round(inA.Sample(t, ch)), 0, 255);
+                    for (int ch = 0; ch < 3; ch++)
+                        Channel(ch, tapsG, x);
                 }
+                else
+                {
+                    float kr = table[i * 3] + (table[i * 3 + 3] - table[i * 3]) * frac;
+                    float kb = table[i * 3 + 2] + (table[i * 3 + 5] - table[i * 3 + 2]) * frac;
+                    Channel(0, new Taps(cx + dx * kr, cy + dy * kr, w, h), x);
+                    Channel(1, tapsG, x);
+                    Channel(2, new Taps(cx + dx * kb, cy + dy * kb, w, h), x);
+                }
+                o[3] = (byte)(inP.Sample(tapsG, 3) + 0.5f);
+                // premultiplied: a colour never exceeds its alpha
+                if (o[0] > o[3]) o[0] = o[3];
+                if (o[1] > o[3]) o[1] = o[3];
+                if (o[2] > o[3]) o[2] = o[3];
+                if (oa != null)
+                    oa[x * 4 + 3] = 255;
+                if (of != null)
+                    of[x * 4 + 3] = 255;
+            }
+
+            void Channel(int ch, in Taps taps, int x)
+            {
+                float value = inP.Sample(taps, ch);
                 byte* px = outP.At(x, y);
-                px[3] = (byte)Math.Clamp(MathF.Round(inP.Sample(new Taps(cx + dx * f.Green, cy + dy * f.Green, w, h), 3)), 0, 255);
-                for (int ch = 0; ch < 3; ch++)
-                    px[ch] = Math.Min(px[ch], px[3]); // premultiplied: a colour never exceeds its alpha
-                if (outA.IsSet)
-                    outA.At(x, y)[3] = 255;
-                if (outF.IsSet)
-                    outF.At(x, y)[3] = 255;
+                if (inF.IsSet)
+                {
+                    // The photo and its fine layer together (their sum is the real value), then split again.
+                    float exact = value + (inF.Sample(taps, ch) - Headroom.FineZero) / 255f; // in 8-bit steps
+                    int rounded = Math.Clamp((int)MathF.Round(exact), 0, 255);
+                    px[ch] = (byte)rounded;
+                    outF.At(x, y)[ch] = (byte)Math.Clamp((int)MathF.Round(Headroom.FineZero + (exact - rounded) * 255f), 0, 255);
+                }
+                else
+                    px[ch] = (byte)(value + 0.5f);
+                if (inA.IsSet)
+                    outA.At(x, y)[ch] = (byte)(inA.Sample(taps, ch) + 0.5f);
             }
         });
     }
@@ -251,12 +295,12 @@ public sealed class LensCorrection
         public readonly int X0, X1, Y0, Y1;
         public readonly float Fx, Fy;
 
-        public Taps(double sx, double sy, int w, int h)
+        public Taps(float sx, float sy, int w, int h)
         {
-            double u = sx - 0.5, v = sy - 0.5;
-            int x0 = (int)Math.Floor(u), y0 = (int)Math.Floor(v);
-            Fx = (float)(u - x0);
-            Fy = (float)(v - y0);
+            float u = sx - 0.5f, v = sy - 0.5f;
+            int x0 = (int)MathF.Floor(u), y0 = (int)MathF.Floor(v);
+            Fx = u - x0;
+            Fy = v - y0;
             X0 = Math.Clamp(x0, 0, w - 1);
             X1 = Math.Clamp(x0 + 1, 0, w - 1);
             Y0 = Math.Clamp(y0, 0, h - 1);
@@ -274,8 +318,13 @@ public sealed class LensCorrection
 
         public byte* At(int x, int y) => _pixels + (long)y * _rowBytes + x * 4;
 
-        public float Sample(in Taps t, int ch) =>
-            Lerp(Lerp(At(t.X0, t.Y0)[ch], At(t.X1, t.Y0)[ch], t.Fx), Lerp(At(t.X0, t.Y1)[ch], At(t.X1, t.Y1)[ch], t.Fx), t.Fy);
+        public float Sample(in Taps t, int ch)
+        {
+            byte* r0 = _pixels + (long)t.Y0 * _rowBytes, r1 = _pixels + (long)t.Y1 * _rowBytes;
+            float top = r0[t.X0 * 4 + ch] + (r0[t.X1 * 4 + ch] - r0[t.X0 * 4 + ch]) * t.Fx;
+            float bottom = r1[t.X0 * 4 + ch] + (r1[t.X1 * 4 + ch] - r1[t.X0 * 4 + ch]) * t.Fx;
+            return top + (bottom - top) * t.Fy;
+        }
     }
 
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;
