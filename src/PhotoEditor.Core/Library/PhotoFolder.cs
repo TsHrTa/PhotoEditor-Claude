@@ -70,7 +70,7 @@ public static class PhotoFolder
             var (state, _) = EditStore.Load(imagePath, geometry);
             if (state.IsDefault)
                 return thumbnail;
-            var rendered = CpuAdjustmentRenderer.Render(thumbnail, state);
+            var rendered = CpuAdjustmentRenderer.Render(thumbnail, state, Lens.PhotoLens.Of(imagePath));
             var cropped = CpuAdjustmentRenderer.ApplyCrop(rendered, state.Crop);
             if (!ReferenceEquals(cropped, rendered))
                 rendered.Dispose();

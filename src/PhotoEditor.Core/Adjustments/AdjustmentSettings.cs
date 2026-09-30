@@ -92,6 +92,24 @@ public sealed record AdjustmentSettings
     public double DefringeGreenHueLow { get; init; } = 40;
     public double DefringeGreenHueHigh { get; init; } = 60;
 
+    /// <summary>
+    /// Lens profile corrections (lensfun): the lens's distortion and vignetting are removed when the camera and lens
+    /// are found in the profile database. Whole image only.
+    /// </summary>
+    public bool LensProfile { get; init; }
+
+    /// <summary>
+    /// Removes lateral chromatic aberration (colour edges towards the corners): from the lens profile if it has the
+    /// data, otherwise measured in the photo. Whole image only.
+    /// </summary>
+    public bool RemoveChromaticAberration { get; init; }
+
+    /// <summary>Manual distortion −100..100 (positive straightens barrel distortion, negative pincushion). Whole image only.</summary>
+    public double LensDistortion { get; init; }
+
+    /// <summary>Manual lens vignetting −100..100 (positive brightens the corners). Whole image only.</summary>
+    public double LensVignetting { get; init; }
+
     /// <summary>Dehaze −100..100: removes (positive) or adds (negative) haze, based on the photo's haze map. Also in masks.</summary>
     public double Dehaze { get; init; }
 

@@ -65,7 +65,9 @@ public static class SettingsTransfer
             a = a with { SharpenAmount = s.SharpenAmount, SharpenRadius = s.SharpenRadius, SharpenMasking = s.SharpenMasking, DenoiseAmount = s.DenoiseAmount, DeblurAmount = s.DeblurAmount, Soften = s.Soften,
                 NoiseLuminance = s.NoiseLuminance, NoiseColor = s.NoiseColor, DefringePurple = s.DefringePurple, DefringeGreen = s.DefringeGreen,
                 DefringePurpleHueLow = s.DefringePurpleHueLow, DefringePurpleHueHigh = s.DefringePurpleHueHigh,
-                DefringeGreenHueLow = s.DefringeGreenHueLow, DefringeGreenHueHigh = s.DefringeGreenHueHigh };
+                DefringeGreenHueLow = s.DefringeGreenHueLow, DefringeGreenHueHigh = s.DefringeGreenHueHigh,
+                LensProfile = s.LensProfile, RemoveChromaticAberration = s.RemoveChromaticAberration,
+                LensDistortion = s.LensDistortion, LensVignetting = s.LensVignetting };
 
         var result = target with { Adjustments = a };
         if (groups.HasFlag(SettingsGroups.Crop))

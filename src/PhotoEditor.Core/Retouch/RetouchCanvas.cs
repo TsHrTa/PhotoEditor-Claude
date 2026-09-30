@@ -116,6 +116,7 @@ public sealed class RetouchCanvas : IDisposable
             Headroom.Attach(image, new Headroom(HeadroomBitmap, HeadroomScale, Wrap(HeadroomBitmap),
                 FineBitmap, FineBitmap is null ? null : Wrap(FineBitmap)));
         Adjustments.ToneBaseMap.Share(photo, image);
+        Lens.LensVignetting.Attach(image, Lens.LensVignetting.Of(photo));
         Adjustments.HazeMap.Share(photo, image);
         return image;
     }

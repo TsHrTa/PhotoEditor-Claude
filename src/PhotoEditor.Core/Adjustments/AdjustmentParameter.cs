@@ -113,6 +113,12 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter DefringeGreen =
         new(Lens, "Defringe green", 0, 100, s => s.DefringeGreen, (s, v) => s with { DefringeGreen = v }, id: "defringeGreen");
 
+    public static readonly AdjustmentParameter LensDistortion =
+        new(Lens, "Distortion", -100, 100, s => s.LensDistortion, (s, v) => s with { LensDistortion = v }, id: "lensDistortion");
+
+    public static readonly AdjustmentParameter LensVignetting =
+        new(Lens, "Vignetting", -100, 100, s => s.LensVignetting, (s, v) => s with { LensVignetting = v }, id: "lensVignetting");
+
     public static readonly AdjustmentParameter DefringePurpleHueLow =
         new(Lens, "Purple hue from", 0, 100, s => s.DefringePurpleHueLow, (s, v) => s with { DefringePurpleHueLow = v }, defaultValue: 30, id: "defringePurpleHueLow");
 
@@ -146,7 +152,7 @@ public static class AdjustmentParameters
     /// <summary>Parameters that only apply to the whole image (not inside masks).</summary>
     public static readonly IReadOnlyList<AdjustmentParameter> GlobalOnly =
         [DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor,
-         DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh];
+         LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh];
 
     public static readonly IReadOnlyList<AdjustmentParameter> Hsl = CreateHsl();
 
@@ -158,7 +164,7 @@ public static class AdjustmentParameters
         VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
         Texture, Clarity, Dehaze, Soften,
         DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor,
-        DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
+        LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
     ];
 
     /// <summary>Parameter with the given <see cref="AdjustmentParameter.Id"/>, or null.</summary>

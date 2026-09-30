@@ -29,7 +29,7 @@ public static class ImageExporter
     {
         if (IsSameFile(sourcePath, destinationPath))
             throw new InvalidOperationException("The export would overwrite the original photo; choose another file name.");
-        using var rendered = CpuAdjustmentRenderer.Render(original, state);
+        using var rendered = CpuAdjustmentRenderer.Render(original, state, Lens.PhotoLens.Of(sourcePath));
         var cropped = CpuAdjustmentRenderer.ApplyCrop(rendered, state.Crop);
         var oriented = state.Orientation.Apply(cropped);
         var sized = options.LongEdge is { } edge ? Resize(oriented, edge) : oriented;

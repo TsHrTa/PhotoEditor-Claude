@@ -7,7 +7,7 @@ namespace PhotoEditor.Tests.Lens;
 public sealed class LensCorrectionTests
 {
     // Entries copied from the lensfun database (data/db/slr-canon.xml, mil-canon.xml; CC BY-SA 3.0), shortened.
-    private const string Canon = """
+    internal const string Canon = """
         <lensdatabase version="2">
             <mount><name>Canon RF</name><compat>Canon EF</compat></mount>
             <camera><maker>Canon</maker><model>Canon EOS 5D Mark II</model><mount>Canon EF</mount><cropfactor>1</cropfactor></camera>
@@ -168,7 +168,10 @@ public sealed class LensCorrectionTests
         // On an APS-C body (crop 1.6) the photo only reaches 1 / 1.6 of the way to the calibration's corner.
         var apsc = new LensCorrection(600, 400, profile, 1.6).VignettingTerms!;
         Assert.Equal(-0.5460 / (1.6 * 1.6), apsc[0], 3);
-        Assert.Equal(1f / (1 - 0.5460f - 0.2245f - 0.0825f), LensVignetting.Gain(same, 1), 3);
+        Assert.Equal(1f / (1 - 0.5460f - 0.2245f - 0.0825f), LensVignetting.GainFromTerms(same, 1), 3);
+        // Without distortion the table is the formula at each r².
+        var table = new LensCorrection(600, 400, profile, 1).VignettingTable!;
+        Assert.Equal(LensVignetting.GainFromTerms(same, 0.5f), LensVignetting.Gain(table, 0, 0.5f), 2);
     }
 
     [Fact]

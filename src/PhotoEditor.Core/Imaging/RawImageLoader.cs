@@ -19,6 +19,9 @@ public sealed record RawMetadata
 
     /// <summary>Millimetres.</summary>
     public double? FocalLength { get; init; }
+
+    /// <summary>The lens as the camera names it (e.g. "RF24-105mm F4 L IS USM"), if known.</summary>
+    public string? Lens { get; init; }
 }
 
 /// <summary>
@@ -240,6 +243,7 @@ public static class RawImageLoader
             // LibRaw reports 1 (or 0) when the lens does not report the aperture.
             FNumber = Positive("dng:f.number") is > 1 and var f ? f : null,
             FocalLength = Positive("dng:focal.length"),
+            Lens = Text("dng:lens"),
         };
     }
 

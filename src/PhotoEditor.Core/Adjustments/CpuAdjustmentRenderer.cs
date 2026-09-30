@@ -20,14 +20,38 @@ public static class CpuAdjustmentRenderer
     /// adjustments and all masks applied. The crop is not applied (see <see cref="ApplyCrop"/>), but the
     /// vignette follows the crop frame.
     /// </summary>
-    public static SKBitmap Render(SKBitmap source, EditState state)
+    /// <param name="lens">The photo's lens information, for the lens corrections (null = unknown).</param>
+    /// <param name="chromaticAberration">Measured red / blue scales, for "remove chromatic aberration" without profile data.</param>
+    public static SKBitmap Render(SKBitmap source, EditState state, Lens.PhotoLens? lens = null,
+        (double Red, double Blue)? chromaticAberration = null)
     {
-        // Spot removal works on the photo's pixels, before everything else.
-        if (state.Spots.Count > 0)
+        // Lens corrections, then spot removal, work on the photo's pixels, before everything else.
+        var correction = Lens.LensSetup.For(lens ?? Lens.PhotoLens.Unknown, state.Adjustments, source.Width, source.Height,
+            autoCa: chromaticAberration);
+        var corrected = correction?.Apply(source) ?? source;
+        try
         {
-            using var retouched = Retouch.Retouching.Apply(source, state.Spots);
-            return Render(retouched, state with { Spots = [] });
+            var retouched = Retouch.Retouching.Apply(corrected, state.Spots);
+            try
+            {
+                return RenderCorrected(retouched, state, correction?.VignettingTable);
+            }
+            finally
+            {
+                if (!ReferenceEquals(retouched, corrected))
+                    retouched.Dispose();
+            }
         }
+        finally
+        {
+            if (!ReferenceEquals(corrected, source))
+                corrected.Dispose();
+        }
+    }
+
+    /// <summary>Renders a photo whose lens corrections (except the vignetting, <paramref name="lensVignetting"/>) and spots are done.</summary>
+    private static SKBitmap RenderCorrected(SKBitmap source, EditState state, float[]? lensVignetting)
+    {
         using var src = source.ColorType == SKColorType.Rgba8888 && source.AlphaType == SKAlphaType.Premul
             ? null
             : source.Copy(SKColorType.Rgba8888);
@@ -43,6 +67,7 @@ public static class CpuAdjustmentRenderer
         input = sharpened ?? input;
 
         int width = input.Width, height = input.Height;
+        var lensGain = new LensGain(lensVignetting, (float)Math.Clamp(state.Adjustments.LensVignetting, -100, 100) / 100f, width, height);
         var layers = state.Masks
             .Where(m => m.IsActive)
             .Select(m => new MaskLayer(PreparedAdjustments.From(m.Adjustments), MaskRasterizer.RasterizeToBytes(m, width, height)))
@@ -77,7 +102,7 @@ public static class CpuAdjustmentRenderer
                 var extraRow = headroom is null ? default : new ReadOnlySpan<byte>((byte*)extraPtr + (long)y * extraRowBytes, width * 4);
                 var fineRow = finePtr == 0 ? default : new ReadOnlySpan<byte>((byte*)finePtr + (long)y * fineRowBytes, width * 4);
                 ProcessRow(inRow, outRow, p, layers, y, frame, soften, haze, height, detailFilters, toneBase, originalPixels,
-                    extraRow, headroom?.Scale ?? 0f, fineRow);
+                    extraRow, headroom?.Scale ?? 0f, fineRow, lensGain);
             }
         });
         return result;
@@ -88,11 +113,13 @@ public static class CpuAdjustmentRenderer
 
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
     public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
-        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null, null, default, default, 0f, default);
+        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null, null, default, default, 0f, default,
+            new LensGain(null, p.LensVignettingAmount, input.Length / 4, 1));
 
     private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y,
         in VignetteMath.Frame frame, Softening? soften, HazeMap? haze, int height, DetailFilters? detailFilters,
-        ToneBaseMap? toneBase, ToneSource originalPixels, ReadOnlySpan<byte> headroom, float headroomScale, ReadOnlySpan<byte> fine)
+        ToneBaseMap? toneBase, ToneSource originalPixels, ReadOnlySpan<byte> headroom, float headroomScale, ReadOnlySpan<byte> fine,
+        in LensGain lensGain)
     {
         int width = input.Length / 4;
         // The global pass hands values up to PassLimit to the masks; the last pass clips at white.
@@ -172,6 +199,15 @@ public static class CpuAdjustmentRenderer
                 r = ColorMath.SrgbToLinear(Math.Min(1f, input[i] * inv / 255f));
                 g = ColorMath.SrgbToLinear(Math.Min(1f, input[i + 1] * inv / 255f));
                 b = ColorMath.SrgbToLinear(Math.Min(1f, input[i + 2] * inv / 255f));
+            }
+
+            // Lens vignetting (profile removed, manual applied), in linear light.
+            if (lensGain.IsActive)
+            {
+                float gain = lensGain.At(i / 4, y);
+                r *= gain;
+                g *= gain;
+                b *= gain;
             }
 
             // Transmission at this pixel, sampled once when a pass dehazes.
@@ -278,6 +314,20 @@ public static class CpuAdjustmentRenderer
                 _hasTexture = true;
             }
             return _texture;
+        }
+    }
+
+    /// <summary>Lens vignetting of the whole image: r = 1 at the corner.</summary>
+    private readonly struct LensGain(float[]? table, float manual, int width, int height)
+    {
+        private readonly float _invHalfDiagonal2 = 4f / ((float)width * width + (float)height * height);
+
+        public bool IsActive => table is not null || manual != 0f;
+
+        public float At(int x, int y)
+        {
+            float dx = x + 0.5f - width / 2f, dy = y + 0.5f - height / 2f;
+            return Lens.LensVignetting.Gain(table, manual, (dx * dx + dy * dy) * _invHalfDiagonal2);
         }
     }
 

@@ -25,6 +25,7 @@ public static class Retouching
         if (spots.Count == 0)
             return source;
         var result = source.Copy(SKColorType.Rgba8888) ?? throw new InvalidOperationException("Could not copy the photo.");
+        Lens.LensVignetting.Attach(result, Lens.LensVignetting.Of(source));
         foreach (var spot in spots)
             ApplySpotCore(result, spot);
         if (Headroom.Of(source) is { } headroom && headroom.Width == source.Width && headroom.Height == source.Height)

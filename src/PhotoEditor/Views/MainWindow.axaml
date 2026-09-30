@@ -62,7 +62,7 @@
                             <CheckBox Content="Color (white balance, vibrance, saturation)" IsChecked="{Binding CopyColor}" />
                             <CheckBox Content="HSL" IsChecked="{Binding CopyHsl}" />
                             <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />
-                            <CheckBox Content="Detail (sharpening, soften, AI)" IsChecked="{Binding CopyDetail}" />
+                            <CheckBox Content="Detail and lens corrections" IsChecked="{Binding CopyDetail}" />
                             <CheckBox Content="Crop and straighten" IsChecked="{Binding CopyCrop}" />
                             <CheckBox Content="Masks" IsChecked="{Binding CopyMasks}" />
                             <CheckBox Content="Spot removal" IsChecked="{Binding CopySpots}" />
@@ -211,7 +211,7 @@
                                         <CheckBox Content="Color" IsChecked="{Binding CopyColor}" />
                                         <CheckBox Content="HSL" IsChecked="{Binding CopyHsl}" />
                                         <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />
-                                        <CheckBox Content="Detail (sharpening, soften, AI)" IsChecked="{Binding CopyDetail}" />
+                                        <CheckBox Content="Detail and lens corrections" IsChecked="{Binding CopyDetail}" />
                                         <CheckBox Content="Masks (their shapes and sliders)" IsChecked="{Binding CopyMasks}" />
                                         <Button Content="Save" HorizontalAlignment="Right" Click="OnSavePresetClick" />
                                     </StackPanel>

@@ -32,6 +32,8 @@ public sealed class PreviewImage
         var full = SKImage.FromBitmap(original);
         var headroom = Headroom.Of(original);
         Headroom.Attach(full, headroom);
+        var vignetting = Lens.LensVignetting.Of(original);
+        Lens.LensVignetting.Attach(full, vignetting);
         var (w, h) = PreviewSize(original.Width, original.Height, maxPreviewSize);
         if (w == original.Width && h == original.Height)
             return new PreviewImage(full, full);
@@ -40,6 +42,7 @@ public sealed class PreviewImage
         small.SetImmutable();
         var preview = SKImage.FromBitmap(small);
         Headroom.Attach(preview, headroom?.Resized(w, h));
+        Lens.LensVignetting.Attach(preview, vignetting);
         return new PreviewImage(full, preview);
     }
 

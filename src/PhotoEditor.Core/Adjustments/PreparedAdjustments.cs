@@ -37,7 +37,8 @@ public readonly record struct PreparedAdjustments(
     float GreenHueFrom,
     float GreenHueTo,
     float TextureAmount,
-    float ClarityAmount)
+    float ClarityAmount,
+    float LensVignettingAmount)
 {
     /// <summary>Hue (degrees) of Lightroom's purple / green defringe range ends 0 and 100.</summary>
     public const float PurpleHue0 = 240f, PurpleHue100 = 350f, GreenHue0 = 40f, GreenHue100 = 190f;
@@ -160,7 +161,8 @@ public readonly record struct PreparedAdjustments(
             GreenHueFrom: HueRange(s.DefringeGreenHueLow, s.DefringeGreenHueHigh, GreenHue0, GreenHue100).From,
             GreenHueTo: HueRange(s.DefringeGreenHueLow, s.DefringeGreenHueHigh, GreenHue0, GreenHue100).To,
             TextureAmount: (float)Math.Clamp(s.Texture, -100, 200) / 100f * TextureStrengthAt100,
-            ClarityAmount: (float)Math.Clamp(s.Clarity, -100, 200) / 100f * ClarityStrengthAt100);
+            ClarityAmount: (float)Math.Clamp(s.Clarity, -100, 200) / 100f * ClarityStrengthAt100,
+            LensVignettingAmount: (float)Math.Clamp(s.LensVignetting, -100, 100) / 100f);
     }
 
     /// <summary>

@@ -6,7 +6,7 @@ namespace PhotoEditor.Core.Lens;
 /// <summary>
 /// The lens corrections of one photo, in its pixels: distortion (profile and / or manual) and lateral chromatic
 /// aberration move pixels, so they are applied by resampling the photo (<see cref="Apply"/>); lens vignetting only
-/// changes brightness, so the renderers apply it as a gain in linear light (<see cref="VignettingTerms"/>), where
+/// changes brightness, so the renderers apply it as a gain in linear light (<see cref="VignettingTable"/>), where
 /// brightened corners keep their precision.
 /// <para>
 /// The corrected photo is enlarged just enough (<see cref="Zoom"/>) that no empty border shows (like Lightroom's
@@ -132,8 +132,8 @@ public sealed class LensCorrection
     }
 
     /// <summary>
-    /// Lens vignetting correction for the renderers: the photo's brightness is divided by
-    /// 1 + k1 r² + k2 r⁴ + k3 r⁶ with r = 1 at the corner of the corrected photo (null = none).
+    /// The profile's vignetting terms in the photo's units: brightness is divided by 1 + k1 r² + k2 r⁴ + k3 r⁶ with
+    /// r = 1 at the corner of the (uncorrected) photo; null without data.
     /// </summary>
     public float[]? VignettingTerms
     {
@@ -141,27 +141,50 @@ public sealed class LensCorrection
         {
             if (Profile?.Vignetting is not { } k)
                 return null;
-            // lensfun's r = 1 is the calibration sensor's corner; the corrected photo's corner is
-            // (half diagonal / zoom) of the original photo away from the centre.
-            double q = _halfDiagonal / Zoom * _mmPerPixel / Profile.VignettingUnitMm;
+            // lensfun's r = 1 is the calibration sensor's corner.
+            double q = _halfDiagonal * _mmPerPixel / Profile.VignettingUnitMm;
             return [(float)(k[0] * q * q), (float)(k[1] * Math.Pow(q, 4)), (float)(k[2] * Math.Pow(q, 6))];
         }
     }
 
+    /// <summary>Entries of <see cref="VignettingTable"/> (r² from 0 to 1).</summary>
+    public const int VignettingTableSize = 256;
+
     /// <summary>
-    /// The corrected photo (RGBA8888, same size), with its <see cref="Headroom"/> layers corrected the same way and
-    /// its <see cref="LensVignetting"/> attached; <paramref name="source"/> itself when nothing moves (then only the
-    /// vignetting is attached to it).
+    /// The vignetting gain for the corrected photo by r² (r = 1 at its corner), as <see cref="VignettingTableSize"/>
+    /// half-float-rounded entries: each output radius is traced back to where its pixels come from in the photo
+    /// (distortion is radial), so steep vignetting near the corners is removed exactly. Null without data.
+    /// </summary>
+    public float[]? VignettingTable
+    {
+        get
+        {
+            if (VignettingTerms is not { } k)
+                return null;
+            var table = new float[VignettingTableSize];
+            double angle = Math.Atan2(Height, Width); // along the diagonal
+            for (int i = 0; i < VignettingTableSize; i++)
+            {
+                double r = Math.Sqrt((double)i / (VignettingTableSize - 1)) * _halfDiagonal;
+                double green = Factors(r * Math.Cos(angle), r * Math.Sin(angle)).Green;
+                double source = r * green / _halfDiagonal;
+                table[i] = (float)(Half)LensVignetting.GainFromTerms(k, (float)(source * source));
+            }
+            return table;
+        }
+    }
+
+    /// <summary>
+    /// The corrected photo (RGBA8888, same size), with its <see cref="Headroom"/> layers corrected the same way;
+    /// <paramref name="source"/> itself when nothing moves. The vignetting is left to the renderers
+    /// (<see cref="VignettingTable"/>).
     /// </summary>
     public SKBitmap Apply(SKBitmap source)
     {
         if (source.Width != Width || source.Height != Height)
             throw new ArgumentException("The correction was made for another size.", nameof(source));
         if (IsGeometryIdentity)
-        {
-            LensVignetting.Attach(source, VignettingTerms);
             return source;
-        }
         using var converted = source.ColorType == SKColorType.Rgba8888 ? null : source.Copy(SKColorType.Rgba8888);
         var photo = converted ?? source;
         var headroom = Headroom.Of(source) is { } h && h.Width == Width && h.Height == Height ? h : null;
@@ -171,7 +194,6 @@ public sealed class LensCorrection
         Warp(photo, headroom?.Bitmap, headroom?.Fine, result, above, fine);
         if (headroom is not null)
             Headroom.Attach(result, new Headroom(above!, headroom.Scale, fine));
-        LensVignetting.Attach(result, VignettingTerms);
         return result;
     }
 
@@ -260,8 +282,8 @@ public sealed class LensCorrection
 }
 
 /// <summary>
-/// Lens vignetting correction terms attached to a corrected photo (see <see cref="LensCorrection.VignettingTerms"/>),
-/// read by the renderers.
+/// The lens vignetting gain table (<see cref="LensCorrection.VignettingTable"/>) attached to a photo image the
+/// viewer shows, read by the shader; and the gain formula both renderers use.
 /// </summary>
 public static class LensVignetting
 {
@@ -269,12 +291,30 @@ public static class LensVignetting
 
     public static float[]? Of(object? photo) => photo is not null && Attached.TryGetValue(photo, out var k) ? k : null;
 
-    public static void Attach(object photo, float[]? terms)
+    public static void Attach(object photo, float[]? table)
     {
-        if (terms is not null)
-            Attached.AddOrUpdate(photo, terms);
+        if (table is not null)
+            Attached.AddOrUpdate(photo, table);
     }
 
-    /// <summary>The brightness factor that removes the vignetting at <paramref name="r2"/> = r² (r = 1 at the corner).</summary>
-    public static float Gain(float[] k, float r2) => 1f / MathF.Max(1f + k[0] * r2 + k[1] * r2 * r2 + k[2] * r2 * r2 * r2, 0.05f);
+    /// <summary>
+    /// The brightness factor at <paramref name="r2"/> = r² (r = 1 at the corner): the profile's vignetting removed
+    /// (<paramref name="table"/>, interpolated linearly like a texture; null = none) and the manual vignetting
+    /// (−1..1, ±1 stop at the corner) applied. Mirrored in the shader.
+    /// </summary>
+    public static float Gain(float[]? table, float manual, float r2)
+    {
+        float gain = 1f;
+        if (table is not null)
+        {
+            float t = Math.Clamp(r2, 0f, 1f) * (table.Length - 1);
+            int i = Math.Min((int)t, table.Length - 2);
+            gain = table[i] + (table[i + 1] - table[i]) * (t - i);
+        }
+        return manual == 0f ? gain : gain * MathF.Pow(2f, manual * r2);
+    }
+
+    /// <summary>1 / (1 + k1 r² + k2 r⁴ + k3 r⁶) (limited to 20×).</summary>
+    public static float GainFromTerms(float[] k, float r2) =>
+        1f / MathF.Max(1f + k[0] * r2 + k[1] * r2 * r2 + k[2] * r2 * r2 * r2, 0.05f);
 }
