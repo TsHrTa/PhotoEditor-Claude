@@ -25,9 +25,10 @@ public sealed record RawMetadata
 }
 
 /// <summary>
-/// Decodes camera RAW files (Canon CR3/CR2, Nikon NEF, Sony ARW, DNG, …) with LibRaw (Sdcb.LibRaw), with highlight
-/// reconstruction so clipped skies keep their shading; Magick.NET's LibRaw is the fallback. LibRaw demosaics with the
-/// camera white balance into sRGB and rotates the pixels upright.
+/// Decodes camera RAW files (Canon CR3/CR2, Nikon NEF, Sony ARW, DNG, …) with LibRaw (Sdcb.LibRaw) and renders them
+/// like Lightroom: clipped highlights rebuilt from the channels that weren't clipped, a fixed base curve with a soft
+/// highlight shoulder (<see cref="Adjustments.RawBaseCurve"/>), everything above white kept as headroom. Upright.
+/// Files it fails on fall back to Magick.NET's LibRaw with LibRaw's own look (<see cref="Develop"/>).
 /// </summary>
 public static class RawImageLoader
 {
@@ -41,9 +42,10 @@ public static class RawImageLoader
         Extensions.Contains(Path.GetExtension(path).ToLowerInvariant());
 
     /// <summary>
-    /// PPG demosaicing: 2.5× faster than LibRaw's default (AHD) — 1.4 s instead of 3.7 s for a 21 MP CR2 on a
-    /// 4-core machine — and visually the same at 100 % on real photos. Auto-brightening is off: LibRaw would
-    /// clip the brightest 1 % of the photo; <see cref="Develop"/> brightens the same way and keeps what goes above white.
+    /// The fallback (Magick.NET). PPG demosaicing: 2.5× faster than LibRaw's default (AHD) — 1.4 s instead of 3.7 s
+    /// for a 21 MP CR2 on a 4-core machine — and visually the same at 100 % on real photos. Auto-brightening is off:
+    /// LibRaw would clip the brightest 1 % of the photo; <see cref="Develop"/> brightens the same way and keeps what
+    /// goes above white.
     /// </summary>
     private static MagickReadSettings ReadSettings
     {
@@ -78,60 +80,170 @@ public static class RawImageLoader
     }
 
     /// <summary>
-    /// LibRaw directly, with highlight reconstruction (mode 5, "rebuild"). LibRaw's default (mode 0) scales the
-    /// channels up for white balance and clips at the top, so red / blue lose everything above the level where
-    /// green is still fine: bright clouds became flat white although the sensor had their detail. With
-    /// reconstruction the multipliers are scaled down (nothing clips before the sensor does) and areas where a
-    /// channel did clip on the sensor are rebuilt from the others; <see cref="Develop"/> keeps it all as headroom.
+    /// LibRaw directly, rendered like Lightroom rather than like LibRaw's default output. LibRaw only demosaics:
+    /// linear camera RGB, white-balanced, with nothing clipped before the sensor did ("unclip"). Then
+    /// <see cref="DevelopSensor"/> rebuilds the channels the sensor clipped from the ones it didn't, converts to sRGB
+    /// and applies a fixed base rendering (<see cref="Adjustments.RawBaseCurve"/>) instead of LibRaw's per-photo
+    /// auto-brightening.
     /// </summary>
     private static SKBitmap LoadWithLibRaw(string path)
     {
         using var context = Sdcb.LibRaw.RawContext.OpenFile(path);
         context.Unpack();
-        context.HighlightMode = LibRawHighlightMode;
-        context.AutoBright = false;
-        context.OutputBitsPerSample = 16;
-        context.DemosaicAlgorithm = Sdcb.LibRaw.DemosaicAlgorithm.PatternedPixelGrouping;
-        context.DcrawProcess();
+        context.DcrawProcess(o =>
+        {
+            o.OutputColor = 0; // camera RGB: the highlights are rebuilt before the colour matrix mixes the channels
+            o.Gamma[0] = 1;
+            o.Gamma[1] = 1;
+            o.HighlightMode = 1; // channel multipliers normalised by the largest: nothing clips before the sensor
+            o.NoAutoBright = true;
+            o.OutputBps = 16;
+            o.UserQual = Sdcb.LibRaw.DemosaicAlgorithm.PatternedPixelGrouping;
+        });
+        var multipliers = context.PreMultipler.Take(3).ToArray();
+        if (multipliers.Length != 3 || multipliers.Any(m => !(m > 0)))
+            throw new InvalidDataException("LibRaw gave no white balance multipliers");
+        var matrix = new float[9];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                matrix[i * 3 + j] = context.RgbCamera[i, j];
         using var image = context.MakeDcrawMemoryImage(); // flip applied: upright
         if (image.Channels != 3 || image.Bits != 16)
             throw new InvalidDataException($"Unexpected LibRaw output ({image.Channels} channels, {image.Bits} bits)");
-        var rgb = MemoryMarshal.Cast<byte, ushort>(image.AsSpan<byte>()).ToArray();
-        var multipliers = context.PreMultipler.Take(3).Where(m => m > 0).ToArray();
-        if (multipliers.Length == 3)
-            NeutralizeClipped(rgb, multipliers.Min() / multipliers.Max());
-        return Develop(rgb, image.Width, image.Height);
+        var rgb = MemoryMarshal.Cast<byte, ushort>(image.AsSpan<byte>());
+        float max = multipliers.Max();
+        var clip = multipliers.Select(m => 65535f * m / max).ToArray();
+        return DevelopSensor(rgb, image.Width, image.Height, clip, matrix);
+    }
+
+    /// <summary>The base rendering (<see cref="Adjustments.RawBaseCurve"/>), scene-linear to display-linear.</summary>
+    public static float BaseCurve(float x) => Adjustments.RawBaseCurve.Apply(x);
+
+    /// <summary>
+    /// Rebuilds the channels the sensor clipped (<paramref name="rgb"/>: white-balanced camera RGB, channel c clipped
+    /// at <paramref name="clip"/>[c]). Clipped highlights are nearly always neutral or pale, so a clipped channel is
+    /// raised towards the average of the channels that weren't clipped (each weighted by how far it is from its own
+    /// clip level) — their texture carries over, instead of a flat plateau at the clip level (which also tints:
+    /// green clips first, so clipped white turned pink). Blended in from 80 % of the clip level (demosaicing smears
+    /// the clip a little); only ever raises; where every channel clipped, all go to the brightest.
+    /// </summary>
+    public static void ReconstructHighlights(Span<float> rgb, ReadOnlySpan<float> clip)
+    {
+        Span<float> t = stackalloc float[3];
+        float sum = 0, weight = 0, brightest = 0;
+        bool any = false;
+        for (int c = 0; c < 3; c++)
+        {
+            float f = Math.Clamp((rgb[c] / clip[c] - 0.8f) / 0.17f, 0f, 1f);
+            t[c] = f * f * (3 - 2 * f);
+            any |= t[c] > 0;
+            brightest = Math.Max(brightest, rgb[c]);
+            sum += (1 - t[c]) * rgb[c];
+            weight += 1 - t[c];
+        }
+        if (!any)
+            return;
+        float target = weight > 1e-3f ? sum / weight : brightest;
+        for (int c = 0; c < 3; c++)
+            if (target > rgb[c])
+                rgb[c] += t[c] * (target - rgb[c]);
     }
 
     /// <summary>
-    /// Where the sensor clipped, the reconstruction can't know the clipped channel's true value: it stays near its
-    /// clip level while the others keep rising, which tints clipped cloud cores pink (green clips first). With
-    /// highlight reconstruction LibRaw scales the channels by pre_mul / max(pre_mul), so a neutral highlight the
-    /// sensor clipped has all channels at or above the lowest channel's clip level, min(pre_mul) (linear, 0..1).
-    /// Pixels whose darkest channel approaches it are blended towards neutral at their brightest channel
-    /// (smoothly from 85 % of that level, fully at it); coloured pixels (one channel low) are untouched.
+    /// Adobe's hue-preserving RGB tone curve: the curve is applied to the largest and smallest channel and the middle
+    /// one is placed between them as before, so a bright colour keeps its hue (a curve per channel shifts it).
     /// </summary>
-    public static void NeutralizeClipped(ushort[] rgb, double clipLevel)
+    private static void ToneRgb(ref float r, ref float g, ref float b)
     {
-        if (!(clipLevel > 0 && clipLevel < 1))
-            return;
-        float to = (float)(ToCurve(clipLevel) * 65535), from = (float)(ToCurve(clipLevel * 0.85) * 65535);
-        Parallel.For(0, rgb.Length / 3, i =>
+        ref float hi = ref r, mid = ref g, lo = ref b;
+        if (r >= g)
         {
-            int k = i * 3;
-            float low = Math.Min(rgb[k], Math.Min(rgb[k + 1], rgb[k + 2]));
-            if (low <= from)
-                return;
-            float t = Math.Clamp((low - from) / (to - from), 0f, 1f);
-            float w = t * t * (3 - 2 * t);
-            int top = Math.Max(rgb[k], Math.Max(rgb[k + 1], rgb[k + 2]));
-            for (int c = 0; c < 3; c++)
-                rgb[k + c] = (ushort)Math.Round(rgb[k + c] + (top - rgb[k + c]) * w);
-        });
+            if (g >= b) { hi = ref r; mid = ref g; lo = ref b; }
+            else if (r >= b) { hi = ref r; mid = ref b; lo = ref g; }
+            else { hi = ref b; mid = ref r; lo = ref g; }
+        }
+        else
+        {
+            if (r >= b) { hi = ref g; mid = ref r; lo = ref b; }
+            else if (g >= b) { hi = ref g; mid = ref b; lo = ref r; }
+            else { hi = ref b; mid = ref g; lo = ref r; }
+        }
+        float h = BaseCurve(hi), l = BaseCurve(lo);
+        float m = hi > lo ? l + (h - l) * (mid - lo) / (hi - lo) : h;
+        hi = h;
+        mid = m;
+        lo = l;
     }
 
-    /// <summary>LibRaw's highlight mode: 5 = rebuild (0 clip, 1 unclip — pink where green clipped, 2 blend).</summary>
-    public const int LibRawHighlightMode = 5;
+    /// <summary>Largest scene value (× the sensor's white) the headroom is sized for; brighter stays at its top.</summary>
+    private const float MaxSceneValue = 8;
+
+    /// <summary>
+    /// Turns LibRaw's linear, white-balanced camera RGB into the photo: highlights rebuilt, camera → linear sRGB
+    /// (<paramref name="matrix"/>, row-major), scaled so a neutral clips at 1 (the lowest channel clip level), the
+    /// <see cref="BaseCurve"/> (hue-preserving), sRGB-encoded; above white and the 8-bit rounding go into the
+    /// <see cref="Headroom"/> layers as in <see cref="Develop"/>.
+    /// </summary>
+    public static SKBitmap DevelopSensor(ReadOnlySpan<ushort> rgb, int width, int height, float[] clip, float[] matrix)
+    {
+        float white = clip.Min();
+        float scale = ColorMathEncode(BaseCurve(MaxSceneValue)) - 1;
+        var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var info = new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque);
+        var headroom = new SKBitmap(info);
+        var fine = new SKBitmap(info);
+        nint photoPtr = bitmap.GetPixels(), extraPtr = headroom.GetPixels(), finePtr = fine.GetPixels();
+        unsafe
+        {
+            fixed (ushort* source = rgb)
+            {
+                nint sourcePtr = (nint)source;
+                Parallel.For(0, height, y =>
+                {
+                    ushort* src = (ushort*)sourcePtr + (long)y * width * 3;
+                    byte* p = (byte*)photoPtr + (long)y * bitmap.RowBytes;
+                    byte* h = (byte*)extraPtr + (long)y * headroom.RowBytes;
+                    byte* f = (byte*)finePtr + (long)y * fine.RowBytes;
+                    Span<float> v = stackalloc float[3];
+                    Span<float> o = stackalloc float[3];
+                    for (int x = 0; x < width; x++)
+                    {
+                        v[0] = src[x * 3];
+                        v[1] = src[x * 3 + 1];
+                        v[2] = src[x * 3 + 2];
+                        ReconstructHighlights(v, clip);
+                        for (int c = 0; c < 3; c++)
+                            o[c] = Math.Clamp((matrix[c * 3] * v[0] + matrix[c * 3 + 1] * v[1] + matrix[c * 3 + 2] * v[2]) / white,
+                                0f, MaxSceneValue);
+                        ToneRgb(ref o[0], ref o[1], ref o[2]);
+                        for (int c = 0; c < 3; c++)
+                        {
+                            float e = ColorMathEncode(o[c]);
+                            int k = x * 4 + c;
+                            if (e >= 1)
+                            {
+                                p[k] = 255;
+                                h[k] = (byte)Math.Clamp(MathF.Round((e - 1) / scale * 255), 0, 255);
+                                f[k] = Headroom.FineZero;
+                            }
+                            else
+                            {
+                                byte b = (byte)MathF.Round(e * 255);
+                                p[k] = b;
+                                h[k] = 0;
+                                f[k] = (byte)Math.Clamp(MathF.Round(Headroom.FineZero + (e - b / 255f) / Headroom.FineStep), 0, 255);
+                            }
+                        }
+                        p[x * 4 + 3] = h[x * 4 + 3] = f[x * 4 + 3] = 255;
+                    }
+                });
+            }
+        }
+        Headroom.Attach(bitmap, new Headroom(headroom, scale, fine) { BaseCurve = true });
+        return bitmap;
+    }
+
+    private static float ColorMathEncode(float linear) => Adjustments.ColorMath.LinearToSrgb(linear);
 
     private static SKBitmap LoadWithMagick(string path)
     {
@@ -176,7 +288,8 @@ public static class RawImageLoader
         v < CurveBreak * 4.5 ? v / 4.5 : Math.Pow((v + CurveOffset) / (1 + CurveOffset), 1 / 0.45);
 
     /// <summary>
-    /// Turns LibRaw's un-brightened 16-bit RGB into the photo: brightened like LibRaw's auto-brightening (the 99th
+    /// The fallback's development (<see cref="LoadWithMagick"/>). Turns LibRaw's un-brightened 16-bit RGB into the
+    /// photo: brightened like LibRaw's auto-brightening (the 99th
     /// percentile of the brightest channel becomes white), with the values above white and the fraction of an
     /// 8-bit step below it kept in a <see cref="Headroom"/> attached to the result.
     /// </summary>

@@ -38,7 +38,7 @@ public static partial class Retouching
                 if (fine is not null)
                     ApplySpot(fine, spot, SpotLayer.Fine);
             }
-            Headroom.Attach(result, new Headroom(extra, headroom.Scale, fine));
+            Headroom.Attach(result, new Headroom(extra, headroom.Scale, fine) { BaseCurve = headroom.BaseCurve });
         }
         return result;
     }

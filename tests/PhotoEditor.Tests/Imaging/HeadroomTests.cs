@@ -78,7 +78,7 @@ public sealed class HeadroomTests
     /// 160 × 120: the top half a blown sky (255 in the photo) whose real brightness, with cloud texture, is in the
     /// headroom (up to ~1 stop above white); the bottom half mid grey.
     /// </summary>
-    private static SKBitmap BlownSky(bool withHeadroom = true)
+    private static SKBitmap BlownSky(bool withHeadroom = true, bool baseCurve = false)
     {
         var photo = new SKBitmap(new SKImageInfo(160, 120, SKColorType.Rgba8888, SKAlphaType.Premul));
         var extra = new SKBitmap(new SKImageInfo(160, 120, SKColorType.Rgba8888, SKAlphaType.Opaque));
@@ -92,7 +92,7 @@ public sealed class HeadroomTests
                 extra.SetPixel(x, y, new SKColor(e, e, sky ? (byte)Math.Min(255, e + 30) : (byte)0));
             }
         if (withHeadroom)
-            Headroom.Attach(photo, new Headroom(extra, 0.35f));
+            Headroom.Attach(photo, new Headroom(extra, 0.35f) { BaseCurve = baseCurve });
         else
             extra.Dispose();
         return photo;
@@ -155,11 +155,76 @@ public sealed class HeadroomTests
     [MemberData(nameof(ParityCases))]
     public void ShaderMatchesCpu_WithHeadroom(string name, EditState state)
     {
-        using var src = BlownSky();
-        using var cpu = CpuAdjustmentRenderer.Render(src, state);
-        using var gpu = AdjustmentShader.RenderRaster(src, state);
-        int diff = TestImages.MaxDifference(cpu, gpu, out var at);
-        Assert.True(diff <= 2, $"{name}: max channel difference {diff} at {at}");
+        foreach (bool baseCurve in new[] { false, true })
+        {
+            using var src = BlownSky(baseCurve: baseCurve);
+            using var cpu = CpuAdjustmentRenderer.Render(src, state);
+            using var gpu = AdjustmentShader.RenderRaster(src, state);
+            int diff = TestImages.MaxDifference(cpu, gpu, out var at);
+            Assert.True(diff <= 2, $"{name}, base curve {baseCurve}: max channel difference {diff} at {at}");
+        }
+    }
+
+    [Fact]
+    public void RawBaseCurve_InvertsExactly()
+    {
+        for (float x = 0; x <= 8; x += x < 0.05f ? 0.001f : 0.01f)
+            Assert.Equal(x, RawBaseCurve.Invert(RawBaseCurve.Apply(x)), 3e-4f * Math.Max(1, x));
+    }
+
+    [Fact]
+    public void RawExposure_BrightensAlongTheShoulder_AndKeepsHue()
+    {
+        // Midtones: about the same as a plain gain.
+        float r = 0.1f, g = 0.1f, b = 0.1f;
+        RawBaseCurve.ApplyExposure(ref r, ref g, ref b, 2);
+        Assert.InRange(r, 0.17f, 0.2f);
+        Assert.Equal(r, g);
+        // A bright cloud (display 0.7): +1 stop stays near white instead of going 1 stop above it (1.4).
+        float c = 0.7f, c2 = 0.7f, c3 = 0.7f;
+        RawBaseCurve.ApplyExposure(ref c, ref c2, ref c3, 2);
+        Assert.InRange(c, 0.85f, 1.1f);
+        // −1 stop is the exact inverse of +1 stop.
+        RawBaseCurve.ApplyExposure(ref c, ref c2, ref c3, 0.5f);
+        Assert.Equal(0.7f, c, 4);
+        // A colour keeps the order and relative place of its channels.
+        float cr = 0.6f, cg = 0.4f, cb = 0.2f;
+        RawBaseCurve.ApplyExposure(ref cr, ref cg, ref cb, 2);
+        Assert.True(cr > cg && cg > cb);
+        Assert.Equal(0.5f, (cg - cb) / (cr - cb), 4);
+    }
+
+    [Fact]
+    public void RawPhoto_ExposureDoesNotBlowTheSky()
+    {
+        // A bright textured sky just below white (top) over mid grey, once as a JPEG (plain gain) and once as a RAW
+        // rendered with the base curve.
+        SKBitmap Photo(bool raw)
+        {
+            var photo = new SKBitmap(new SKImageInfo(160, 120, SKColorType.Rgba8888, SKAlphaType.Premul));
+            for (int y = 0; y < 120; y++)
+                for (int x = 0; x < 160; x++)
+                {
+                    byte v = y < 60 ? (byte)(225 + 20 * Math.Sin(x * 0.9) * Math.Cos(y * 0.8)) : (byte)110;
+                    photo.SetPixel(x, y, new SKColor(v, v, v));
+                }
+            if (raw)
+                Headroom.Attach(photo, new Headroom(new SKBitmap(new SKImageInfo(160, 120, SKColorType.Rgba8888, SKAlphaType.Opaque)), 0.3f)
+                    { BaseCurve = true });
+            return photo;
+        }
+        using var plain = Photo(false);
+        using var raw = Photo(true);
+        var settings = new AdjustmentSettings { Exposure = 1 };
+        using var a = CpuAdjustmentRenderer.Render(plain, settings);
+        using var b = CpuAdjustmentRenderer.Render(raw, settings);
+        // Grey (bottom): about the same brightening.
+        Assert.InRange(b.GetPixel(80, 100).Red - a.GetPixel(80, 100).Red, -25, 10);
+        // The sky: blown with a plain gain, still shaded below white with the base curve.
+        Assert.True(SkyStats(a).Std < 1, $"plain {SkyStats(a).Std:0.0}");
+        Assert.True(SkyStats(b).Std > 3 && SkyStats(b).Mean < 252, $"raw {SkyStats(b).Mean:0} ± {SkyStats(b).Std:0.0}");
+        using var gpu = AdjustmentShader.RenderRaster(raw, new EditState { Adjustments = settings });
+        Assert.True(TestImages.MaxDifference(b, gpu, out var at) <= 2, $"shader differs at {at}");
     }
 
     [Fact]
@@ -243,57 +308,106 @@ public sealed class HeadroomTests
         Assert.True(ErrorOf(eightBit) >= 4 && JumpOf(eightBit) >= 6, $"8-bit: error {ErrorOf(eightBit)}, jump {JumpOf(eightBit)}");
     }
 
-    /// <summary>Real Canon CR2 when PHOTOEDITOR_RAW points to one: the photo matches LibRaw's own brightened output.</summary>
+    /// <summary>
+    /// Real Canon CR2 when PHOTOEDITOR_RAW points to one: the base rendering is about as bright as the camera's own
+    /// JPEG (in the lit parts within a stop) and keeps highlights above white.
+    /// </summary>
     [Fact]
-    public void RealRaw_LooksAsLibRawsOutput_WithHeadroom()
+    public void RealRaw_IsAboutAsBrightAsTheCameraJpeg()
     {
         var path = Environment.GetEnvironmentVariable("PHOTOEDITOR_RAW");
         if (path is null || !File.Exists(path))
             return;
         using var photo = RawImageLoader.Load(path);
         Assert.NotNull(Headroom.Of(photo));
-        var settings = new ImageMagick.MagickReadSettings();
-        settings.SetDefines(new ImageMagick.Formats.DngReadDefines { InterpolationQuality = ImageMagick.Formats.DngInterpolation.Ppg });
-        using var libraw = new ImageMagick.MagickImage(path, settings);
-        // LibRaw directly crops a few pixels less / more than through ImageMagick, and keeps the highlights LibRaw's
-        // default clips: compare the brightness at a small size, over the pixels ImageMagick's output didn't clip.
-        Assert.InRange(photo.Width, (int)libraw.Width - 40, (int)libraw.Width + 40);
-        Assert.InRange(photo.Height, (int)libraw.Height - 40, (int)libraw.Height + 40);
-        const int w = 96, h = 64;
-        libraw.Resize(new ImageMagick.MagickGeometry(w, h) { IgnoreAspectRatio = true });
-        var reference = libraw.GetPixelsUnsafe().ToShortArray("RGB")!;
-        using var small = photo.Resize(new SKImageInfo(w, h), SKSamplingOptions.Default)!;
-        double sum = 0;
-        int count = 0;
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
+        using var jpeg = EmbeddedPreview.Load(path, 600)!;
+        using var small = photo.Resize(new SKImageInfo(jpeg.Width, jpeg.Height), SKSamplingOptions.Default)!;
+        double ratio = LitLuminance(small) / LitLuminance(jpeg);
+        Assert.InRange(Math.Log2(ratio), -1.0, 1.0);
+    }
+
+    /// <summary>The 75th percentile of the linear luminance (the lit parts; cameras crush the shadows differently).</summary>
+    private static double LitLuminance(SKBitmap b)
+    {
+        var l = new List<double>();
+        for (int y = 0; y < b.Height; y += 2)
+            for (int x = 0; x < b.Width; x += 2)
             {
-                int i = (y * w + x) * 3;
-                if (reference[i] > 60000 || reference[i + 1] > 60000 || reference[i + 2] > 60000)
-                    continue;
-                var c = small.GetPixel(x, y);
-                sum += Math.Abs((c.Red + c.Green + c.Blue) / 3.0 - (reference[i] + reference[i + 1] + reference[i + 2]) / 3.0 / 257);
-                count++;
+                var c = b.GetPixel(x, y);
+                l.Add(0.2126 * ColorMath.SrgbByteToLinear(c.Red) + 0.7152 * ColorMath.SrgbByteToLinear(c.Green)
+                    + 0.0722 * ColorMath.SrgbByteToLinear(c.Blue));
             }
-        Assert.True(sum / count < 6, $"mean difference {sum / count:0.0} levels");
+        l.Sort();
+        return l[l.Count * 3 / 4];
     }
 
     [Fact]
-    public void NeutralizeClipped_GreysClippedHighlights_AndLeavesColoursAlone()
+    public void ReconstructHighlights_RaisesClippedChannels_FromTheOthers()
     {
-        const double clip = 0.5;
-        ushort at = (ushort)(RawImageLoader.ToCurve(clip) * 65535);
-        ushort below = (ushort)(RawImageLoader.ToCurve(clip * 0.8) * 65535);
+        float[] clip = [60000, 30000, 40000];
+        // Green clipped, red / blue not: green follows their average, so their texture carries over.
+        float[] a = [44000, 30000, 26000];
+        float[] b = [46000, 30000, 28000];
+        RawImageLoader.ReconstructHighlights(a, clip);
+        RawImageLoader.ReconstructHighlights(b, clip);
+        Assert.Equal([44000f, 35000f, 26000f], a);
+        Assert.Equal([46000f, 37000f, 28000f], b);
+        // Well below every clip level: unchanged.
+        float[] c = [45000, 20000, 30000];
+        RawImageLoader.ReconstructHighlights(c, clip);
+        Assert.Equal([45000f, 20000f, 30000f], c);
+        // Every channel clipped: all at the brightest.
+        float[] d = [60000, 30000, 40000];
+        RawImageLoader.ReconstructHighlights(d, clip);
+        Assert.Equal([60000f, 60000f, 60000f], d);
+        // Nothing is lowered, even where the others are darker (a coloured highlight).
+        float[] e = [10000, 30000, 5000];
+        RawImageLoader.ReconstructHighlights(e, clip);
+        Assert.Equal([10000f, 30000f, 5000f], e);
+    }
+
+    [Fact]
+    public void BaseCurve_BrightensMidtones_AndRollsOffToWhiteAtTheSensorsWhite()
+    {
+        Assert.Equal(0, RawImageLoader.BaseCurve(0));
+        Assert.Equal(1, RawImageLoader.BaseCurve(1), 5);
+        Assert.InRange(RawImageLoader.BaseCurve(1 / 16f), 0.18f, 0.23f); // 4 stops down: about as bright as the camera's JPEG
+        Assert.True(RawImageLoader.BaseCurve(2) > 1.2f);
+        float prev = -1;
+        for (float x = 0.01f; x <= 4; x += 0.01f)
+        {
+            float y = RawImageLoader.BaseCurve(x);
+            Assert.True(y > prev);
+            prev = y;
+        }
+        // The shoulder: less steep at 0.8 than in the midtones (per stop, i.e. in contrast).
+        float Stop(float x) => RawImageLoader.BaseCurve(x * 1.1f) / RawImageLoader.BaseCurve(x);
+        Assert.True(Stop(0.8f) < Stop(0.1f) - 0.02f, $"{Stop(0.8f)} vs {Stop(0.1f)}");
+    }
+
+    [Fact]
+    public void DevelopSensor_WhiteIsWhite_ClippedGreenIsNotPink_AndBrighterGoesToHeadroom()
+    {
+        float[] clip = [60000, 30000, 40000];
+        float[] identity = [1, 0, 0, 0, 1, 0, 0, 0, 1];
         ushort[] rgb =
         [
-            65535, at, 65535,        // green stuck at its clip level while red / blue rose: pink
-            below, below, 60000,     // a pale blue sky, not clipped
-            65535, 3000, 3000,       // a saturated red
+            30000, 30000, 30000,  // a neutral that just clips (the lowest clip level)
+            45000, 30000, 45000,  // brighter: green clipped, red / blue 1.5 × — a white cloud's core
+            15000, 15000, 15000,  // one stop down: grey
         ];
-        RawImageLoader.NeutralizeClipped(rgb, clip);
-        Assert.Equal([65535, 65535, 65535], rgb[0..3]);
-        Assert.Equal([below, below, 60000], rgb[3..6]);
-        Assert.Equal([65535, 3000, 3000], rgb[6..9]);
+        using var photo = RawImageLoader.DevelopSensor(rgb, 3, 1, clip, identity);
+        var headroom = Headroom.Of(photo)!;
+        var white = photo.GetPixel(0, 0);
+        Assert.True(white.Red >= 254 && white.Green >= 254 && white.Blue >= 254, white.ToString());
+        var core = photo.GetPixel(1, 0);
+        Assert.Equal((255, 255, 255), (core.Red, core.Green, core.Blue));
+        var extra = headroom.Bitmap.GetPixel(1, 0);
+        Assert.True(extra.Red > 0 && extra.Red == extra.Green && extra.Green == extra.Blue, extra.ToString());
+        var grey = photo.GetPixel(2, 0);
+        Assert.Equal(grey.Red, grey.Green);
+        Assert.InRange(grey.Red, 200, 240);
+        Assert.Equal(0, headroom.Bitmap.GetPixel(2, 0).Red);
     }
 
     /// <summary>

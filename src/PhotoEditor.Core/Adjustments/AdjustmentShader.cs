@@ -18,6 +18,7 @@ public static class AdjustmentShader
         // Where to apply this pass (red channel, 0..1); the global pass uses solid white.
         uniform shader mask;
         uniform float exposureGain;
+        uniform float sceneExposure;
         uniform float contrastGamma;
         uniform float highlightsAmount;
         uniform float shadowsAmount;
@@ -122,6 +123,27 @@ public static class AdjustmentShader
             return x < 0.5 ? 0.5 * pow(2.0 * x, g) : 1.0 - 0.5 * pow(2.0 - 2.0 * x, g);
         }
 
+        // RawBaseCurve (constants: RawBaseCurve.Exposure / Toe) and Exposure applied before it.
+        float rawCurve(float x) {
+            float z = max(x, 0.0) * 4.3;
+            float y = z * (1.0 + z / (4.3 * 4.3)) / (1.0 + z);
+            return y * y * (1.0 + 0.012) / (y + 0.012);
+        }
+        float rawCurveInverse(float y) {
+            y = max(y, 0.0);
+            float u = (y + sqrt(y * y + 4.0 * (1.0 + 0.012) * 0.012 * y)) / (2.0 * (1.0 + 0.012));
+            float z = 2.0 * u / (1.0 - u + sqrt((1.0 - u) * (1.0 - u) + 4.0 * u / (4.3 * 4.3)));
+            return z / 4.3;
+        }
+        float3 rawExposure(float3 c, float gain) {
+            float hi = max(c.r, max(c.g, c.b));
+            float lo = max(min(c.r, min(c.g, c.b)), 0.0);
+            if (hi <= 0.0) return c;
+            float h = rawCurve(rawCurveInverse(hi) * gain);
+            float l = rawCurve(rawCurveInverse(lo) * gain);
+            if (hi - lo < 1e-7) return float3(h);
+            return l + (max(c, 0.0) - lo) * ((h - l) / (hi - lo));
+        }
         float highlightsStep(float x, float a) {
             if (a < 0.0 && x > 1.0) { float d = x - 1.0; return 1.0 + a + d / (1.0 - 10.0 * a * d); }
             return x + a * smoothstep(0.35, 1.0, x);
@@ -428,7 +450,8 @@ public static class AdjustmentShader
                 c *= gain;
             }
             if (dehazeAmount != 0.0) c = dehaze(c, coord);
-            c *= whiteBalance * exposureGain;
+            c *= whiteBalance * (sceneExposure > 0.0 ? 1.0 : exposureGain);
+            if (sceneExposure > 0.0 && exposureGain != 1.0) c = rawExposure(c, exposureGain);
 
             // Local highlights / shadows, then the tone curve on perceptual luminance, applied as a ratio
             float y = dot(c, float3(0.2126, 0.7152, 0.0722));
@@ -523,7 +546,8 @@ public static class AdjustmentShader
         using var fineShader = headroomMap?.FineImage is { } fineImage
             ? fineImage.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling)
             : SKShader.CreateColor(SKColors.Black);
-        var extra = new HeadroomInput(headroomShader, headroomMap?.Scale ?? 0f, fineShader, headroomMap?.Fine is not null);
+        var extra = new HeadroomInput(headroomShader, headroomMap?.Scale ?? 0f, fineShader, headroomMap?.Fine is not null,
+            Headroom.Of(image)?.BaseCurve == true);
         var shading = Lens.LensVignetting.Of(image);
         var table = shading?.Table;
         using var tableShader = table is null ? SKShader.CreateColor(SKColors.White) : TableImage(table)
@@ -601,7 +625,7 @@ public static class AdjustmentShader
             ?? throw new InvalidOperationException("Could not create the tone curve image.");
     });
 
-    private readonly record struct HeadroomInput(SKShader Shader, float Scale, SKShader Fine, bool HasFine);
+    private readonly record struct HeadroomInput(SKShader Shader, float Scale, SKShader Fine, bool HasFine, bool BaseCurve);
 
     /// <summary>Brightest linear value handed from one pass to the next (≈ 6 stops above white).</summary>
     public const float PassLimit = 64f;
@@ -620,6 +644,7 @@ public static class AdjustmentShader
         var uniforms = new SKRuntimeEffectUniforms(effect)
         {
             ["exposureGain"] = p.ExposureGain,
+            ["sceneExposure"] = headroom.BaseCurve ? 1f : 0f,
             ["contrastGamma"] = p.ContrastGamma,
             ["highlightsAmount"] = p.HighlightsAmount,
             ["shadowsAmount"] = p.ShadowsAmount,

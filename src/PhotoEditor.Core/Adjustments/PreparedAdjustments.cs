@@ -41,6 +41,12 @@ public readonly record struct PreparedAdjustments(
     float LensVignettingAmount,
     float[]? CurveTable)
 {
+    /// <summary>
+    /// Exposure acts before the RAW base curve (<see cref="RawBaseCurve.ApplyExposure"/>) instead of as a plain gain;
+    /// set by the renderers for photos that carry that curve.
+    /// </summary>
+    public bool SceneExposure { get; init; }
+
     /// <summary>Hue (degrees) of Lightroom's purple / green defringe range ends 0 and 100.</summary>
     public const float PurpleHue0 = 240f, PurpleHue100 = 350f, GreenHue0 = 40f, GreenHue100 = 190f;
 

@@ -27,6 +27,7 @@ public sealed class RetouchCanvas : IDisposable
             _baseHeadroom = headroom.Bitmap.PeekPixels();
             HeadroomBitmap = Copy(_baseHeadroom);
             HeadroomScale = headroom.Scale;
+            _headroomBaseCurve = headroom.BaseCurve;
             if (headroom.Fine is not null)
             {
                 _baseFine = headroom.Fine.PeekPixels();
@@ -41,6 +42,7 @@ public sealed class RetouchCanvas : IDisposable
     /// <summary>The retouched headroom layer, if the photo has one.</summary>
     public SKBitmap? HeadroomBitmap { get; }
     public float HeadroomScale { get; }
+    private readonly bool _headroomBaseCurve;
 
     /// <summary>The retouched fine layer (see <see cref="Headroom.Fine"/>), if the photo has one.</summary>
     public SKBitmap? FineBitmap { get; }
@@ -114,7 +116,7 @@ public sealed class RetouchCanvas : IDisposable
         var image = Wrap(Bitmap);
         if (HeadroomBitmap is not null)
             Headroom.Attach(image, new Headroom(HeadroomBitmap, HeadroomScale, Wrap(HeadroomBitmap),
-                FineBitmap, FineBitmap is null ? null : Wrap(FineBitmap)));
+                FineBitmap, FineBitmap is null ? null : Wrap(FineBitmap)) { BaseCurve = _headroomBaseCurve });
         Adjustments.ToneBaseMap.Share(photo, image);
         Lens.LensVignetting.Attach(image, Lens.LensVignetting.Of(photo));
         Adjustments.HazeMap.Share(photo, image);

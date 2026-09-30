@@ -56,10 +56,11 @@ public static class CpuAdjustmentRenderer
         var input = src ?? source;
         if (input.AlphaType != SKAlphaType.Premul && input.AlphaType != SKAlphaType.Opaque)
             throw new NotSupportedException($"Unsupported alpha type {input.AlphaType}");
-        var p = PreparedAdjustments.From(state.Adjustments);
         var original = input;
         // RAW highlights above white, added after the detail filters (as the shader's global pass does).
         var headroom = Headroom.Of(source) is { } hr && hr.Width == input.Width && hr.Height == input.Height ? hr : null;
+        bool sceneExposure = Headroom.Of(source)?.BaseCurve == true;
+        var p = PreparedAdjustments.From(state.Adjustments) with { SceneExposure = sceneExposure };
         // Sharpening works on the source pixels, before everything else (as the shader's global pass does).
         using var sharpened = p.HasSharpening ? Sharpening.Apply(input, p) : null;
         input = sharpened ?? input;
@@ -69,7 +70,8 @@ public static class CpuAdjustmentRenderer
         var layers = state.Masks
             .Where(m => m.IsActive)
             // The tone curve is whole-image only.
-            .Select(m => new MaskLayer(PreparedAdjustments.From(m.Adjustments) with { CurveTable = null }, MaskRasterizer.RasterizeToBytes(m, width, height)))
+            .Select(m => new MaskLayer(PreparedAdjustments.From(m.Adjustments) with { CurveTable = null, SceneExposure = sceneExposure },
+                MaskRasterizer.RasterizeToBytes(m, width, height)))
             .ToArray();
         var result = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         var frame = VignetteMath.Frame.From(state.Crop.Frame(width, height));
@@ -360,9 +362,12 @@ public static class CpuAdjustmentRenderer
     /// </param>
     public static void ApplyLinear(ref float r, ref float g, ref float b, in PreparedAdjustments p, float baseRatio = 1f)
     {
-        r *= p.WhiteBalanceR * p.ExposureGain;
-        g *= p.WhiteBalanceG * p.ExposureGain;
-        b *= p.WhiteBalanceB * p.ExposureGain;
+        float exposure = p.SceneExposure ? 1f : p.ExposureGain;
+        r *= p.WhiteBalanceR * exposure;
+        g *= p.WhiteBalanceG * exposure;
+        b *= p.WhiteBalanceB * exposure;
+        if (p.SceneExposure && p.ExposureGain != 1f)
+            RawBaseCurve.ApplyExposure(ref r, ref g, ref b, p.ExposureGain);
 
         // Highlights / shadows: local, a factor from the curve on the base brightness (keeps local detail).
         float y = ToneCurve.Luminance(r, g, b);

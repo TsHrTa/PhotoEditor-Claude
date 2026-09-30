@@ -229,7 +229,7 @@ public sealed class LensCorrection
         var fine = headroom?.Fine is null ? null : new SKBitmap(headroom.Fine.Info);
         Warp(photo, headroom?.Bitmap, headroom?.Fine, result, above, fine);
         if (headroom is not null)
-            Headroom.Attach(result, new Headroom(above!, headroom.Scale, fine));
+            Headroom.Attach(result, new Headroom(above!, headroom.Scale, fine) { BaseCurve = headroom.BaseCurve });
         return result;
     }
 

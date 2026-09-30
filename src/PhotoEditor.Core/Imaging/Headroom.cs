@@ -50,6 +50,12 @@ public sealed class Headroom
         _fineImage = fineImage;
     }
 
+    /// <summary>
+    /// The photo was rendered with <see cref="Adjustments.RawBaseCurve"/> (a RAW decoded by LibRaw directly): the
+    /// renderers then apply Exposure before that curve, as Lightroom does.
+    /// </summary>
+    public bool BaseCurve { get; init; }
+
     /// <summary>RGBA8888, opaque; red / green / blue = how far the channel goes above white (0..255 = 0..<see cref="Scale"/>).</summary>
     public SKBitmap Bitmap { get; }
 
@@ -88,10 +94,10 @@ public sealed class Headroom
         width == Width && height == Height
             ? this
             : new Headroom(PreviewImage.Downscale(Bitmap, width, height), Scale,
-                Fine is null ? null : PreviewImage.Downscale(Fine, width, height));
+                Fine is null ? null : PreviewImage.Downscale(Fine, width, height)) { BaseCurve = BaseCurve };
 
     /// <summary>Only the part above white (for pixels the AI has changed).</summary>
-    public Headroom WithoutFine() => Fine is null ? this : new Headroom(Bitmap, Scale);
+    public Headroom WithoutFine() => Fine is null ? this : new Headroom(Bitmap, Scale) { BaseCurve = BaseCurve };
 
     /// <summary>What the layer adds to a channel stored as <paramref name="stored"/> (0..255).</summary>
     public float Extra(byte stored) => stored * Scale / 255f;
