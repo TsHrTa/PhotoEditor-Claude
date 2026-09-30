@@ -204,4 +204,22 @@ public class ToneCurvePanelTests
         // The Detail group no longer holds the curve sliders.
         Assert.DoesNotContain("curveLights", PresetFactory.SliderIds(SettingsGroups.Detail));
     }
+
+    /// <summary>Every split position works with the regions moved (0.85 + 0.05 + 0.05 once rounded past 0.95 and threw).</summary>
+    [Fact]
+    public void Parametric_AnySplitPosition_WithRegionsMoved()
+    {
+        foreach (var amount in new[] { -100.0, 50, 100 })
+            for (int s1 = 5; s1 <= 95; s1 += 5)
+                for (int s2 = 5; s2 <= 95; s2 += 15)
+                {
+                    var s = new AdjustmentSettings
+                    {
+                        CurveHighlights = amount, CurveLights = amount, CurveDarks = amount, CurveShadows = amount,
+                        CurveShadowSplit = s1, CurveMidtoneSplit = s2,
+                    };
+                    var table = ToneCurveTable.Parametric(s);
+                    Assert.All(table, v => Assert.InRange(v, 0, 1));
+                }
+    }
 }

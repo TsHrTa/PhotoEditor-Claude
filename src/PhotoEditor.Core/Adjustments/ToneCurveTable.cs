@@ -68,8 +68,9 @@ public static class ToneCurveTable
     public static double[] Parametric(AdjustmentSettings s)
     {
         double s1 = Math.Clamp(s.CurveShadowSplit / 100, 0.05, 0.85);
-        double s2 = Math.Clamp(s.CurveMidtoneSplit / 100, s1 + 0.05, 0.9);
-        double s3 = Math.Clamp(s.CurveHighlightSplit / 100, s2 + 0.05, 0.95);
+        // Each split stays 5 % above the one before (Math.Max: 0.85 + 0.05 + 0.05 rounds just above 0.95).
+        double s2 = Math.Clamp(s.CurveMidtoneSplit / 100, s1 + 0.05, Math.Max(s1 + 0.05, 0.9));
+        double s3 = Math.Clamp(s.CurveHighlightSplit / 100, s2 + 0.05, Math.Max(s2 + 0.05, 0.95));
         double[] bounds = [0, s1, s2, s3, 1];
         double[] amounts = [s.CurveShadows, s.CurveDarks, s.CurveLights, s.CurveHighlights];
         var values = new double[Size];
