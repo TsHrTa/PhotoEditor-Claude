@@ -1,4 +1,5 @@
 using PhotoEditor.Core.Editing;
+using PhotoEditor.Core.Imaging;
 using PhotoEditor.Core.Masks;
 using SkiaSharp;
 
@@ -29,6 +30,8 @@ public static class CpuAdjustmentRenderer
             throw new NotSupportedException($"Unsupported alpha type {input.AlphaType}");
         var p = PreparedAdjustments.From(state.Adjustments);
         var original = input;
+        // RAW highlights above white, added after the detail filters (as the shader's global pass does).
+        var headroom = Headroom.Of(source) is { } hr && hr.Width == input.Width && hr.Height == input.Height ? hr : null;
         // Sharpening works on the source pixels, before everything else (as the shader's global pass does).
         using var sharpened = p.HasSharpening ? Sharpening.Apply(input, p) : null;
         input = sharpened ?? input;
@@ -42,12 +45,14 @@ public static class CpuAdjustmentRenderer
         var frame = VignetteMath.Frame.From(state.Crop.Frame(width, height));
         int rowBytesIn = input.RowBytes, rowBytesOut = result.RowBytes;
         nint inPtr = input.GetPixels(), outPtr = result.GetPixels();
+        nint extraPtr = headroom?.Bitmap.GetPixels() ?? 0;
+        int extraRowBytes = headroom?.Bitmap.RowBytes ?? 0;
         // Soften (global or in a mask) subtracts the original's fine detail.
         // Dehaze (global or in a mask) uses the photo's haze map, computed from the original.
         var haze = p.HasDehaze || layers.Any(l => l.Adjustments.HasDehaze) ? HazeMap.Compute(original) : null;
         // Local highlights / shadows (global or in a mask) use the photo's base brightness map.
-        var toneBase = p.HasLocalTone || layers.Any(l => l.Adjustments.HasLocalTone) ? ToneBaseMap.Compute(original) : null;
-        var originalPixels = new ToneSource(original.GetPixels(), original.RowBytes);
+        var toneBase = p.HasLocalTone || layers.Any(l => l.Adjustments.HasLocalTone) ? ToneBaseMap.Compute(original, headroom) : null;
+        var originalPixels = new ToneSource(original.GetPixels(), original.RowBytes, headroom);
         DetailFilters? detailFilters = p.HasNoiseReduction || p.HasDefringe
             ? new DetailFilters(original.GetPixels(), original.RowBytes, width, height)
             : null;
@@ -61,7 +66,9 @@ public static class CpuAdjustmentRenderer
             {
                 var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
                 var outRow = new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
-                ProcessRow(inRow, outRow, p, layers, y, frame, soften, haze, height, detailFilters, toneBase, originalPixels);
+                var extraRow = headroom is null ? default : new ReadOnlySpan<byte>((byte*)extraPtr + (long)y * extraRowBytes, width * 4);
+                ProcessRow(inRow, outRow, p, layers, y, frame, soften, haze, height, detailFilters, toneBase, originalPixels,
+                    extraRow, headroom?.Scale ?? 0f);
             }
         });
         return result;
@@ -72,13 +79,15 @@ public static class CpuAdjustmentRenderer
 
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
     public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
-        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null, null, default);
+        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null, null, default, default, 0f);
 
     private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y,
         in VignetteMath.Frame frame, Softening? soften, HazeMap? haze, int height, DetailFilters? detailFilters,
-        ToneBaseMap? toneBase, ToneSource originalPixels)
+        ToneBaseMap? toneBase, ToneSource originalPixels, ReadOnlySpan<byte> headroom, float headroomScale)
     {
         int width = input.Length / 4;
+        // The global pass hands values up to PassLimit to the masks; the last pass clips at white.
+        float globalLimit = layers.Length > 0 ? AdjustmentShader.PassLimit : 1f;
         for (int i = 0; i < input.Length; i += 4)
         {
             byte a8 = input[i + 3];
@@ -92,7 +101,8 @@ public static class CpuAdjustmentRenderer
             // The original's fine detail at this pixel, computed once when a pass softens.
             float dr = 0, dg = 0, db = 0;
             bool hasDetail = false;
-            if ((p.HasSoften && soften is not null) || detailFilters is not null)
+            bool above = !headroom.IsEmpty && (headroom[i] | headroom[i + 1] | headroom[i + 2]) != 0;
+            if ((p.HasSoften && soften is not null) || detailFilters is not null || above)
             {
                 float inv = 1f / a8;
                 float s0 = input[i] * inv, s1 = input[i + 1] * inv, s2 = input[i + 2] * inv;
@@ -126,6 +136,12 @@ public static class CpuAdjustmentRenderer
                     s1 = Math.Clamp(s1 - p.SoftenAmount * dg, 0f, 1f);
                     s2 = Math.Clamp(s2 - p.SoftenAmount * db, 0f, 1f);
                 }
+                if (above)
+                {
+                    s0 += headroom[i] * headroomScale / 255f;
+                    s1 += headroom[i + 1] * headroomScale / 255f;
+                    s2 += headroom[i + 2] * headroomScale / 255f;
+                }
                 r = ColorMath.SrgbToLinear(s0);
                 g = ColorMath.SrgbToLinear(s1);
                 b = ColorMath.SrgbToLinear(s2);
@@ -157,12 +173,14 @@ public static class CpuAdjustmentRenderer
             if (p.HasVignette)
                 VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, p);
             // Result of the global pass as unpremultiplied sRGB, like the shader hands to the next pass.
-            float sr = ColorMath.LinearToSrgb(Math.Clamp(r, 0f, 1f));
-            float sg = ColorMath.LinearToSrgb(Math.Clamp(g, 0f, 1f));
-            float sb = ColorMath.LinearToSrgb(Math.Clamp(b, 0f, 1f));
+            float sr = ColorMath.LinearToSrgb(Math.Clamp(r, 0f, globalLimit));
+            float sg = ColorMath.LinearToSrgb(Math.Clamp(g, 0f, globalLimit));
+            float sb = ColorMath.LinearToSrgb(Math.Clamp(b, 0f, globalLimit));
 
-            foreach (var layer in layers)
+            for (int li = 0; li < layers.Length; li++)
             {
+                var layer = layers[li];
+                float limit = li == layers.Length - 1 ? 1f : AdjustmentShader.PassLimit;
                 float m = layer.Mask[y * width + i / 4] / 255f;
                 if (m <= 0f)
                     continue;
@@ -174,9 +192,9 @@ public static class CpuAdjustmentRenderer
                         hasDetail = true;
                     }
                     float k = layer.Adjustments.SoftenAmount;
-                    r = ColorMath.SrgbToLinear(Math.Clamp(sr - k * dr, 0f, 1f));
-                    g = ColorMath.SrgbToLinear(Math.Clamp(sg - k * dg, 0f, 1f));
-                    b = ColorMath.SrgbToLinear(Math.Clamp(sb - k * db, 0f, 1f));
+                    r = ColorMath.SrgbToLinear(Math.Clamp(sr - k * dr, 0f, MathF.Max(sr, 1f)));
+                    g = ColorMath.SrgbToLinear(Math.Clamp(sg - k * dg, 0f, MathF.Max(sg, 1f)));
+                    b = ColorMath.SrgbToLinear(Math.Clamp(sb - k * db, 0f, MathF.Max(sb, 1f)));
                 }
                 else
                 {
@@ -193,9 +211,10 @@ public static class CpuAdjustmentRenderer
                 ApplyLinear(ref r, ref g, ref b, layer.Adjustments, baseRatio);
                 if (layer.Adjustments.HasVignette)
                     VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, layer.Adjustments);
-                sr = Mix(sr, ColorMath.LinearToSrgb(Math.Clamp(r, 0f, 1f)), m);
-                sg = Mix(sg, ColorMath.LinearToSrgb(Math.Clamp(g, 0f, 1f)), m);
-                sb = Mix(sb, ColorMath.LinearToSrgb(Math.Clamp(b, 0f, 1f)), m);
+                float limitEncoded = ColorMath.LinearToSrgb(limit);
+                sr = Mix(MathF.Min(sr, limitEncoded), ColorMath.LinearToSrgb(Math.Clamp(r, 0f, limit)), m);
+                sg = Mix(MathF.Min(sg, limitEncoded), ColorMath.LinearToSrgb(Math.Clamp(g, 0f, limit)), m);
+                sb = Mix(MathF.Min(sb, limitEncoded), ColorMath.LinearToSrgb(Math.Clamp(b, 0f, limit)), m);
             }
 
             float a = a8 / 255f;
@@ -207,12 +226,22 @@ public static class CpuAdjustmentRenderer
     }
 
     /// <summary>The original photo's pixels, for the base / pixel brightness ratio.</summary>
-    private readonly unsafe struct ToneSource(nint pixels, int rowBytes)
+    private readonly unsafe struct ToneSource(nint pixels, int rowBytes, Headroom? headroom)
     {
+        private readonly nint _extra = headroom?.Bitmap.GetPixels() ?? 0;
+        private readonly int _extraRowBytes = headroom?.Bitmap.RowBytes ?? 0;
+        private readonly float _extraScale = (headroom?.Scale ?? 0f) / 255f;
+
         public float BaseRatio(ToneBaseMap map, int x, int y, int width, int height)
         {
             byte* p = (byte*)pixels + (long)y * rowBytes + x * 4;
-            return map.BaseRatio(x, y, width, height, ToneBaseMap.LogLuminance(p[0], p[1], p[2], p[3]));
+            float er = 0, eg = 0, eb = 0;
+            if (_extra != 0)
+            {
+                byte* e = (byte*)_extra + (long)y * _extraRowBytes + x * 4;
+                er = e[0] * _extraScale; eg = e[1] * _extraScale; eb = e[2] * _extraScale;
+            }
+            return map.BaseRatio(x, y, width, height, ToneBaseMap.LogLuminance(p[0], p[1], p[2], p[3], er, eg, eb));
         }
     }
 

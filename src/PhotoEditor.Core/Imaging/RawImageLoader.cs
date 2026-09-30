@@ -38,38 +38,140 @@ public static class RawImageLoader
 
     /// <summary>
     /// PPG demosaicing: 2.5× faster than LibRaw's default (AHD) — 1.4 s instead of 3.7 s for a 21 MP CR2 on a
-    /// 4-core machine — and visually the same at 100 % on real photos.
+    /// 4-core machine — and visually the same at 100 % on real photos. Auto-brightening is off: LibRaw would
+    /// clip the brightest 1 % of the photo; <see cref="Develop"/> brightens the same way and keeps what goes above white.
     /// </summary>
     private static MagickReadSettings ReadSettings
     {
         get
         {
             var settings = new MagickReadSettings();
-            settings.SetDefines(new ImageMagick.Formats.DngReadDefines { InterpolationQuality = ImageMagick.Formats.DngInterpolation.Ppg });
+            settings.SetDefines(new ImageMagick.Formats.DngReadDefines
+            {
+                InterpolationQuality = ImageMagick.Formats.DngInterpolation.Ppg,
+                DisableAutoBrightness = true,
+            });
             return settings;
         }
     }
 
-    /// <summary>Decodes the RAW file into an 8-bit RGBA bitmap.</summary>
+    /// <summary>
+    /// Decodes the RAW file into an 8-bit RGBA bitmap that looks as LibRaw's default output; the highlights above
+    /// white are attached as its <see cref="Headroom"/>.
+    /// </summary>
     public static SKBitmap Load(string path)
     {
-        byte[] rgba;
+        ushort[] rgb;
         int width, height;
         try
         {
             using var image = new MagickImage(path, ReadSettings);
             width = (int)image.Width;
             height = (int)image.Height;
-            rgba = image.GetPixelsUnsafe().ToByteArray("RGBA")
+            rgb = image.GetPixelsUnsafe().ToShortArray("RGB")
                 ?? throw new InvalidDataException($"Could not read RAW pixels: {path}");
         }
         catch (MagickException ex)
         {
             throw new InvalidDataException($"Unsupported or corrupt RAW file ({ex.Message})", ex);
         }
+        return Develop(rgb, width, height);
+    }
+
+    private const double CurveOffset = 0.099296826809444, CurveBreak = 0.018053968510807;
+
+    /// <summary>Fraction of the channel values LibRaw's auto-brightening pushes to white (its auto_bright_thr).</summary>
+    private const double AutoBrightClip = 0.01;
+
+    /// <summary>Largest brightening the headroom is sized for (4 stops): anything brighter stays clipped.</summary>
+    private const double MaxBrightening = 16;
+
+    /// <summary>LibRaw's output curve (BT.709: gamma 0.45, toe slope 4.5) from linear 0..1.</summary>
+    public static double ToCurve(double linear) =>
+        linear < CurveBreak ? linear * 4.5 : (1 + CurveOffset) * Math.Pow(linear, 0.45) - CurveOffset;
+
+    /// <summary>Inverse of <see cref="ToCurve"/>.</summary>
+    public static double FromCurve(double v) =>
+        v < CurveBreak * 4.5 ? v / 4.5 : Math.Pow((v + CurveOffset) / (1 + CurveOffset), 1 / 0.45);
+
+    /// <summary>
+    /// Turns LibRaw's un-brightened 16-bit RGB into the photo: brightened like LibRaw's auto-brightening (the 99th
+    /// percentile of the brightest channel becomes white), with the values above white kept in a
+    /// <see cref="Headroom"/> attached to the result (none when nothing goes above white).
+    /// </summary>
+    public static SKBitmap Develop(ushort[] rgb, int width, int height)
+    {
+        int n = width * height;
+        // LibRaw: per channel, the linear value (in 8-value bins) above which more than 1 % of the pixels lie.
+        double white = 0;
+        var toLinear = new int[65536];
+        for (int v = 0; v < 65536; v++)
+            toLinear[v] = (int)(FromCurve(v / 65535.0) * 65535);
+        var histograms = new int[3 * 0x2000];
+        Parallel.For(0, height, () => new int[3 * 0x2000], (y, _, local) =>
+        {
+            for (int i = y * width * 3, end = i + width * 3; i < end; i += 3)
+            {
+                local[toLinear[rgb[i]] >> 3]++;
+                local[0x2000 + (toLinear[rgb[i + 1]] >> 3)]++;
+                local[0x4000 + (toLinear[rgb[i + 2]] >> 3)]++;
+            }
+            return local;
+        }, local =>
+        {
+            lock (histograms)
+                for (int i = 0; i < local.Length; i++)
+                    histograms[i] += local[i];
+        });
+        for (int c = 0; c < 3; c++)
+        {
+            long total = 0;
+            int bin = 0x2000;
+            while (--bin > 32)
+                if ((total += histograms[c * 0x2000 + bin]) > n * AutoBrightClip)
+                    break;
+            white = Math.Max(white, bin << 3);
+        }
+        double gain = white > 0 ? Math.Min(65535.0 / white, MaxBrightening) : 1;
+        float scale = (float)(ToCurve(gain) - 1);
+
+        // Per 16-bit value: the 8-bit photo value and the stored headroom.
+        var photo = new byte[65536];
+        var extra = new byte[65536];
+        for (int v = 0; v < 65536; v++)
+        {
+            double e = ToCurve(gain * FromCurve(v / 65535.0));
+            photo[v] = (byte)Math.Round(Math.Min(e, 1) * 255);
+            extra[v] = e > 1 && scale > 0 ? (byte)Math.Clamp(Math.Round((e - 1) / scale * 255), 0, 255) : (byte)0;
+        }
 
         var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
-        Marshal.Copy(rgba, 0, bitmap.GetPixels(), rgba.Length); // opaque, so premultiplied = straight
+        var headroom = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque));
+        nint photoPtr = bitmap.GetPixels(), extraPtr = headroom.GetPixels();
+        int anyAbove = 0;
+        Parallel.For(0, height, y =>
+        {
+            unsafe
+            {
+                byte* p = (byte*)photoPtr + (long)y * bitmap.RowBytes;
+                byte* h = (byte*)extraPtr + (long)y * headroom.RowBytes;
+                bool above = false;
+                for (int x = 0, i = y * width * 3; x < width; x++, i += 3)
+                {
+                    ushort r = rgb[i], g = rgb[i + 1], b = rgb[i + 2];
+                    p[x * 4] = photo[r]; p[x * 4 + 1] = photo[g]; p[x * 4 + 2] = photo[b]; p[x * 4 + 3] = 255;
+                    byte er = extra[r], eg = extra[g], eb = extra[b];
+                    h[x * 4] = er; h[x * 4 + 1] = eg; h[x * 4 + 2] = eb; h[x * 4 + 3] = 255;
+                    above |= (er | eg | eb) != 0;
+                }
+                if (above)
+                    Interlocked.Exchange(ref anyAbove, 1);
+            }
+        });
+        if (anyAbove != 0)
+            Headroom.Attach(bitmap, new Headroom(headroom, scale));
+        else
+            headroom.Dispose();
         return bitmap;
     }
 

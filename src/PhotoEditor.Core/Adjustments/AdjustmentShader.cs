@@ -1,5 +1,6 @@
 using PhotoEditor.Core.Editing;
 using PhotoEditor.Core.Masks;
+using PhotoEditor.Core.Imaging;
 using SkiaSharp;
 
 namespace PhotoEditor.Core.Adjustments;
@@ -67,6 +68,14 @@ public static class AdjustmentShader
         // stretched over the image; useToneBase = 1 when bound.
         uniform shader toneBase;
         uniform float useToneBase;
+        // RAW highlights above white (see Headroom): value = 1 + headroomScale × stored, 0 = none. The global pass
+        // adds it to the photo (addHeadroom = 1); every pass uses it for the base brightness.
+        uniform shader headroom;
+        uniform float headroomScale;
+        uniform float addHeadroom;
+        // Brightest linear value this pass hands on: 1 for the last pass, more between passes so a mask can
+        // still bring back what an earlier pass pushed above white.
+        uniform float outputLimit;
         uniform float softenAmount;
         uniform float softenStep;
         const float softenRangeSigma = 0.1;
@@ -297,7 +306,7 @@ public static class AdjustmentShader
             half4 o = source.eval(coord);
             float l = log2(1e-4);
             if (o.a > 0.0) {
-                float3 c = min(float3(o.rgb) / o.a, 1.0);
+                float3 c = min(float3(o.rgb) / o.a, 1.0) + headroomScale * float3(headroom.eval(coord).rgb);
                 l = log2(max(dot(float3(srgbToLinear(c.r), srgbToLinear(c.g), srgbToLinear(c.b)),
                     float3(0.2126, 0.7152, 0.0722)), 1e-4));
             }
@@ -330,7 +339,9 @@ public static class AdjustmentShader
                 if (defringePurple > 0.0 || defringeGreen > 0.0) s += defringe(coord, c0);
                 s = clamp(s, 0.0, 1.0);
             }
-            if (softenAmount > 0.0) s = clamp(s - softenAmount * softDetail(coord), 0.0, 1.0);
+            if (softenAmount > 0.0) s = clamp(s - softenAmount * softDetail(coord), float3(0.0), max(s, float3(1.0)));
+            // Highlights above white (after the detail filters, which work on the 8-bit photo)
+            if (addHeadroom > 0.0) s += headroomScale * float3(headroom.eval(coord).rgb);
 
             // Linear light
             float3 c = float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b));
@@ -364,9 +375,9 @@ public static class AdjustmentShader
                 c *= exp2(vignetteStops * smoothstep(vignetteLow, vignetteHigh, vignetteDistance(uv)));
             }
 
-            c = clamp(c, 0.0, 1.0);
+            c = clamp(c, 0.0, outputLimit);
             c = float3(linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b));
-            c = mix(s0, c, float(mask.eval(coord).r));
+            c = mix(min(s0, linearToSrgb(outputLimit)), c, float(mask.eval(coord).r));
             return half4(half3(c * a), half(a));
         }
         """;
@@ -416,20 +427,27 @@ public static class AdjustmentShader
             : toneMap.Image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, new SKSamplingOptions(SKFilterMode.Linear),
                 SKMatrix.CreateScale((float)image.Width / toneMap.Width, (float)image.Height / toneMap.Height));
         var tone = new ToneInput(toneShader, toneMap is not null);
+        var headroomMap = Headroom.Of(image) is { } hr && hr.Width == image.Width && hr.Height == image.Height ? hr : null;
+        using var headroomShader = headroomMap is null
+            ? SKShader.CreateColor(SKColors.Black)
+            : headroomMap.Image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
+        var extra = new HeadroomInput(headroomShader, headroomMap?.Scale ?? 0f);
+        var masks = state.Masks.Select(m => (Mask: m, Image: m.IsActive ? maskImage(m) : null)).Where(m => m.Image is not null).ToList();
         var frame = VignetteMath.Frame.From(state.Crop.Frame(image.Width, image.Height));
         // Soften taps are a whole number of full-resolution pixels apart (as on the CPU at export).
         int fullLongSide = (int)Math.Round(Math.Max(image.Width, image.Height) / pixelScale);
         float softenStep = (float)(PreparedAdjustments.SoftenStepFor(fullLongSide) * pixelScale);
-        var current = CreatePass(imageShader, imageShader, white, haze, tone, state.Adjustments, frame, (float)pixelScale, softenStep, sharpen: true);
+        var current = CreatePass(imageShader, imageShader, white, haze, tone, extra, state.Adjustments, frame, (float)pixelScale, softenStep,
+            sharpen: true, last: masks.Count == 0);
 
-        foreach (var mask in state.Masks)
+        for (int i = 0; i < masks.Count; i++)
         {
-            if (!mask.IsActive || maskImage(mask) is not { } maskImg)
-                continue;
+            var (mask, maskImg) = (masks[i].Mask, masks[i].Image!);
             var toImage = SKMatrix.CreateScale((float)image.Width / maskImg.Width, (float)image.Height / maskImg.Height);
             using var maskShader = maskImg.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
                 MaskSampling(maskImg, image), toImage);
-            var next = CreatePass(current, imageShader, maskShader, haze, tone, mask.Adjustments, frame, (float)pixelScale, softenStep, sharpen: false);
+            var next = CreatePass(current, imageShader, maskShader, haze, tone, extra, mask.Adjustments, frame, (float)pixelScale, softenStep,
+                sharpen: false, last: i == masks.Count - 1);
             current.Dispose();
             current = next;
         }
@@ -446,10 +464,15 @@ public static class AdjustmentShader
 
     private readonly record struct ToneInput(SKShader Shader, bool Bound);
 
+    private readonly record struct HeadroomInput(SKShader Shader, float Scale);
+
+    /// <summary>Brightest linear value handed from one pass to the next (≈ 6 stops above white).</summary>
+    public const float PassLimit = 64f;
+
     private static bool LocalTone(AdjustmentSettings s) => s.Highlights != 0 || s.Shadows != 0;
 
-    private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, HazeInput haze, ToneInput tone, AdjustmentSettings settings,
-        VignetteMath.Frame frame, float pixelScale, float softenStep, bool sharpen)
+    private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, HazeInput haze, ToneInput tone, HeadroomInput headroom,
+        AdjustmentSettings settings, VignetteMath.Frame frame, float pixelScale, float softenStep, bool sharpen, bool last)
     {
         var effect = Effect;
         var p = PreparedAdjustments.From(settings);
@@ -494,6 +517,9 @@ public static class AdjustmentShader
             ["hazeLight"] = haze.Map is { } m ? new[] { m.LightR, m.LightG, m.LightB } : new[] { 1f, 1f, 1f },
             ["dehazeAmount"] = haze.Map is null ? 0f : p.DehazeAmount,
             ["softenStep"] = softenStep,
+            ["headroomScale"] = headroom.Scale,
+            ["addHeadroom"] = sharpen && headroom.Scale > 0 ? 1f : 0f,
+            ["outputLimit"] = last ? 1f : PassLimit,
         };
         var children = new SKRuntimeEffectChildren(effect)
         {
@@ -502,6 +528,7 @@ public static class AdjustmentShader
             ["haze"] = haze.Shader,
             ["toneBase"] = tone.Shader,
             ["mask"] = mask,
+            ["headroom"] = headroom.Shader,
         };
         return effect.ToShader(uniforms, children);
     }
@@ -518,6 +545,7 @@ public static class AdjustmentShader
     {
         var info = new SKImageInfo(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
         using var image = SKImage.FromBitmap(source);
+        Headroom.Attach(image, Headroom.Of(source));
         using var surface = SKSurface.Create(info);
         var masks = state.Masks.Where(m => m.IsActive).ToDictionary(
             m => m.Id, m => SKImage.FromBitmap(MaskRasterizer.RasterizeToBitmap(m, source.Width, source.Height)));

@@ -76,10 +76,13 @@ public sealed class ToneBaseMap
     public static ToneBaseMap Compute(SKImage photo)
     {
         using var bitmap = SKBitmap.FromImage(photo);
-        return Compute(bitmap);
+        return Compute(bitmap, Headroom.Of(photo));
     }
 
-    public static ToneBaseMap Compute(SKBitmap photo)
+    public static ToneBaseMap Compute(SKBitmap photo) => Compute(photo, Headroom.Of(photo));
+
+    /// <summary>The map of <paramref name="photo"/> including its highlights above white (<paramref name="headroom"/>, if any).</summary>
+    public static ToneBaseMap Compute(SKBitmap photo, Headroom? headroom)
     {
         using var rgba = photo.ColorType == SKColorType.Rgba8888 && photo.AlphaType == SKAlphaType.Premul ? null : photo.Copy(SKColorType.Rgba8888);
         var source = rgba ?? photo;
@@ -88,8 +91,19 @@ public sealed class ToneBaseMap
         int n = w * h;
         var l = new float[n];
         var pixels = small.GetPixelSpan();
-        for (int i = 0; i < n; i++)
-            l[i] = LogLuminance(pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2], pixels[i * 4 + 3]);
+        if (headroom is not null && headroom.Width == source.Width && headroom.Height == source.Height)
+        {
+            using var extraSmall = PreviewImage.Downscale(headroom.Bitmap, w, h);
+            var extra = extraSmall.GetPixelSpan();
+            for (int i = 0; i < n; i++)
+                l[i] = LogLuminance(pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2], pixels[i * 4 + 3],
+                    headroom.Extra(extra[i * 4]), headroom.Extra(extra[i * 4 + 1]), headroom.Extra(extra[i * 4 + 2]));
+        }
+        else
+        {
+            for (int i = 0; i < n; i++)
+                l[i] = LogLuminance(pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2], pixels[i * 4 + 3]);
+        }
 
         // Self-guided filter coefficients (He et al.), then their box means.
         var meanL = GuidedFilter.BoxMean(l, w, h, Radius);
@@ -118,15 +132,16 @@ public sealed class ToneBaseMap
     }
 
     /// <summary>log2 of the linear luminance of a premultiplied RGBA8888 pixel (floored at <see cref="MinLuminance"/>).</summary>
-    public static float LogLuminance(byte r, byte g, byte b, byte alpha)
+    /// <remarks>The extra values are what the pixel's <see cref="Headroom"/> adds above white (encoded units).</remarks>
+    public static float LogLuminance(byte r, byte g, byte b, byte alpha, float extraR = 0, float extraG = 0, float extraB = 0)
     {
         if (alpha == 0)
             return MathF.Log2(MinLuminance);
         float inv = 1f / alpha;
         float y = ToneCurve.Luminance(
-            ColorMath.SrgbToLinear(MathF.Min(r * inv, 1f)),
-            ColorMath.SrgbToLinear(MathF.Min(g * inv, 1f)),
-            ColorMath.SrgbToLinear(MathF.Min(b * inv, 1f)));
+            ColorMath.SrgbToLinear(MathF.Min(r * inv, 1f) + extraR),
+            ColorMath.SrgbToLinear(MathF.Min(g * inv, 1f) + extraG),
+            ColorMath.SrgbToLinear(MathF.Min(b * inv, 1f) + extraB));
         return MathF.Log2(MathF.Max(y, MinLuminance));
     }
 

@@ -1,4 +1,5 @@
 using SkiaSharp;
+using PhotoEditor.Core.Imaging;
 
 namespace PhotoEditor.Core.Ai;
 
@@ -95,7 +96,11 @@ public sealed class RestorePipeline(ModelStore models, RestoreCache cache) : IDi
                 result.Dispose();
             result = blended;
         }
-        return ReferenceEquals(result, original) ? original.Copy() : result;
+        if (ReferenceEquals(result, original))
+            result = original.Copy();
+        // The AI works on the 8-bit photo; the highlights above white stay those of the original.
+        Headroom.Attach(result, Headroom.Of(original));
+        return result;
     }
 
     private static string Remaining(TimeSpan elapsed, TileProgress p)

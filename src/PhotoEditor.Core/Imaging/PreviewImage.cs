@@ -30,13 +30,17 @@ public sealed class PreviewImage
     {
         original.SetImmutable();
         var full = SKImage.FromBitmap(original);
+        var headroom = Headroom.Of(original);
+        Headroom.Attach(full, headroom);
         var (w, h) = PreviewSize(original.Width, original.Height, maxPreviewSize);
         if (w == original.Width && h == original.Height)
             return new PreviewImage(full, full);
 
         var small = Downscale(original, w, h);
         small.SetImmutable();
-        return new PreviewImage(full, SKImage.FromBitmap(small));
+        var preview = SKImage.FromBitmap(small);
+        Headroom.Attach(preview, headroom?.Resized(w, h));
+        return new PreviewImage(full, preview);
     }
 
     /// <summary>
