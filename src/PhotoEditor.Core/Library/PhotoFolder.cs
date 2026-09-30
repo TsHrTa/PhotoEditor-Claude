@@ -45,7 +45,7 @@ public static class PhotoFolder
         try
         {
             if (SidecarFile.Load(imagePath) is { } document)
-                return !document.ToState().IsDefault;
+                return document.IsEditFor(RawImageLoader.IsRaw(imagePath));
             return LightroomXmp.HasSettings(imagePath);
         }
         catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException or UnauthorizedAccessException)
@@ -68,7 +68,7 @@ public static class PhotoFolder
             var geometry = new ImageGeometry(thumbnail.Width, thumbnail.Height, ImageLoader.ReadOrientation(imagePath),
                 RawImageLoader.IsRaw(imagePath));
             var (state, _) = EditStore.Load(imagePath, geometry);
-            if (state.IsDefault)
+            if (state.IsDefaultFor(geometry.IsRaw))
                 return thumbnail;
             var rendered = CpuAdjustmentRenderer.Render(thumbnail, state, Lens.PhotoLens.Of(imagePath));
             var cropped = CpuAdjustmentRenderer.ApplyCrop(rendered, state.Crop);

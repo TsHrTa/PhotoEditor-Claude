@@ -98,7 +98,8 @@ Each item is meant to be one small, self-contained step.
 - [x] Retouching: AI remove — brush over an object, an inpainting model (LaMa, ONNX) fills the hole (user request)
 - [x] Retouching: brush-shaped heal / clone (paint over a wire / crack)
 - [ ] Retouching: Lightroom XMP for spots — waiting for a sample XMP from Lightroom with spots (the format is not documented; see 2026-09-30 note)
-- [ ] Later (not planned yet): Lightroom-like default sharpening / colour NR for RAWs, Tone Curve, Transform / Upright
+- [x] Lightroom-like defaults for RAWs: sharpening 40 (radius 1, masking 0) and colour noise reduction 25 (user request)
+- [ ] Later (not planned yet): Tone Curve, Transform / Upright
 
 ## Where I left off
 - 2026-09-29: Open image done. New `PhotoEditor.Core` library (UI-free: `ImageLoader` decodes via SkiaSharp and applies EXIF orientation) + `tests/PhotoEditor.Tests` (xUnit). `ImageViewer` control draws an SKImage through Avalonia's Skia lease (custom draw op), fit-to-window. Open via button / Ctrl+O / drag & drop / command-line arg. Dark theme. Screenshots under Xvfb on Linux work (apt `xvfb x11-apps imagemagick`). Next: zoom & pan.
@@ -240,3 +241,5 @@ Each item is meant to be one small, self-contained step.
 - A portrait phone JPEG (EXIF rotated) shows upright.
 
 - 2026-09-29: Project created with the Avalonia MVVM template; builds cleanly. Next: open image + viewer.
+
+- 2026-09-30: RAW defaults done (user request). `AdjustmentSettings.RawDefault` / `EditState.RawDefault` (sharpening 40, radius 1, masking 0, colour NR 25, as Lightroom) and `DefaultFor(isRaw)` / `IsDefaultFor(isRaw)`. A RAW without an edit loads with them (`EditStore.Load`), including in batch export and paste/presets; JPEGs still start at zero. "Unedited" now means equal to the photo's own default: no sidecar is written for it, `HasEdits` / edited thumbnails / "Reset all" use it, and double-click on a slider resets to it (masks still reset to 0). Turning the defaults off on a RAW is an edit: the JSON gets `"edited": true`, because its settings would otherwise look like a rating-only file. Older sidecars keep their explicit values (edits made before this keep sharpening 0). The XMP reader fills missing Sharpness / ColorNoiseReduction with Camera Raw's RAW defaults. Tests: `RawDefaultsTests`. Spots are saved in the JSON sidecar (AI fills in `%LOCALAPPDATA%\PhotoEditor\fills`); only Lightroom's XMP lacks them. Next: Lightroom XMP for spots once a sample arrives, or Tone Curve.

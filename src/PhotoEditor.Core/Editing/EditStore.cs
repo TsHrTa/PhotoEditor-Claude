@@ -22,15 +22,18 @@ public enum EditSource
 /// </summary>
 public static class EditStore
 {
-    /// <summary>The app's JSON sidecar if there is one, otherwise Camera Raw settings from an XMP sidecar.</summary>
+    /// <summary>
+    /// The app's JSON sidecar if there is one, otherwise Camera Raw settings from an XMP sidecar, otherwise the
+    /// photo's default (<see cref="EditState.DefaultFor"/>: RAWs start with some sharpening and noise reduction).
+    /// </summary>
     public static (EditState State, EditSource Source) Load(string imagePath, ImageGeometry geometry)
     {
         // A JSON holding only a rating / flag is not an edit: then look at the XMP (e.g. edited in Lightroom).
-        if (SidecarFile.Load(imagePath) is { } doc && !doc.ToState().IsDefault)
+        if (SidecarFile.Load(imagePath) is { } doc && doc.IsEditFor(geometry.IsRaw))
             return (doc.ToState(), EditSource.Json);
-        if (LightroomXmp.Load(imagePath, geometry) is { IsDefault: false } imported)
+        if (LightroomXmp.Load(imagePath, geometry) is { } imported && !imported.IsDefaultFor(geometry.IsRaw))
             return (imported, EditSource.Xmp);
-        return (EditState.Default, EditSource.None);
+        return (EditState.DefaultFor(geometry.IsRaw), EditSource.None);
     }
 
     /// <summary>
@@ -39,9 +42,15 @@ public static class EditStore
     /// </summary>
     public static IReadOnlyList<string> Save(string imagePath, EditState state, ImageGeometry geometry)
     {
-        if (!state.IsDefault || SidecarFile.Exists(imagePath))
-            SidecarFile.Save(imagePath, EditDocument.From(state) with { Labels = ExistingLabels(imagePath) });
-        if (!state.IsDefault || File.Exists(LightroomXmp.PathFor(imagePath)))
+        bool edited = !state.IsDefaultFor(geometry.IsRaw);
+        if (edited || SidecarFile.Exists(imagePath))
+        {
+            SidecarFile.Save(imagePath, EditDocument.From(state) with
+            {
+                Labels = ExistingLabels(imagePath), Edited = edited ? true : null,
+            });
+        }
+        if (edited || File.Exists(LightroomXmp.PathFor(imagePath)))
             return LightroomXmp.Save(imagePath, state, geometry);
         return [];
     }

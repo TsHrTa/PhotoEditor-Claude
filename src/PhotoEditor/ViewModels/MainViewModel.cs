@@ -22,7 +22,8 @@ public partial class MainViewModel : ViewModelBase
     public MainViewModel()
     {
         var parameters = AdjustmentParameters.All
-            .Select(p => new ParameterViewModel(p, () => CurrentAdjustments, s => ApplyEdit(WithCurrentAdjustments(s), p.ToString())))
+            .Select(p => new ParameterViewModel(p, () => CurrentAdjustments, s => ApplyEdit(WithCurrentAdjustments(s), p.ToString()),
+                () => CurrentDefaults))
             .ToList();
         Parameters = parameters;
         Groups = parameters
@@ -75,6 +76,12 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>The adjustment set the sliders currently edit: the selected mask's, or the global one.</summary>
     public AdjustmentSettings CurrentAdjustments =>
         SelectedMask is { } item && State.FindMask(item.Id) is { } mask ? mask.Adjustments : State.Adjustments;
+
+    /// <summary>What the sliders reset to: the photo's defaults (RAWs start sharpened), or zero in a mask.</summary>
+    private AdjustmentSettings CurrentDefaults =>
+        SelectedMask is { } item && State.FindMask(item.Id) is not null
+            ? AdjustmentSettings.Default
+            : AdjustmentSettings.DefaultFor(_geometry.IsRaw);
 
     private EditState WithCurrentAdjustments(AdjustmentSettings settings) =>
         SelectedMask is { } item && State.FindMask(item.Id) is not null
@@ -755,7 +762,7 @@ public partial class MainViewModel : ViewModelBase
     private void ToggleBeforeAfter() => ShowOriginal = !ShowOriginal;
 
     [RelayCommand(CanExecute = nameof(CanResetAll))]
-    private void ResetAll() => ApplyEdit(EditState.Default);
+    private void ResetAll() => ApplyEdit(EditState.DefaultFor(_geometry.IsRaw));
 
     // ---- Copy / paste settings ----
 
@@ -856,7 +863,7 @@ public partial class MainViewModel : ViewModelBase
             $"Auto: exposure {a.Exposure:+0.00;-0.00;0}, contrast {a.Contrast:+0;-0;0}, highlights {a.Highlights:+0;-0;0}, shadows {a.Shadows:+0;-0;0}, whites {a.Whites:+0;-0;0}, blacks {a.Blacks:+0;-0;0}, temp {a.Temperature:+0;-0;0}, tint {a.Tint:+0;-0;0}, vibrance {a.Vibrance:+0;-0;0}");
     }
 
-    private bool CanResetAll() => !State.IsDefault;
+    private bool CanResetAll() => !State.IsDefaultFor(_geometry.IsRaw);
 
     /// <summary>Suggested export file name, e.g. "IMG_0001-edited.jpg".</summary>
     public string SuggestedExportName =>
@@ -909,7 +916,7 @@ public partial class MainViewModel : ViewModelBase
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)
         {
-            return (EditState.Default, $" – could not read saved edits: {ex.Message}");
+            return (EditState.DefaultFor(geometry.IsRaw), $" – could not read saved edits: {ex.Message}");
         }
     }
 }

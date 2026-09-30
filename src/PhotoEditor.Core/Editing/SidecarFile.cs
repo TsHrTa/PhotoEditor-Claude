@@ -24,6 +24,13 @@ public sealed record EditDocument
     /// <summary>Star rating and pick / reject flag (not part of the edit; null when never set).</summary>
     public PhotoLabels? Labels { get; init; }
 
+    /// <summary>
+    /// True when the file holds an edit. Needed for RAWs: an edit that took their default sharpening and noise
+    /// reduction away looks like the all-zero settings of a file that only holds a rating. Null in older files.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Edited { get; init; }
+
     public static EditDocument From(EditState state) =>
         new() { Adjustments = state.Adjustments, Masks = state.Masks, Spots = state.Spots, Crop = state.Crop, Orientation = state.Orientation };
 
@@ -31,6 +38,16 @@ public sealed record EditDocument
     {
         Adjustments = Adjustments, Masks = Masks, Spots = Spots, Crop = Crop, Orientation = new(Orientation.Turns, Orientation.Flip),
     };
+
+    /// <summary>
+    /// True when the file holds an edit of a RAW (<paramref name="isRaw"/>) or other photo, not just a rating or
+    /// flag (then the photo shows as unedited, with its default settings).
+    /// </summary>
+    public bool IsEditFor(bool isRaw)
+    {
+        var state = ToState();
+        return !state.IsDefaultFor(isRaw) && (Edited == true || !state.IsDefault);
+    }
 
     public bool Equals(EditDocument? other) =>
         other is not null && Version == other.Version && ToState() == other.ToState();
