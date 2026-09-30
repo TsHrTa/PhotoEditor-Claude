@@ -120,6 +120,20 @@ public sealed record AdjustmentSettings
     /// <summary>Manual lens vignetting −100..100 (positive brightens the corners). Whole image only.</summary>
     public double LensVignetting { get; init; }
 
+    /// <summary>
+    /// Transform (Lightroom's manual Transform panel), whole image only: perspective −100..100 (Vertical &lt; 0 widens
+    /// the top, straightening a building that leans back; Horizontal &gt; 0 enlarges the right side), rotation −10..10°
+    /// (clockwise), aspect −100..100 (positive stretches the width), scale 50..150 % and offset −100..100 (right / down).
+    /// The result is enlarged to fill the frame; a scale below 100 shows white borders.
+    /// </summary>
+    public double TransformVertical { get; init; }
+    public double TransformHorizontal { get; init; }
+    public double TransformRotate { get; init; }
+    public double TransformAspect { get; init; }
+    public double TransformScale { get; init; } = 100;
+    public double TransformOffsetX { get; init; }
+    public double TransformOffsetY { get; init; }
+
     /// <summary>Dehaze −100..100: removes (positive) or adds (negative) haze, based on the photo's haze map. Also in masks.</summary>
     public double Dehaze { get; init; }
 

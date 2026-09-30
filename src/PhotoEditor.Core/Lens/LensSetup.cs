@@ -91,9 +91,10 @@ public static class LensSetup
         if (settings.RemoveChromaticAberration && profile?.TcaModel is null && measureCa is not null)
             (red, blue) = measureCa();
         double manual = Math.Clamp(settings.LensDistortion, -100, 100) / 100;
+        var perspective = Perspective.For(settings, width, height);
         bool anything = profile is { DistortionModel: not null } or { TcaModel: not null } or { Vignetting: not null }
-            || manual != 0 || red != 1 || blue != 1;
-        return anything ? new LensCorrection(width, height, profile, crop, manual, red, blue) : null;
+            || manual != 0 || red != 1 || blue != 1 || perspective is not null;
+        return anything ? new LensCorrection(width, height, profile, crop, manual, red, blue, perspective) : null;
     }
 
     /// <summary>The database files (lensfun's data/db folder).</summary>

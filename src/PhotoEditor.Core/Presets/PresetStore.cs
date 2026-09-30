@@ -27,7 +27,9 @@ public static class PresetFactory
             Add(AdjustmentParameters.VignetteAmount, AdjustmentParameters.VignetteMidpoint,
                 AdjustmentParameters.VignetteRoundness, AdjustmentParameters.VignetteFeather);
         if (groups.HasFlag(SettingsGroups.Detail))
-            Add([.. AdjustmentParameters.GlobalOnly.Except(AdjustmentParameters.ToneCurveSliders)]);
+            Add([.. AdjustmentParameters.GlobalOnly.Except(AdjustmentParameters.ToneCurveSliders).Except(AdjustmentParameters.TransformSliders)]);
+        if (groups.HasFlag(SettingsGroups.Transform))
+            Add([.. AdjustmentParameters.TransformSliders]);
         return ids;
     }
 

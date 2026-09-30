@@ -106,10 +106,17 @@ public partial class MainViewModel
     private bool _lensRunning;
 
     /// <summary>The lens settings the correction depends on (manual vignetting is done live by the renderer).</summary>
-    private readonly record struct LensKey(bool Profile, bool Ca, double Distortion, string? Path);
+    private readonly record struct LensKey(bool Profile, bool Ca, double Distortion, string? Path, TransformKey Transform);
+
+    /// <summary>The Transform panel's values (they move pixels, so they are part of the corrected photo).</summary>
+    private readonly record struct TransformKey(double Vertical, double Horizontal, double Rotate, double Aspect, double Scale, double X, double Y)
+    {
+        public static TransformKey Of(AdjustmentSettings a) => new(a.TransformVertical, a.TransformHorizontal, a.TransformRotate,
+            a.TransformAspect, a.TransformScale, a.TransformOffsetX, a.TransformOffsetY);
+    }
 
     private LensKey CurrentLensKey => new(State.Adjustments.LensProfile, State.Adjustments.RemoveChromaticAberration,
-        State.Adjustments.LensDistortion, FilePath);
+        State.Adjustments.LensDistortion, FilePath, TransformKey.Of(State.Adjustments));
 
     /// <summary>The photo before spots: corrected, AI-restored or original.</summary>
     private PreviewImage? RetouchBase => _lensPreview ?? _workingPreview ?? _originalPreview;
@@ -210,7 +217,7 @@ public partial class MainViewModel
             var same = SKImage.FromPixels(pixmap, (_, context) => GC.KeepAlive(context), image)
                 ?? throw new InvalidOperationException("Could not wrap the photo.");
             Headroom.Attach(same, Headroom.Of(image));
-            LensVignetting.Attach(same, correction.VignettingTable);
+            LensVignetting.Attach(same, correction.Shading);
             ToneBaseMap.Share(image, same);
             HazeMap.Share(image, same);
             return (same, null);
@@ -221,7 +228,7 @@ public partial class MainViewModel
         corrected.SetImmutable();
         var result = SKImage.FromBitmap(corrected);
         Headroom.Attach(result, Headroom.Of(corrected));
-        LensVignetting.Attach(result, correction.VignettingTable);
+        LensVignetting.Attach(result, correction.Shading);
         return (result, corrected);
     }
 }

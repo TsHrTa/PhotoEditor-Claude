@@ -86,6 +86,12 @@ public static class AdjustmentShader
         uniform float lensVignetteOn;
         uniform float2 lensCenter;
         uniform float lensInvHalfDiagonal2;
+        // The Transform's map from an output position (from lensCenter, in half-diagonals) to the frame the table is
+        // made for (rows of a 3 × 3 projective matrix), used when lensMapOn = 1.
+        uniform float3 lensRow0;
+        uniform float3 lensRow1;
+        uniform float3 lensRow2;
+        uniform float lensMapOn;
         // Brightest linear value this pass hands on: 1 for the last pass, more between passes so a mask can
         // still bring back what an earlier pass pushed above white.
         uniform float outputLimit;
@@ -407,9 +413,14 @@ public static class AdjustmentShader
             // Linear light
             float3 c = float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b));
             if (lensVignetteOn > 0.0) {
-                float2 d = coord - lensCenter;
-                float r2 = dot(d, d) * lensInvHalfDiagonal2;
-                float gain = lensTableOn > 0.0 ? float(lensTable.eval(float2(clamp(r2, 0.0, 1.0) * 255.0 + 0.5, 0.5)).r) : 1.0;
+                float2 n = (coord - lensCenter) * sqrt(lensInvHalfDiagonal2);
+                float r2 = dot(n, n);
+                float2 m = n;
+                if (lensMapOn > 0.0) {
+                    float3 h = float3(n, 1.0);
+                    m = float2(dot(lensRow0, h), dot(lensRow1, h)) / dot(lensRow2, h);
+                }
+                float gain = lensTableOn > 0.0 ? float(lensTable.eval(float2(clamp(dot(m, m), 0.0, 1.0) * 255.0 + 0.5, 0.5)).r) : 1.0;
                 if (lensVignetteManual != 0.0) gain *= exp2(lensVignetteManual * r2);
                 c *= gain;
             }
@@ -510,10 +521,11 @@ public static class AdjustmentShader
             ? fineImage.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling)
             : SKShader.CreateColor(SKColors.Black);
         var extra = new HeadroomInput(headroomShader, headroomMap?.Scale ?? 0f, fineShader, headroomMap?.Fine is not null);
-        var table = Lens.LensVignetting.Of(image);
+        var shading = Lens.LensVignetting.Of(image);
+        var table = shading?.Table;
         using var tableShader = table is null ? SKShader.CreateColor(SKColors.White) : TableImage(table)
             .ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, new SKSamplingOptions(SKFilterMode.Linear));
-        var lens = new LensInput(tableShader, table is not null, image.Width, image.Height);
+        var lens = new LensInput(tableShader, table is not null, image.Width, image.Height, shading?.Matrix);
         var masks = state.Masks.Select(m => (Mask: m, Image: m.IsActive ? maskImage(m) : null)).Where(m => m.Image is not null).ToList();
         var frame = VignetteMath.Frame.From(state.Crop.Frame(image.Width, image.Height));
         // Soften taps are a whole number of full-resolution pixels apart (as on the CPU at export).
@@ -547,7 +559,7 @@ public static class AdjustmentShader
     private readonly record struct ToneInput(SKShader Shader, bool Bound);
 
     /// <summary>The drawn image's vignetting table (as a shader; Bound = false: none) and its size.</summary>
-    private readonly record struct LensInput(SKShader Table, bool Bound, int Width, int Height);
+    private readonly record struct LensInput(SKShader Table, bool Bound, int Width, int Height, float[]? Matrix);
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<float[], SKImage> TableImages = new();
 
@@ -657,6 +669,10 @@ public static class AdjustmentShader
             ["lensVignetteOn"] = sharpen && (lens.Bound || p.LensVignettingAmount != 0f) ? 1f : 0f,
             ["lensCenter"] = new[] { lens.Width / 2f, lens.Height / 2f },
             ["lensInvHalfDiagonal2"] = 4f / ((float)lens.Width * lens.Width + (float)lens.Height * lens.Height),
+            ["lensRow0"] = lens.Matrix is { } m0 ? new[] { m0[0], m0[1], m0[2] } : new[] { 1f, 0f, 0f },
+            ["lensRow1"] = lens.Matrix is { } m1 ? new[] { m1[3], m1[4], m1[5] } : new[] { 0f, 1f, 0f },
+            ["lensRow2"] = lens.Matrix is { } m2 ? new[] { m2[6], m2[7], m2[8] } : new[] { 0f, 0f, 1f },
+            ["lensMapOn"] = lens.Matrix is null ? 0f : 1f,
         };
         var children = new SKRuntimeEffectChildren(effect)
         {
@@ -694,7 +710,7 @@ public static class AdjustmentShader
         var retouched = Retouch.Retouching.Apply(corrected, state.Spots);
         try
         {
-            return RenderPrepared(retouched, state, correction?.VignettingTable);
+            return RenderPrepared(retouched, state, correction?.Shading);
         }
         finally
         {
@@ -705,7 +721,7 @@ public static class AdjustmentShader
         }
     }
 
-    private static SKBitmap RenderPrepared(SKBitmap source, EditState state, float[]? lensVignetting)
+    private static SKBitmap RenderPrepared(SKBitmap source, EditState state, Lens.LensShading? lensVignetting)
     {
         var info = new SKImageInfo(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
         using var image = SKImage.FromBitmap(source);

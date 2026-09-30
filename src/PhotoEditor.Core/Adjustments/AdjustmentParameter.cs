@@ -47,6 +47,7 @@ public static class AdjustmentParameters
     public const string Effects = "Effects";
     public const string Lens = "Lens corrections";
     public const string ToneCurve = "Tone curve";
+    public const string Transform = "Transform";
     public const string HslHue = "HSL · Hue";
     public const string HslSaturation = "HSL · Saturation";
     public const string HslLuminance = "HSL · Luminance";
@@ -141,6 +142,27 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter LensVignetting =
         new(Lens, "Vignetting", -100, 100, s => s.LensVignetting, (s, v) => s with { LensVignetting = v }, id: "lensVignetting");
 
+    public static readonly AdjustmentParameter TransformVertical =
+        new(Transform, "Vertical", -100, 100, s => s.TransformVertical, (s, v) => s with { TransformVertical = v }, id: "transformVertical");
+
+    public static readonly AdjustmentParameter TransformHorizontal =
+        new(Transform, "Horizontal", -100, 100, s => s.TransformHorizontal, (s, v) => s with { TransformHorizontal = v }, id: "transformHorizontal");
+
+    public static readonly AdjustmentParameter TransformRotate =
+        new(Transform, "Rotate", -10, 10, s => s.TransformRotate, (s, v) => s with { TransformRotate = v }, format: "+0.0°;-0.0°;0.0°", step: 0.1, id: "transformRotate");
+
+    public static readonly AdjustmentParameter TransformAspect =
+        new(Transform, "Aspect", -100, 100, s => s.TransformAspect, (s, v) => s with { TransformAspect = v }, id: "transformAspect");
+
+    public static readonly AdjustmentParameter TransformScale =
+        new(Transform, "Scale", 50, 150, s => s.TransformScale, (s, v) => s with { TransformScale = v }, defaultValue: 100, id: "transformScale");
+
+    public static readonly AdjustmentParameter TransformOffsetX =
+        new(Transform, "X offset", -100, 100, s => s.TransformOffsetX, (s, v) => s with { TransformOffsetX = v }, format: "0.0", step: 0.1, id: "transformOffsetX");
+
+    public static readonly AdjustmentParameter TransformOffsetY =
+        new(Transform, "Y offset", -100, 100, s => s.TransformOffsetY, (s, v) => s with { TransformOffsetY = v }, format: "0.0", step: 0.1, id: "transformOffsetY");
+
     public static readonly AdjustmentParameter DefringePurpleHueLow =
         new(Lens, "Purple hue from", 0, 100, s => s.DefringePurpleHueLow, (s, v) => s with { DefringePurpleHueLow = v }, defaultValue: 30, id: "defringePurpleHueLow");
 
@@ -175,7 +197,12 @@ public static class AdjustmentParameters
     public static readonly IReadOnlyList<AdjustmentParameter> GlobalOnly =
         [DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor,
          LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
-         CurveHighlights, CurveLights, CurveDarks, CurveShadows, CurveShadowSplit, CurveMidtoneSplit, CurveHighlightSplit];
+         CurveHighlights, CurveLights, CurveDarks, CurveShadows, CurveShadowSplit, CurveMidtoneSplit, CurveHighlightSplit,
+         TransformVertical, TransformHorizontal, TransformRotate, TransformAspect, TransformScale, TransformOffsetX, TransformOffsetY];
+
+    /// <summary>The Transform panel's sliders.</summary>
+    public static readonly IReadOnlyList<AdjustmentParameter> TransformSliders =
+        [TransformVertical, TransformHorizontal, TransformRotate, TransformAspect, TransformScale, TransformOffsetX, TransformOffsetY];
 
     /// <summary>The tone curve panel's sliders (the point curves are not sliders).</summary>
     public static readonly IReadOnlyList<AdjustmentParameter> ToneCurveSliders =
@@ -193,6 +220,7 @@ public static class AdjustmentParameters
         Texture, Clarity, Dehaze, Soften,
         DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor,
         LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
+        TransformVertical, TransformHorizontal, TransformRotate, TransformAspect, TransformScale, TransformOffsetX, TransformOffsetY,
     ];
 
     /// <summary>Parameter with the given <see cref="AdjustmentParameter.Id"/>, or null.</summary>

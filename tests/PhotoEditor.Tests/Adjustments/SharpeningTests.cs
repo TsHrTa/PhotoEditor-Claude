@@ -82,7 +82,7 @@ public class SharpeningTests
     }
 
     [Fact]
-    public void GlobalOnly_ListsTheDetailLensAndToneCurveSliders() =>
+    public void GlobalOnly_ListsTheDetailLensToneCurveAndTransformSliders() =>
         Assert.All(AdjustmentParameters.GlobalOnly, p => Assert.Contains(p.Group,
-            new[] { AdjustmentParameters.Detail, AdjustmentParameters.Lens, AdjustmentParameters.ToneCurve }));
+            new[] { AdjustmentParameters.Detail, AdjustmentParameters.Lens, AdjustmentParameters.ToneCurve, AdjustmentParameters.Transform }));
 }

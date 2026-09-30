@@ -53,6 +53,26 @@ public sealed class LensRenderTests : IDisposable
     }
 
     [Fact]
+    public void ProfileVignetting_WithATransform_IsStillRemoved()
+    {
+        // The gain must follow each output pixel back through the Transform to where it is in the lens's frame.
+        using var photo = Vignetted();
+        var state = new EditState
+        {
+            Adjustments = new AdjustmentSettings { LensProfile = true, TransformVertical = -45, TransformHorizontal = 20, TransformRotate = 3 },
+        };
+        using var cpu = CpuAdjustmentRenderer.Render(photo, state, Shot);
+        using var gpu = AdjustmentShader.RenderRaster(photo, state, Shot);
+        var bad = new List<string>();
+        for (int y = 2; y < 400; y += 33)
+            for (int x = 2; x < 600; x += 37)
+                if (cpu.GetPixel(x, y).Red is < 145 or > 155)
+                    bad.Add($"({x},{y})={cpu.GetPixel(x, y).Red}");
+        Assert.True(bad.Count == 0, string.Join(" ", bad));
+        Assert.True(TestImages.MaxDifference(cpu, gpu, out var at) <= 2, $"difference at {at}");
+    }
+
+    [Fact]
     public void ManualCorrections_ShaderMatchesCpu()
     {
         using var photo = TestImages.Varied(120, 80, withAlpha: false);
@@ -61,6 +81,7 @@ public sealed class LensRenderTests : IDisposable
             new AdjustmentSettings { LensVignetting = 60, Exposure = -0.3 },
             new AdjustmentSettings { LensDistortion = 40, LensVignetting = -30 },
             new AdjustmentSettings { LensProfile = true, RemoveChromaticAberration = true, Contrast = 20 },
+            new AdjustmentSettings { TransformVertical = 30, TransformAspect = -20, TransformScale = 80, LensVignetting = 50 },
         })
         {
             var state = new EditState { Adjustments = settings };

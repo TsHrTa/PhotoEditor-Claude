@@ -34,10 +34,13 @@ public enum SettingsGroups
     /// <summary>Tone curve panel: the parametric regions and the point curves.</summary>
     ToneCurve = 256,
 
+    /// <summary>Transform panel (perspective, rotation, aspect, scale, offset).</summary>
+    Transform = 512,
+
     /// <summary>What "Copy settings" selects initially (crop and masks usually belong to one photo).</summary>
     Default = Light | Color | ToneCurve | Hsl | Vignette | Detail,
 
-    All = Default | Crop | Masks | Spots,
+    All = Default | Crop | Masks | Spots | Transform,
 }
 
 /// <summary>Copies selected parts of one photo's edit onto another's.</summary>
@@ -75,6 +78,10 @@ public static class SettingsTransfer
                 DefringeGreenHueLow = s.DefringeGreenHueLow, DefringeGreenHueHigh = s.DefringeGreenHueHigh,
                 LensProfile = s.LensProfile, RemoveChromaticAberration = s.RemoveChromaticAberration,
                 LensDistortion = s.LensDistortion, LensVignetting = s.LensVignetting };
+
+        if (groups.HasFlag(SettingsGroups.Transform))
+            a = a with { TransformVertical = s.TransformVertical, TransformHorizontal = s.TransformHorizontal, TransformRotate = s.TransformRotate,
+                TransformAspect = s.TransformAspect, TransformScale = s.TransformScale, TransformOffsetX = s.TransformOffsetX, TransformOffsetY = s.TransformOffsetY };
 
         var result = target with { Adjustments = a };
         if (groups.HasFlag(SettingsGroups.Crop))

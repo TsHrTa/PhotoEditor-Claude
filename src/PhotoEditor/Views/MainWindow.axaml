@@ -65,6 +65,7 @@
                             <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />
                             <CheckBox Content="Detail and lens corrections" IsChecked="{Binding CopyDetail}" />
                             <CheckBox Content="Crop and straighten" IsChecked="{Binding CopyCrop}" />
+                            <CheckBox Content="Transform" IsChecked="{Binding CopyTransform}" />
                             <CheckBox Content="Masks" IsChecked="{Binding CopyMasks}" />
                             <CheckBox Content="Spot removal" IsChecked="{Binding CopySpots}" />
                             <Button Content="Copy" HorizontalAlignment="Right" Click="OnCopySettingsClick" />

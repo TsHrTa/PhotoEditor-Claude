@@ -23,8 +23,9 @@ public sealed class LensCorrection
     /// <param name="manualDistortion">Manual distortion −1..1 (positive corrects barrel distortion).</param>
     /// <param name="redScale">Extra radial scale of the red image (automatic chromatic aberration, 1 = none).</param>
     /// <param name="blueScale">Same for blue.</param>
+    /// <param name="perspective">The Transform panel's map (applied before the lens corrections), or null.</param>
     public LensCorrection(int width, int height, LensProfile? profile, double cropFactor, double manualDistortion = 0,
-        double redScale = 1, double blueScale = 1)
+        double redScale = 1, double blueScale = 1, Perspective? perspective = null)
     {
         Width = width;
         Height = height;
@@ -32,6 +33,7 @@ public sealed class LensCorrection
         ManualDistortion = manualDistortion;
         RedScale = redScale;
         BlueScale = blueScale;
+        Perspective = perspective;
         _halfDiagonal = Math.Sqrt((double)width * width + (double)height * height) / 2;
         _mmPerPixel = LensProfile.FullFrameDiagonal / Math.Max(cropFactor, 0.1) / (2 * _halfDiagonal);
         Zoom = IsGeometryIdentity ? 1 : FindZoom();
@@ -44,6 +46,9 @@ public sealed class LensCorrection
     public double RedScale { get; }
     public double BlueScale { get; }
 
+    /// <summary>The Transform panel's map from the output to the photo (before the lens corrections), or null.</summary>
+    public Perspective? Perspective { get; }
+
     /// <summary>Enlargement so the corrected photo fills the frame (≥ 1).</summary>
     public double Zoom { get; }
 
@@ -52,7 +57,7 @@ public sealed class LensCorrection
 
     /// <summary>Nothing moves.</summary>
     public bool IsGeometryIdentity =>
-        (Profile is null || (Profile.DistortionModel is null && Profile.TcaModel is null)) && ManualDistortion == 0
+        Perspective is null && (Profile is null || (Profile.DistortionModel is null && Profile.TcaModel is null)) && ManualDistortion == 0
         && RedScale == 1 && BlueScale == 1;
 
     /// <summary>
@@ -92,6 +97,13 @@ public sealed class LensCorrection
         return (green * red * RedScale, green, green * blue * BlueScale);
     }
 
+    /// <summary>
+    /// An output offset from the centre as the offset the lens corrections work on: unzoomed and, with a
+    /// <see cref="Perspective"/>, taken through its map (<paramref name="map"/>).
+    /// </summary>
+    private static (double X, double Y) ToLens(double dx, double dy, Matrix3? map, double zoom) =>
+        map is { } m ? m.Apply(dx / zoom, dy / zoom) : (dx / zoom, dy / zoom);
+
     /// <summary>The smallest enlargement (≥ 1) for which every border pixel takes its colours from inside the photo.</summary>
     private double FindZoom()
     {
@@ -103,7 +115,7 @@ public sealed class LensCorrection
                 double t = (double)i / samples;
                 foreach (var (x, y) in new[] { (t * Width, 0.0), (t * Width, (double)Height), (0.0, t * Height), ((double)Width, t * Height) })
                 {
-                    double ux = (x - Width / 2.0) / zoom, uy = (y - Height / 2.0) / zoom;
+                    var (ux, uy) = ToLens(x - Width / 2.0, y - Height / 2.0, Perspective?.Fill, zoom);
                     var f = Uncorrected(ux, uy);
                     foreach (double k in new[] { f.Red, f.Green, f.Blue })
                     {
@@ -151,9 +163,18 @@ public sealed class LensCorrection
     public const int VignettingTableSize = 256;
 
     /// <summary>
-    /// The vignetting gain for the corrected photo by r² (r = 1 at its corner), as <see cref="VignettingTableSize"/>
-    /// half-float-rounded entries: each output radius is traced back to where its pixels come from in the photo
-    /// (distortion is radial), so steep vignetting near the corners is removed exactly. Null without data.
+    /// How far (in half-diagonals, ≥ 1) from the centre the lens corrections look, before their radial part: the
+    /// range of <see cref="VignettingTable"/>.
+    /// </summary>
+    private double LensReach => _lensReach ??= Math.Max(1, MaxLensDistance() / _halfDiagonal);
+    private double? _lensReach;
+
+    /// <summary>
+    /// The vignetting gain by r² of the position the lens corrections start from (unzoomed, after the Transform;
+    /// r = 1 at <see cref="LensReach"/> half-diagonals), as <see cref="VignettingTableSize"/> half-float-rounded
+    /// entries: each position is traced to where its pixels come from in the photo (distortion is radial), so steep
+    /// vignetting near the corners is removed exactly. The renderers get there from an output position through
+    /// <see cref="LensShading.Matrix"/>. Null without data.
     /// </summary>
     public float[]? VignettingTable
     {
@@ -162,15 +183,30 @@ public sealed class LensCorrection
             if (VignettingTerms is not { } k)
                 return null;
             var table = new float[VignettingTableSize];
-            double angle = Math.Atan2(Height, Width); // along the diagonal
             for (int i = 0; i < VignettingTableSize; i++)
             {
-                double r = Math.Sqrt((double)i / (VignettingTableSize - 1)) * _halfDiagonal;
-                double green = Factors(r * Math.Cos(angle), r * Math.Sin(angle)).Green;
-                double source = r * green / _halfDiagonal;
+                double u = Math.Sqrt((double)i / (VignettingTableSize - 1)) * _halfDiagonal * LensReach;
+                double source = u * Uncorrected(u, 0).Green / _halfDiagonal;
                 table[i] = (float)(Half)LensVignetting.GainFromTerms(k, (float)(source * source));
             }
             return table;
+        }
+    }
+
+    /// <summary>
+    /// What the renderers need for the lens vignetting: <see cref="VignettingTable"/> and the map from an output
+    /// position (from the centre, in half-diagonals) to the position the table is indexed by. Null without a table.
+    /// </summary>
+    public LensShading? Shading
+    {
+        get
+        {
+            if (VignettingTable is not { } table)
+                return null;
+            double reach = _halfDiagonal * LensReach;
+            var map = Matrix3.Scale(1 / reach, 1 / reach) * (Perspective?.Full ?? Matrix3.Identity)
+                * Matrix3.Scale(_halfDiagonal / Zoom, _halfDiagonal / Zoom);
+            return new LensShading(table, map == Matrix3.Identity ? null : map.ToArray());
         }
     }
 
@@ -201,16 +237,32 @@ public sealed class LensCorrection
     private const int RadialTableSize = 4096;
 
     /// <summary>
-    /// Red, green and blue factors (see <see cref="Factors"/>) at squared distances 0 … half-diagonal² — the
-    /// corrections are radial, so the warp interpolates this table instead of evaluating them per pixel.
+    /// The largest distance from the centre (unzoomed, see <see cref="ToLens"/>) an output pixel takes its colours
+    /// from: at a corner of the frame (the frame's image under a projective map is a quadrilateral).
     /// </summary>
-    private float[] RadialTable()
+    private double MaxLensDistance()
+    {
+        double max = 0;
+        foreach (var (x, y) in new[] { (-Width / 2.0, -Height / 2.0), (Width / 2.0, -Height / 2.0), (-Width / 2.0, Height / 2.0), (Width / 2.0, Height / 2.0) })
+        {
+            var (ux, uy) = ToLens(x, y, Perspective?.Full, Zoom);
+            max = Math.Max(max, Math.Sqrt(ux * ux + uy * uy));
+        }
+        return max;
+    }
+
+    /// <summary>
+    /// Red, green and blue factors of the lens corrections (unzoomed: the photo position is the offset × factor) at
+    /// squared distances 0 … <paramref name="maxDistance"/>² — they are radial, so the warp interpolates this table
+    /// instead of evaluating them per pixel.
+    /// </summary>
+    private float[] RadialTable(double maxDistance)
     {
         var table = new float[RadialTableSize * 3];
         for (int i = 0; i < RadialTableSize; i++)
         {
-            double d = Math.Sqrt((double)i / (RadialTableSize - 1)) * _halfDiagonal;
-            var (r, g, b) = Factors(d, 0);
+            double d = Math.Sqrt((double)i / (RadialTableSize - 1)) * maxDistance;
+            var (r, g, b) = Uncorrected(d, 0);
             table[i * 3] = (float)r;
             table[i * 3 + 1] = (float)g;
             table[i * 3 + 2] = (float)b;
@@ -220,7 +272,10 @@ public sealed class LensCorrection
 
     private unsafe void Warp(SKBitmap photo, SKBitmap? above, SKBitmap? fine, SKBitmap outPhoto, SKBitmap? outAbove, SKBitmap? outFine)
     {
-        var table = RadialTable();
+        double maxDistance = MaxLensDistance() * 1.001 + 1;
+        var table = RadialTable(maxDistance);
+        var map = Perspective?.Full;
+        float zoom = (float)Zoom;
         bool sameForAll = Profile?.TcaModel is null && RedScale == 1 && BlueScale == 1;
         var inP = new Plane(photo);
         var outP = new Plane(outPhoto);
@@ -230,7 +285,7 @@ public sealed class LensCorrection
         var outF = outFine is null ? default : new Plane(outFine);
         int w = Width, h = Height;
         float cx = w / 2f, cy = h / 2f;
-        float toIndex = (RadialTableSize - 1) / (float)(_halfDiagonal * _halfDiagonal);
+        float toIndex = (RadialTableSize - 1) / (float)(maxDistance * maxDistance);
         Parallel.For(0, h, y =>
         {
             float dy = y + 0.5f - cy;
@@ -239,12 +294,34 @@ public sealed class LensCorrection
             byte* of = outF.IsSet ? outF.At(0, y) : null;
             for (int x = 0; x < w; x++, o += 4)
             {
-                float dx = x + 0.5f - cx;
-                float t = MathF.Min((dx * dx + dy * dy) * toIndex, RadialTableSize - 1.001f);
+                float ux = (x + 0.5f - cx) / zoom, uy = dy / zoom;
+                if (map is { } m)
+                {
+                    var (px, py) = m.Apply(ux, uy);
+                    (ux, uy) = ((float)px, (float)py);
+                }
+                float t = MathF.Min((ux * ux + uy * uy) * toIndex, RadialTableSize - 1.001f);
                 int i = (int)t;
                 float frac = t - i;
                 float kg = table[i * 3 + 1] + (table[i * 3 + 4] - table[i * 3 + 1]) * frac;
-                var tapsG = new Taps(cx + dx * kg, cy + dy * kg, w, h);
+                float sx = cx + ux * kg, sy = cy + uy * kg;
+                if (sx < -0.5f || sy < -0.5f || sx > w + 0.5f || sy > h + 0.5f)
+                {
+                    // Outside the photo (a Transform scale below 100 %): white, like Lightroom.
+                    o[0] = o[1] = o[2] = o[3] = 255;
+                    if (oa != null)
+                    {
+                        oa[x * 4] = oa[x * 4 + 1] = oa[x * 4 + 2] = 0;
+                        oa[x * 4 + 3] = 255;
+                    }
+                    if (of != null)
+                    {
+                        of[x * 4] = of[x * 4 + 1] = of[x * 4 + 2] = (byte)Headroom.FineZero;
+                        of[x * 4 + 3] = 255;
+                    }
+                    continue;
+                }
+                var tapsG = new Taps(sx, sy, w, h);
                 if (sameForAll)
                 {
                     for (int ch = 0; ch < 3; ch++)
@@ -254,9 +331,9 @@ public sealed class LensCorrection
                 {
                     float kr = table[i * 3] + (table[i * 3 + 3] - table[i * 3]) * frac;
                     float kb = table[i * 3 + 2] + (table[i * 3 + 5] - table[i * 3 + 2]) * frac;
-                    Channel(0, new Taps(cx + dx * kr, cy + dy * kr, w, h), x);
+                    Channel(0, new Taps(cx + ux * kr, cy + uy * kr, w, h), x);
                     Channel(1, tapsG, x);
-                    Channel(2, new Taps(cx + dx * kb, cy + dy * kb, w, h), x);
+                    Channel(2, new Taps(cx + ux * kb, cy + uy * kb, w, h), x);
                 }
                 o[3] = (byte)(inP.Sample(tapsG, 3) + 0.5f);
                 // premultiplied: a colour never exceeds its alpha
@@ -331,19 +408,39 @@ public sealed class LensCorrection
 }
 
 /// <summary>
-/// The lens vignetting gain table (<see cref="LensCorrection.VignettingTable"/>) attached to a photo image the
+/// The lens vignetting for the renderers (<see cref="LensCorrection.Shading"/>): the gain table by r² (null = no
+/// profile vignetting) and the Transform's map to the frame the table is made for (null = none).
+/// </summary>
+public sealed record LensShading(float[]? Table, float[]? Matrix);
+
+/// <summary>
+/// The lens vignetting (<see cref="LensShading"/>) attached to a photo image the
 /// viewer shows, read by the shader; and the gain formula both renderers use.
 /// </summary>
 public static class LensVignetting
 {
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, float[]> Attached = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, LensShading> Attached = new();
 
-    public static float[]? Of(object? photo) => photo is not null && Attached.TryGetValue(photo, out var k) ? k : null;
+    public static LensShading? Of(object? photo) => photo is not null && Attached.TryGetValue(photo, out var k) ? k : null;
 
-    public static void Attach(object photo, float[]? table)
+    public static void Attach(object photo, LensShading? shading)
     {
-        if (table is not null)
-            Attached.AddOrUpdate(photo, table);
+        if (shading is not null)
+            Attached.AddOrUpdate(photo, shading);
+    }
+
+    /// <summary>
+    /// r² for the lens vignetting at an output position (<paramref name="nx"/>, <paramref name="ny"/>) from the centre
+    /// in half-diagonals: through the Transform's map when there is one (<paramref name="matrix"/>, row-major 3 × 3).
+    /// Mirrored in the shader.
+    /// </summary>
+    public static float R2(float[]? matrix, float nx, float ny)
+    {
+        if (matrix is null)
+            return nx * nx + ny * ny;
+        float w = matrix[6] * nx + matrix[7] * ny + matrix[8];
+        float x = (matrix[0] * nx + matrix[1] * ny + matrix[2]) / w, y = (matrix[3] * nx + matrix[4] * ny + matrix[5]) / w;
+        return x * x + y * y;
     }
 
     /// <summary>
@@ -351,12 +448,18 @@ public static class LensVignetting
     /// (<paramref name="table"/>, interpolated linearly like a texture; null = none) and the manual vignetting
     /// (−1..1, ±1 stop at the corner) applied. Mirrored in the shader.
     /// </summary>
-    public static float Gain(float[]? table, float manual, float r2)
+    public static float Gain(float[]? table, float manual, float r2) => Gain(table, r2, manual, r2);
+
+    /// <summary>
+    /// As above, with the table looked up at <paramref name="tableR2"/> (see <see cref="R2"/>) and the manual
+    /// vignetting at the output's own <paramref name="r2"/>.
+    /// </summary>
+    public static float Gain(float[]? table, float tableR2, float manual, float r2)
     {
         float gain = 1f;
         if (table is not null)
         {
-            float t = Math.Clamp(r2, 0f, 1f) * (table.Length - 1);
+            float t = Math.Clamp(tableR2, 0f, 1f) * (table.Length - 1);
             int i = Math.Min((int)t, table.Length - 2);
             gain = table[i] + (table[i + 1] - table[i]) * (t - i);
         }

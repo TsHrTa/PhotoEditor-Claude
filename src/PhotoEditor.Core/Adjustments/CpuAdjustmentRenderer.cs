@@ -32,7 +32,7 @@ public static class CpuAdjustmentRenderer
             var retouched = Retouch.Retouching.Apply(corrected, state.Spots);
             try
             {
-                return RenderCorrected(retouched, state, correction?.VignettingTable);
+                return RenderCorrected(retouched, state, correction?.Shading);
             }
             finally
             {
@@ -48,7 +48,7 @@ public static class CpuAdjustmentRenderer
     }
 
     /// <summary>Renders a photo whose lens corrections (except the vignetting, <paramref name="lensVignetting"/>) and spots are done.</summary>
-    private static SKBitmap RenderCorrected(SKBitmap source, EditState state, float[]? lensVignetting)
+    private static SKBitmap RenderCorrected(SKBitmap source, EditState state, Lens.LensShading? lensVignetting)
     {
         using var src = source.ColorType == SKColorType.Rgba8888 && source.AlphaType == SKAlphaType.Premul
             ? null
@@ -317,16 +317,16 @@ public static class CpuAdjustmentRenderer
     }
 
     /// <summary>Lens vignetting of the whole image: r = 1 at the corner.</summary>
-    private readonly struct LensGain(float[]? table, float manual, int width, int height)
+    private readonly struct LensGain(Lens.LensShading? shading, float manual, int width, int height)
     {
-        private readonly float _invHalfDiagonal2 = 4f / ((float)width * width + (float)height * height);
+        private readonly float _invHalfDiagonal = 2f / MathF.Sqrt((float)width * width + (float)height * height);
 
-        public bool IsActive => table is not null || manual != 0f;
+        public bool IsActive => shading?.Table is not null || manual != 0f;
 
         public float At(int x, int y)
         {
-            float dx = x + 0.5f - width / 2f, dy = y + 0.5f - height / 2f;
-            return Lens.LensVignetting.Gain(table, manual, (dx * dx + dy * dy) * _invHalfDiagonal2);
+            float nx = (x + 0.5f - width / 2f) * _invHalfDiagonal, ny = (y + 0.5f - height / 2f) * _invHalfDiagonal;
+            return Lens.LensVignetting.Gain(shading?.Table, Lens.LensVignetting.R2(shading?.Matrix, nx, ny), manual, nx * nx + ny * ny);
         }
     }
 

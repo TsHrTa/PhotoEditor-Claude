@@ -199,6 +199,16 @@ public static class LightroomXmp
         Set("DefringePurpleHueHi", Number(a.DefringePurpleHueHigh, "0"));
         Set("DefringeGreenHueLo", Number(a.DefringeGreenHueLow, "0"));
         Set("DefringeGreenHueHi", Number(a.DefringeGreenHueHigh, "0"));
+        // Transform panel (Lightroom's own manual transform; it doesn't know this app fills the frame, so it shows the
+        // empty corners unless its "Constrain Crop" is ticked).
+        Set("PerspectiveVertical", Signed(a.TransformVertical));
+        Set("PerspectiveHorizontal", Signed(a.TransformHorizontal));
+        Set("PerspectiveRotate", Signed(a.TransformRotate, "0.0"));
+        Set("PerspectiveAspect", Signed(a.TransformAspect));
+        Set("PerspectiveScale", Number(a.TransformScale, "0"));
+        Set("PerspectiveX", Signed(a.TransformOffsetX, "0.0"));
+        Set("PerspectiveY", Signed(a.TransformOffsetY, "0.0"));
+
         // Tone curve panel
         Set("ParametricShadows", Signed(a.CurveShadows));
         Set("ParametricDarks", Signed(a.CurveDarks));
@@ -528,6 +538,13 @@ public static class LightroomXmp
             DefringePurpleHueHigh = Get("DefringePurpleHueHi", 70),
             DefringeGreenHueLow = Get("DefringeGreenHueLo", 40),
             DefringeGreenHueHigh = Get("DefringeGreenHueHi", 60),
+            TransformVertical = Get("PerspectiveVertical"),
+            TransformHorizontal = Get("PerspectiveHorizontal"),
+            TransformRotate = Get("PerspectiveRotate"),
+            TransformAspect = Get("PerspectiveAspect"),
+            TransformScale = Get("PerspectiveScale", 100),
+            TransformOffsetX = Get("PerspectiveX"),
+            TransformOffsetY = Get("PerspectiveY"),
             CurveShadows = Get("ParametricShadows"),
             CurveDarks = Get("ParametricDarks"),
             CurveLights = Get("ParametricLights"),
