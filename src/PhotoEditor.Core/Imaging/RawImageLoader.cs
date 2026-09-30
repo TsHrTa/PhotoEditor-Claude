@@ -25,8 +25,9 @@ public sealed record RawMetadata
 }
 
 /// <summary>
-/// Decodes camera RAW files (Canon CR3/CR2, Nikon NEF, Sony ARW, DNG, …) with LibRaw via Magick.NET.
-/// LibRaw demosaics with the camera white balance into sRGB and already rotates the pixels upright.
+/// Decodes camera RAW files (Canon CR3/CR2, Nikon NEF, Sony ARW, DNG, …) with LibRaw (Sdcb.LibRaw), with highlight
+/// reconstruction so clipped skies keep their shading; Magick.NET's LibRaw is the fallback. LibRaw demosaics with the
+/// camera white balance into sRGB and rotates the pixels upright.
 /// </summary>
 public static class RawImageLoader
 {
@@ -60,9 +61,79 @@ public static class RawImageLoader
 
     /// <summary>
     /// Decodes the RAW file into an 8-bit RGBA bitmap that looks as LibRaw's default output; the highlights above
-    /// white and the finer shadow steps are attached as its <see cref="Headroom"/>.
+    /// white and the finer shadow steps are attached as its <see cref="Headroom"/>. Upright (the file's orientation
+    /// applied).
     /// </summary>
     public static SKBitmap Load(string path)
+    {
+        try
+        {
+            return LoadWithLibRaw(path);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Files the bundled LibRaw doesn't know: ImageMagick's (highlights clipped at white balance, see below).
+            return LoadWithMagick(path);
+        }
+    }
+
+    /// <summary>
+    /// LibRaw directly, with highlight reconstruction (mode 5, "rebuild"). LibRaw's default (mode 0) scales the
+    /// channels up for white balance and clips at the top, so red / blue lose everything above the level where
+    /// green is still fine: bright clouds became flat white although the sensor had their detail. With
+    /// reconstruction the multipliers are scaled down (nothing clips before the sensor does) and areas where a
+    /// channel did clip on the sensor are rebuilt from the others; <see cref="Develop"/> keeps it all as headroom.
+    /// </summary>
+    private static SKBitmap LoadWithLibRaw(string path)
+    {
+        using var context = Sdcb.LibRaw.RawContext.OpenFile(path);
+        context.Unpack();
+        context.HighlightMode = LibRawHighlightMode;
+        context.AutoBright = false;
+        context.OutputBitsPerSample = 16;
+        context.DemosaicAlgorithm = Sdcb.LibRaw.DemosaicAlgorithm.PatternedPixelGrouping;
+        context.DcrawProcess();
+        using var image = context.MakeDcrawMemoryImage(); // flip applied: upright
+        if (image.Channels != 3 || image.Bits != 16)
+            throw new InvalidDataException($"Unexpected LibRaw output ({image.Channels} channels, {image.Bits} bits)");
+        var rgb = MemoryMarshal.Cast<byte, ushort>(image.AsSpan<byte>()).ToArray();
+        var multipliers = context.PreMultipler.Take(3).Where(m => m > 0).ToArray();
+        if (multipliers.Length == 3)
+            NeutralizeClipped(rgb, multipliers.Min() / multipliers.Max());
+        return Develop(rgb, image.Width, image.Height);
+    }
+
+    /// <summary>
+    /// Where the sensor clipped, the reconstruction can't know the clipped channel's true value: it stays near its
+    /// clip level while the others keep rising, which tints clipped cloud cores pink (green clips first). With
+    /// highlight reconstruction LibRaw scales the channels by pre_mul / max(pre_mul), so a neutral highlight the
+    /// sensor clipped has all channels at or above the lowest channel's clip level, min(pre_mul) (linear, 0..1).
+    /// Pixels whose darkest channel approaches it are blended towards neutral at their brightest channel
+    /// (smoothly from 85 % of that level, fully at it); coloured pixels (one channel low) are untouched.
+    /// </summary>
+    public static void NeutralizeClipped(ushort[] rgb, double clipLevel)
+    {
+        if (!(clipLevel > 0 && clipLevel < 1))
+            return;
+        float to = (float)(ToCurve(clipLevel) * 65535), from = (float)(ToCurve(clipLevel * 0.85) * 65535);
+        Parallel.For(0, rgb.Length / 3, i =>
+        {
+            int k = i * 3;
+            float low = Math.Min(rgb[k], Math.Min(rgb[k + 1], rgb[k + 2]));
+            if (low <= from)
+                return;
+            float t = Math.Clamp((low - from) / (to - from), 0f, 1f);
+            float w = t * t * (3 - 2 * t);
+            int top = Math.Max(rgb[k], Math.Max(rgb[k + 1], rgb[k + 2]));
+            for (int c = 0; c < 3; c++)
+                rgb[k + c] = (ushort)Math.Round(rgb[k + c] + (top - rgb[k + c]) * w);
+        });
+    }
+
+    /// <summary>LibRaw's highlight mode: 5 = rebuild (0 clip, 1 unclip — pink where green clipped, 2 blend).</summary>
+    public const int LibRawHighlightMode = 5;
+
+    private static SKBitmap LoadWithMagick(string path)
     {
         ushort[] rgb;
         int width, height;

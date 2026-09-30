@@ -122,7 +122,10 @@ public static class AdjustmentShader
             return x < 0.5 ? 0.5 * pow(2.0 * x, g) : 1.0 - 0.5 * pow(2.0 - 2.0 * x, g);
         }
 
-        float highlightsStep(float x, float a) { return x + a * smoothstep(0.35, 1.0, x); }
+        float highlightsStep(float x, float a) {
+            if (a < 0.0 && x > 1.0) { float d = x - 1.0; return 1.0 + a + d / (1.0 - 10.0 * a * d); }
+            return x + a * smoothstep(0.35, 1.0, x);
+        }
         float shadowsStep(float x, float a) {
             float xs = clamp(x, 0.0, 1.0);
             return x + a * 6.75 * xs * (1.0 - xs) * (1.0 - xs);

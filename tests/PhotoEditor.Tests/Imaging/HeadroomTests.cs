@@ -255,12 +255,79 @@ public sealed class HeadroomTests
         var settings = new ImageMagick.MagickReadSettings();
         settings.SetDefines(new ImageMagick.Formats.DngReadDefines { InterpolationQuality = ImageMagick.Formats.DngInterpolation.Ppg });
         using var libraw = new ImageMagick.MagickImage(path, settings);
+        // LibRaw directly crops a few pixels less / more than through ImageMagick, and keeps the highlights LibRaw's
+        // default clips: compare the brightness at a small size, over the pixels ImageMagick's output didn't clip.
+        Assert.InRange(photo.Width, (int)libraw.Width - 40, (int)libraw.Width + 40);
+        Assert.InRange(photo.Height, (int)libraw.Height - 40, (int)libraw.Height + 40);
+        const int w = 96, h = 64;
+        libraw.Resize(new ImageMagick.MagickGeometry(w, h) { IgnoreAspectRatio = true });
         var reference = libraw.GetPixelsUnsafe().ToShortArray("RGB")!;
-        var pixels = photo.GetPixelSpan();
-        int max = 0;
-        for (int i = 0, j = 0; i < reference.Length; i += 3, j += 4)
-            for (int c = 0; c < 3; c++)
-                max = Math.Max(max, Math.Abs(pixels[j + c] - (int)Math.Round(reference[i + c] / 257.0)));
-        Assert.True(max <= 1, $"max difference {max}");
+        using var small = photo.Resize(new SKImageInfo(w, h), SKSamplingOptions.Default)!;
+        double sum = 0;
+        int count = 0;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int i = (y * w + x) * 3;
+                if (reference[i] > 60000 || reference[i + 1] > 60000 || reference[i + 2] > 60000)
+                    continue;
+                var c = small.GetPixel(x, y);
+                sum += Math.Abs((c.Red + c.Green + c.Blue) / 3.0 - (reference[i] + reference[i + 1] + reference[i + 2]) / 3.0 / 257);
+                count++;
+            }
+        Assert.True(sum / count < 6, $"mean difference {sum / count:0.0} levels");
+    }
+
+    [Fact]
+    public void NeutralizeClipped_GreysClippedHighlights_AndLeavesColoursAlone()
+    {
+        const double clip = 0.5;
+        ushort at = (ushort)(RawImageLoader.ToCurve(clip) * 65535);
+        ushort below = (ushort)(RawImageLoader.ToCurve(clip * 0.8) * 65535);
+        ushort[] rgb =
+        [
+            65535, at, 65535,        // green stuck at its clip level while red / blue rose: pink
+            below, below, 60000,     // a pale blue sky, not clipped
+            65535, 3000, 3000,       // a saturated red
+        ];
+        RawImageLoader.NeutralizeClipped(rgb, clip);
+        Assert.Equal([65535, 65535, 65535], rgb[0..3]);
+        Assert.Equal([below, below, 60000], rgb[3..6]);
+        Assert.Equal([65535, 3000, 3000], rgb[6..9]);
+    }
+
+    /// <summary>
+    /// The user's Canon EOS R8 sky (samples/IMG_5645.CR3, when present) with its Lightroom settings: the clouds keep
+    /// their shading instead of turning into a flat white glow, and their cores aren't tinted.
+    /// </summary>
+    [Fact]
+    public void SampleSky_KeepsCloudTexture()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir is not null && !File.Exists(Path.Combine(dir, "PhotoEditor.slnx")))
+            dir = Path.GetDirectoryName(dir);
+        var path = dir is null ? null : Path.Combine(dir, "samples", "IMG_5645.CR3");
+        if (path is null || !File.Exists(path))
+            return;
+        using var photo = RawImageLoader.Load(path);
+        using var small = photo.Resize(new SKImageInfo(photo.Width / 8, photo.Height / 8), SKSamplingOptions.Default)!;
+        Headroom.Attach(small, Headroom.Of(photo)!.Resized(small.Width, small.Height));
+        var settings = new AdjustmentSettings { Exposure = 1.02, Contrast = 6, Highlights = -91, Shadows = 54, Whites = 25, Blacks = -33,
+            Vibrance = 30, Saturation = 49 };
+        using var result = CpuAdjustmentRenderer.Render(small, settings);
+        // The top third of the portrait photo is sky and cloud.
+        int blown = 0, pink = 0, total = 0;
+        for (int y = 0; y < result.Height / 3; y++)
+            for (int x = 0; x < result.Width; x++)
+            {
+                var c = result.GetPixel(x, y);
+                total++;
+                if (c.Red >= 254 && c.Green >= 254 && c.Blue >= 254)
+                    blown++;
+                if (c.Red > 200 && c.Blue > 200 && c.Green < Math.Min(c.Red, c.Blue) - 25)
+                    pink++;
+            }
+        Assert.True(blown < total / 20, $"{100.0 * blown / total:0.0} % blown");
+        Assert.True(pink < total / 200, $"{100.0 * pink / total:0.00} % pink");
     }
 }

@@ -62,8 +62,20 @@ public static class ToneCurve
         return Math.Clamp(gain, 1f / PreparedAdjustments.MaxClarityGain, PreparedAdjustments.MaxClarityGain);
     }
 
-    /// <summary>Shifts the upper range, fully at and above white (recovers over-exposure).</summary>
-    public static float Highlights(float x, float amount) => x + amount * SmoothStep(0.35f, 1f, x);
+    /// <summary>
+    /// Shifts the upper range, fully at white. Pulled down, the part above white (RAW highlights) is also rolled
+    /// off: d / (1 + k·d) with k = 10 × |amount| (3 at −100), smooth at white, so clouds 2 stops over come back
+    /// under white at −100 (a plain shift recovered only about 1 stop). Mirrored in the shader.
+    /// </summary>
+    public static float Highlights(float x, float amount)
+    {
+        if (amount < 0f && x > 1f)
+        {
+            float d = x - 1f;
+            return 1f + amount + d / (1f - 10f * amount * d);
+        }
+        return x + amount * SmoothStep(0.35f, 1f, x);
+    }
 
     /// <summary>Bump peaking at x = 1/3, zero at black and white.</summary>
     public static float Shadows(float x, float amount)

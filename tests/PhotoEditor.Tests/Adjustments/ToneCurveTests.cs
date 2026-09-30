@@ -94,4 +94,24 @@ public class ToneCurveTests
         Assert.True(ToneCurve.Apply(1, P(new AdjustmentSettings { Whites = -100 })) < 0.9f);
         Assert.Equal(0.5f, ToneCurve.Apply(0.5f, P(new AdjustmentSettings { Whites = 100 })), 1);
     }
+
+    [Fact]
+    public void Highlights_RollsOffAboveWhite()
+    {
+        // Two stops over white (linear 4 ≈ 2 perceptually past 1) comes back under white at −100 …
+        Assert.True(ToneCurve.Highlights(2f, -0.3f) < 1f, $"{ToneCurve.Highlights(2f, -0.3f)}");
+        Assert.True(ToneCurve.Highlights(3f, -0.3f) < 1f);
+        // … keeping the gradient: brighter stays brighter.
+        float prev = -1;
+        for (float x = 0; x <= 4f; x += 0.05f)
+        {
+            float y = ToneCurve.Highlights(x, -0.3f);
+            Assert.True(y > prev, $"not rising at {x}");
+            prev = y;
+        }
+        // Continuous at white, and up to white the curve is the one it was.
+        Assert.Equal(ToneCurve.Highlights(1f, -0.3f), ToneCurve.Highlights(1.0001f, -0.3f), 3);
+        Assert.Equal(1f - 0.3f, ToneCurve.Highlights(1f, -0.3f), 5);
+        Assert.Equal(0.5f + 0.2f * ToneCurve.SmoothStep(0.35f, 1f, 0.5f), ToneCurve.Highlights(0.5f, 0.2f), 5);
+    }
 }
