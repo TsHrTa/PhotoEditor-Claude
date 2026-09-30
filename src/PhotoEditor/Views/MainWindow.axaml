@@ -60,6 +60,7 @@
                             <TextBlock Text="Copy these settings:" FontWeight="SemiBold" />
                             <CheckBox Content="Light (texture, clarity, dehaze)" IsChecked="{Binding CopyLight}" />
                             <CheckBox Content="Color (white balance, vibrance, saturation)" IsChecked="{Binding CopyColor}" />
+                            <CheckBox Content="Tone curve" IsChecked="{Binding CopyToneCurve}" />
                             <CheckBox Content="HSL" IsChecked="{Binding CopyHsl}" />
                             <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />
                             <CheckBox Content="Detail and lens corrections" IsChecked="{Binding CopyDetail}" />
@@ -398,6 +399,23 @@
                                 <Button Content="Download lens profiles (5 MB)" Command="{Binding DownloadLensProfilesCommand}"
                                         IsVisible="{Binding IsLensDatabaseMissing}"
                                         ToolTip.Tip="The lensfun database (lensfun.github.io, CC BY-SA 3.0): about 1,500 lenses" />
+                            </StackPanel>
+                            </Panel>
+                            </Border>
+                            <!-- Tone curve: the point curve editor above the region sliders -->
+                            <Border IsVisible="{Binding ToneCurve, Converter={x:Static ObjectConverters.IsNotNull}}">
+                            <Panel DataContext="{Binding ToneCurve}">
+                            <StackPanel Spacing="4" x:DataType="vm:MainViewModel">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <ComboBox ItemsSource="{Binding CurveChannels}" SelectedIndex="{Binding CurveChannelIndex}" MinWidth="90"
+                                              ToolTip.Tip="Point curve to edit: all channels, or red, green or blue alone" />
+                                    <Button Grid.Column="1" Content="Straighten" Command="{Binding ResetCurveCommand}"
+                                            ToolTip.Tip="Reset this channel's point curve to a straight line" />
+                                </Grid>
+                                <controls:CurveEditor Curve="{Binding SelectedCurve}" BaseCurve="{Binding CurveBase}"
+                                                      LineColor="{Binding CurveColor}" EditCommand="{Binding EditCurveCommand}" />
+                                <TextBlock Text="Click to add a point and drag it. Double-click, right-click or drag a point out of the box to remove it. The dashed line is the region sliders' curve."
+                                           Foreground="Gray" FontSize="11" TextWrapping="Wrap" />
                             </StackPanel>
                             </Panel>
                             </Border>

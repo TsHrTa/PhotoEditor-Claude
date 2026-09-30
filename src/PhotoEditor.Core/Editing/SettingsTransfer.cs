@@ -31,8 +31,11 @@ public enum SettingsGroups
     /// <summary>Spot removal (e.g. sensor dust in the same place on a series).</summary>
     Spots = 128,
 
+    /// <summary>Tone curve panel: the parametric regions and the point curves.</summary>
+    ToneCurve = 256,
+
     /// <summary>What "Copy settings" selects initially (crop and masks usually belong to one photo).</summary>
-    Default = Light | Color | Hsl | Vignette | Detail,
+    Default = Light | Color | ToneCurve | Hsl | Vignette | Detail,
 
     All = Default | Crop | Masks | Spots,
 }
@@ -54,6 +57,10 @@ public static class SettingsTransfer
                 Texture = s.Texture, Clarity = s.Clarity };
         if (groups.HasFlag(SettingsGroups.Color))
             a = a with { Temperature = s.Temperature, Tint = s.Tint, Vibrance = s.Vibrance, Saturation = s.Saturation };
+        if (groups.HasFlag(SettingsGroups.ToneCurve))
+            a = a with { CurveHighlights = s.CurveHighlights, CurveLights = s.CurveLights, CurveDarks = s.CurveDarks, CurveShadows = s.CurveShadows,
+                CurveShadowSplit = s.CurveShadowSplit, CurveMidtoneSplit = s.CurveMidtoneSplit, CurveHighlightSplit = s.CurveHighlightSplit,
+                Curve = s.Curve, CurveRed = s.CurveRed, CurveGreen = s.CurveGreen, CurveBlue = s.CurveBlue };
         if (groups.HasFlag(SettingsGroups.Hsl))
         {
             for (int i = 0; i < HslBands.Count; i++)

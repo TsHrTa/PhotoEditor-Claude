@@ -33,6 +33,7 @@ public partial class MainViewModel : ViewModelBase
             {
                 IsGlobalOnly = g.All(p => AdjustmentParameters.GlobalOnly.Contains(p.Parameter)),
                 Lens = g.Key == AdjustmentParameters.Lens ? this : null,
+                ToneCurve = g.Key == AdjustmentParameters.ToneCurve ? this : null,
             })
             .ToList();
         LoadPresets();
@@ -624,6 +625,7 @@ public partial class MainViewModel : ViewModelBase
         if (!ReferenceEquals(oldValue.Spots, newValue.Spots))
             OnSpotsChanged();
         var (a, b) = (oldValue.Adjustments, newValue.Adjustments);
+        RefreshToneCurve(a, b);
         if (a.LensProfile != b.LensProfile || a.RemoveChromaticAberration != b.RemoveChromaticAberration || a.LensDistortion != b.LensDistortion)
         {
             RefreshLens();
@@ -768,6 +770,7 @@ public partial class MainViewModel : ViewModelBase
 
     [ObservableProperty] public partial bool CopyLight { get; set; } = true;
     [ObservableProperty] public partial bool CopyColor { get; set; } = true;
+    [ObservableProperty] public partial bool CopyToneCurve { get; set; } = true;
     [ObservableProperty] public partial bool CopyHsl { get; set; } = true;
     [ObservableProperty] public partial bool CopyVignette { get; set; } = true;
     [ObservableProperty] public partial bool CopyDetail { get; set; } = true;
@@ -776,7 +779,7 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty] public partial bool CopySpots { get; set; }
 
     private SettingsGroups SelectedCopyGroups =>
-        (CopyLight ? SettingsGroups.Light : 0) | (CopyColor ? SettingsGroups.Color : 0) | (CopyHsl ? SettingsGroups.Hsl : 0)
+        (CopyLight ? SettingsGroups.Light : 0) | (CopyColor ? SettingsGroups.Color : 0) | (CopyToneCurve ? SettingsGroups.ToneCurve : 0) | (CopyHsl ? SettingsGroups.Hsl : 0)
         | (CopyVignette ? SettingsGroups.Vignette : 0) | (CopyDetail ? SettingsGroups.Detail : 0)
         | (CopyCrop ? SettingsGroups.Crop : 0) | (CopyMasks ? SettingsGroups.Masks : 0) | (CopySpots ? SettingsGroups.Spots : 0);
 
@@ -817,7 +820,7 @@ public partial class MainViewModel : ViewModelBase
     private static string Describe(SettingsGroups groups) => string.Join(", ",
         new (SettingsGroups Flag, string Name)[]
         {
-            (SettingsGroups.Light, "Light"), (SettingsGroups.Color, "Color"), (SettingsGroups.Hsl, "HSL"),
+            (SettingsGroups.Light, "Light"), (SettingsGroups.Color, "Color"), (SettingsGroups.ToneCurve, "Tone curve"), (SettingsGroups.Hsl, "HSL"),
             (SettingsGroups.Vignette, "Vignette"), (SettingsGroups.Detail, "Detail"), (SettingsGroups.Crop, "Crop"),
             (SettingsGroups.Masks, "Masks"), (SettingsGroups.Spots, "Spot removal"),
         }.Where(g => groups.HasFlag(g.Flag)).Select(g => g.Name));

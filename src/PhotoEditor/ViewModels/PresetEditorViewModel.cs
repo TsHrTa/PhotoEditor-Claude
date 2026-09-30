@@ -195,8 +195,17 @@ public abstract partial class StepViewModel(PresetEditorViewModel editor) : View
         },
         SetValuesStep v => ValuesStepViewModel.From(v, editor),
         GoalStep g => GoalStepViewModel.From(g, editor),
+        CurvesStep c => new CurvesStepViewModel(editor, c),
         _ => new AutoStepViewModel(editor),
     };
+}
+
+/// <summary>Point curves saved from a photo (kept as they are; edited in the Tone curve panel, not here).</summary>
+public sealed class CurvesStepViewModel(PresetEditorViewModel editor, CurvesStep step) : StepViewModel(editor)
+{
+    public override string Title => "Point curves (saved from a photo)";
+
+    public override PresetStep ToStep() => step;
 }
 
 public sealed class AutoStepViewModel(PresetEditorViewModel editor) : StepViewModel(editor)

@@ -33,7 +33,17 @@ public sealed record Preset
 [JsonDerivedType(typeof(SetValuesStep), "set")]
 [JsonDerivedType(typeof(AddMaskStep), "mask")]
 [JsonDerivedType(typeof(GoalStep), "goal")]
+[JsonDerivedType(typeof(CurvesStep), "curves")]
 public abstract record PresetStep;
+
+/// <summary>Sets the whole image's point curves (tone curve panel).</summary>
+public sealed record CurvesStep : PresetStep
+{
+    public Adjustments.PointCurve Curve { get; init; } = Adjustments.PointCurve.Linear;
+    public Adjustments.PointCurve CurveRed { get; init; } = Adjustments.PointCurve.Linear;
+    public Adjustments.PointCurve CurveGreen { get; init; } = Adjustments.PointCurve.Linear;
+    public Adjustments.PointCurve CurveBlue { get; init; } = Adjustments.PointCurve.Linear;
+}
 
 /// <summary>Runs Auto on the whole image (light, white balance, vibrance).</summary>
 public sealed record AutoStep : PresetStep;

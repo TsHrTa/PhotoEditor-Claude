@@ -38,7 +38,8 @@ public readonly record struct PreparedAdjustments(
     float GreenHueTo,
     float TextureAmount,
     float ClarityAmount,
-    float LensVignettingAmount)
+    float LensVignettingAmount,
+    float[]? CurveTable)
 {
     /// <summary>Hue (degrees) of Lightroom's purple / green defringe range ends 0 and 100.</summary>
     public const float PurpleHue0 = 240f, PurpleHue100 = 350f, GreenHue0 = 40f, GreenHue100 = 190f;
@@ -72,6 +73,9 @@ public readonly record struct PreparedAdjustments(
     public bool NeedsToneBase => HasLocalTone || HasClarity;
 
     public bool HasTexture => TextureAmount != 0f;
+
+    /// <summary>The tone curve panel changes something (<see cref="CurveTable"/>; whole image only).</summary>
+    public bool HasCurve => CurveTable is not null;
 
     /// <summary>Texture: medium-size detail added (× this) at slider 100.</summary>
     public const float TextureStrengthAt100 = 1f;
@@ -162,7 +166,8 @@ public readonly record struct PreparedAdjustments(
             GreenHueTo: HueRange(s.DefringeGreenHueLow, s.DefringeGreenHueHigh, GreenHue0, GreenHue100).To,
             TextureAmount: (float)Math.Clamp(s.Texture, -100, 200) / 100f * TextureStrengthAt100,
             ClarityAmount: (float)Math.Clamp(s.Clarity, -100, 200) / 100f * ClarityStrengthAt100,
-            LensVignettingAmount: (float)Math.Clamp(s.LensVignetting, -100, 100) / 100f);
+            LensVignettingAmount: (float)Math.Clamp(s.LensVignetting, -100, 100) / 100f,
+            CurveTable: ToneCurveTable.For(s));
     }
 
     /// <summary>

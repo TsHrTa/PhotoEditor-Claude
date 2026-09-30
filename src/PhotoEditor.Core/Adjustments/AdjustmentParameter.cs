@@ -46,6 +46,7 @@ public static class AdjustmentParameters
     public const string Detail = "Detail";
     public const string Effects = "Effects";
     public const string Lens = "Lens corrections";
+    public const string ToneCurve = "Tone curve";
     public const string HslHue = "HSL · Hue";
     public const string HslSaturation = "HSL · Saturation";
     public const string HslLuminance = "HSL · Luminance";
@@ -79,6 +80,27 @@ public static class AdjustmentParameters
 
     public static readonly AdjustmentParameter Saturation =
         new(Color, "Saturation", -100, 200, s => s.Saturation, (s, v) => s with { Saturation = v }, id: "saturation");
+
+    public static readonly AdjustmentParameter CurveHighlights =
+        new(ToneCurve, "Highlights", -100, 100, s => s.CurveHighlights, (s, v) => s with { CurveHighlights = v }, id: "curveHighlights");
+
+    public static readonly AdjustmentParameter CurveLights =
+        new(ToneCurve, "Lights", -100, 100, s => s.CurveLights, (s, v) => s with { CurveLights = v }, id: "curveLights");
+
+    public static readonly AdjustmentParameter CurveDarks =
+        new(ToneCurve, "Darks", -100, 100, s => s.CurveDarks, (s, v) => s with { CurveDarks = v }, id: "curveDarks");
+
+    public static readonly AdjustmentParameter CurveShadows =
+        new(ToneCurve, "Shadows", -100, 100, s => s.CurveShadows, (s, v) => s with { CurveShadows = v }, id: "curveShadows");
+
+    public static readonly AdjustmentParameter CurveShadowSplit =
+        new(ToneCurve, "Shadows / darks split", 5, 95, s => s.CurveShadowSplit, (s, v) => s with { CurveShadowSplit = v }, defaultValue: 25, id: "curveShadowSplit");
+
+    public static readonly AdjustmentParameter CurveMidtoneSplit =
+        new(ToneCurve, "Darks / lights split", 5, 95, s => s.CurveMidtoneSplit, (s, v) => s with { CurveMidtoneSplit = v }, defaultValue: 50, id: "curveMidtoneSplit");
+
+    public static readonly AdjustmentParameter CurveHighlightSplit =
+        new(ToneCurve, "Lights / highlights split", 5, 95, s => s.CurveHighlightSplit, (s, v) => s with { CurveHighlightSplit = v }, defaultValue: 75, id: "curveHighlightSplit");
 
     public static readonly AdjustmentParameter VignetteAmount =
         new(Vignette, "Amount", -200, 200, s => s.VignetteAmount, (s, v) => s with { VignetteAmount = v }, id: "vignetteAmount");
@@ -152,7 +174,12 @@ public static class AdjustmentParameters
     /// <summary>Parameters that only apply to the whole image (not inside masks).</summary>
     public static readonly IReadOnlyList<AdjustmentParameter> GlobalOnly =
         [DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor,
-         LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh];
+         LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
+         CurveHighlights, CurveLights, CurveDarks, CurveShadows, CurveShadowSplit, CurveMidtoneSplit, CurveHighlightSplit];
+
+    /// <summary>The tone curve panel's sliders (the point curves are not sliders).</summary>
+    public static readonly IReadOnlyList<AdjustmentParameter> ToneCurveSliders =
+        [CurveHighlights, CurveLights, CurveDarks, CurveShadows, CurveShadowSplit, CurveMidtoneSplit, CurveHighlightSplit];
 
     public static readonly IReadOnlyList<AdjustmentParameter> Hsl = CreateHsl();
 
@@ -160,6 +187,7 @@ public static class AdjustmentParameters
     [
         Exposure, Contrast, Highlights, Shadows, Whites, Blacks,
         Temperature, Tint, Vibrance, Saturation,
+        CurveHighlights, CurveLights, CurveDarks, CurveShadows, CurveShadowSplit, CurveMidtoneSplit, CurveHighlightSplit,
         .. Hsl,
         VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
         Texture, Clarity, Dehaze, Soften,

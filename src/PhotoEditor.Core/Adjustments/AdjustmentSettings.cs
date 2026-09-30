@@ -135,6 +135,29 @@ public sealed record AdjustmentSettings
     /// </summary>
     public double Clarity { get; init; }
 
+    /// <summary>
+    /// Tone curve, parametric part (Lightroom's region sliders), −100..100 each: moves the curve in the brightest
+    /// quarter (Highlights), the upper middle (Lights), the lower middle (Darks) and the darkest quarter (Shadows).
+    /// Whole image only.
+    /// </summary>
+    public double CurveHighlights { get; init; }
+    public double CurveLights { get; init; }
+    public double CurveDarks { get; init; }
+    public double CurveShadows { get; init; }
+
+    /// <summary>Where the tone curve's regions meet, 0..100 (Lightroom's split points; kept in order when used).</summary>
+    public double CurveShadowSplit { get; init; } = 25;
+    public double CurveMidtoneSplit { get; init; } = 50;
+    public double CurveHighlightSplit { get; init; } = 75;
+
+    /// <summary>Point curve on all three channels (applied after the parametric curve). Whole image only.</summary>
+    public PointCurve Curve { get; init; } = PointCurve.Linear;
+
+    /// <summary>Point curves of the single channels (applied after <see cref="Curve"/>). Whole image only.</summary>
+    public PointCurve CurveRed { get; init; } = PointCurve.Linear;
+    public PointCurve CurveGreen { get; init; } = PointCurve.Linear;
+    public PointCurve CurveBlue { get; init; } = PointCurve.Linear;
+
     // HSL panel, one entry per colour band (see HslBands).
     public HslBand Reds { get; init; } = HslBand.Zero;
     public HslBand Oranges { get; init; } = HslBand.Zero;

@@ -124,6 +124,12 @@ public static class SidecarFile
         }
         foreach (var p in AdjustmentParameters.All)
             s = p.Set(s, p.Get(s));
-        return s;
+        return s with
+        {
+            Curve = (s.Curve ?? PointCurve.Linear).Normalized(),
+            CurveRed = (s.CurveRed ?? PointCurve.Linear).Normalized(),
+            CurveGreen = (s.CurveGreen ?? PointCurve.Linear).Normalized(),
+            CurveBlue = (s.CurveBlue ?? PointCurve.Linear).Normalized(),
+        };
     }
 }

@@ -199,6 +199,21 @@ public static class LightroomXmp
         Set("DefringePurpleHueHi", Number(a.DefringePurpleHueHigh, "0"));
         Set("DefringeGreenHueLo", Number(a.DefringeGreenHueLow, "0"));
         Set("DefringeGreenHueHi", Number(a.DefringeGreenHueHigh, "0"));
+        // Tone curve panel
+        Set("ParametricShadows", Signed(a.CurveShadows));
+        Set("ParametricDarks", Signed(a.CurveDarks));
+        Set("ParametricLights", Signed(a.CurveLights));
+        Set("ParametricHighlights", Signed(a.CurveHighlights));
+        Set("ParametricShadowSplit", Number(a.CurveShadowSplit, "0"));
+        Set("ParametricMidtoneSplit", Number(a.CurveMidtoneSplit, "0"));
+        Set("ParametricHighlightSplit", Number(a.CurveHighlightSplit, "0"));
+        bool linear = a.Curve.IsLinear && a.CurveRed.IsLinear && a.CurveGreen.IsLinear && a.CurveBlue.IsLinear;
+        Set("ToneCurveName2012", linear ? "Linear" : "Custom");
+        WriteCurve(description, "ToneCurvePV2012", a.Curve);
+        WriteCurve(description, "ToneCurvePV2012Red", a.CurveRed);
+        WriteCurve(description, "ToneCurvePV2012Green", a.CurveGreen);
+        WriteCurve(description, "ToneCurvePV2012Blue", a.CurveBlue);
+
         if (a.DenoiseAmount != 0)
             notes.Add("AI denoise (Lightroom has no equivalent setting; use its own Denoise)");
 
@@ -220,6 +235,44 @@ public static class LightroomXmp
 
         skipped = notes;
         return Serialize(doc);
+    }
+
+    /// <summary>A point curve as Lightroom stores it: an rdf:Seq of "x, y" in 0..255.</summary>
+    private static void WriteCurve(XElement description, string name, PointCurve curve)
+    {
+        description.Attributes(Crs + name).Remove();
+        description.Elements(Crs + name).Remove();
+        var points = new List<(int X, int Y)>();
+        foreach (var p in curve.Points)
+        {
+            var point = ((int)Math.Round(p.X * 255), (int)Math.Round(p.Y * 255));
+            if (points.Count > 0 && points[^1].X == point.Item1)
+                points[^1] = point; // two points in the same 8-bit step: keep one
+            else
+                points.Add(point);
+        }
+        if (points.Count < 2)
+            points = [(0, 0), (255, 255)];
+        description.Add(new XElement(Crs + name, new XElement(Rdf + "Seq",
+            points.Select(p => new XElement(Rdf + "li", string.Create(CultureInfo.InvariantCulture, $"{p.X}, {p.Y}"))))));
+    }
+
+    /// <summary>A point curve from the XMP; the straight line when it is missing or unreadable.</summary>
+    private static PointCurve ReadCurve(XElement description, string name)
+    {
+        var items = description.Element(Crs + name)?.Element(Rdf + "Seq")?.Elements(Rdf + "li");
+        if (items is null)
+            return PointCurve.Linear;
+        var points = new List<CurvePoint>();
+        foreach (var item in items)
+        {
+            var parts = item.Value.Split(',');
+            if (parts.Length == 2
+                && double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
+                && double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var y))
+                points.Add(new CurvePoint(x / 255, y / 255));
+        }
+        return new PointCurve { Points = [.. points] }.Normalized();
     }
 
     private static string Serialize(XDocument doc)
@@ -475,6 +528,17 @@ public static class LightroomXmp
             DefringePurpleHueHigh = Get("DefringePurpleHueHi", 70),
             DefringeGreenHueLow = Get("DefringeGreenHueLo", 40),
             DefringeGreenHueHigh = Get("DefringeGreenHueHi", 60),
+            CurveShadows = Get("ParametricShadows"),
+            CurveDarks = Get("ParametricDarks"),
+            CurveLights = Get("ParametricLights"),
+            CurveHighlights = Get("ParametricHighlights"),
+            CurveShadowSplit = Get("ParametricShadowSplit", 25),
+            CurveMidtoneSplit = Get("ParametricMidtoneSplit", 50),
+            CurveHighlightSplit = Get("ParametricHighlightSplit", 75),
+            Curve = ReadCurve(d, "ToneCurvePV2012"),
+            CurveRed = ReadCurve(d, "ToneCurvePV2012Red"),
+            CurveGreen = ReadCurve(d, "ToneCurvePV2012Green"),
+            CurveBlue = ReadCurve(d, "ToneCurvePV2012Blue"),
         };
         for (int i = 0; i < HslBands.Count; i++)
         {

@@ -51,6 +51,12 @@ public class ShaderParityTests
         { "defringe wide ranges", new AdjustmentSettings { DefringePurple = 80, DefringeGreen = 90,
             DefringePurpleHueLow = 0, DefringePurpleHueHigh = 100, DefringeGreenHueLow = 10, DefringeGreenHueHigh = 95 } },
         { "all detail", new AdjustmentSettings { NoiseLuminance = 60, NoiseColor = 80, DefringePurple = 50, SharpenAmount = 70, Soften = 30, Exposure = 0.4 } },
+        { "curve parametric", new AdjustmentSettings { CurveHighlights = -60, CurveLights = 40, CurveDarks = -30, CurveShadows = 80 } },
+        { "curve parametric splits", new AdjustmentSettings { CurveHighlights = 100, CurveShadows = -100, CurveShadowSplit = 40, CurveMidtoneSplit = 45, CurveHighlightSplit = 60 } },
+        { "curve s-shape", new AdjustmentSettings { Curve = ToneCurvePanelTests.Curve((0, 0), (0.25, 0.18), (0.75, 0.85), (1, 1)) } },
+        { "curve matte + channels", new AdjustmentSettings { Curve = ToneCurvePanelTests.Curve((0, 0.1), (1, 0.95)),
+            CurveRed = ToneCurvePanelTests.Curve((0, 0), (0.5, 0.6), (1, 1)), CurveBlue = ToneCurvePanelTests.Curve((0, 0.08), (0.6, 0.5), (1, 1)) } },
+        { "curve + light", new AdjustmentSettings { Exposure = 0.8, Contrast = 30, CurveLights = 50, Curve = ToneCurvePanelTests.Curve((0, 0), (0.4, 0.3), (1, 1)) } },
         { "soften + sharpen + light", new AdjustmentSettings { Soften = 60, SharpenAmount = 80, Exposure = 0.3, Contrast = 20 } },
     };
 

@@ -96,6 +96,10 @@ public static class AdjustmentShader
         uniform float textureStep;
         // Clarity: extra local contrast in stops per stop (see clarityGain).
         uniform float clarityAmount;
+        // Tone curve panel (global pass): per channel lookup on perceptual values, 1024 × 1 texels (red, green,
+        // blue), used when curveOn = 1.
+        uniform shader curveTable;
+        uniform float curveOn;
         const float softenRangeSigma = 0.1;
 
         const float perceptualGamma = 2.2;
@@ -364,6 +368,15 @@ public static class AdjustmentShader
             return clamp(y2 / yb, 0.125, 8.0);
         }
 
+        // The tone curve table on each channel; values above 1 keep their distance above the curve's end.
+        float3 applyCurve(float3 c) {
+            float3 x = pow(max(c, 0.0), float3(1.0 / perceptualGamma));
+            float3 t = clamp(x, 0.0, 1.0) * 1023.0 + 0.5;
+            float3 v = float3(float(curveTable.eval(float2(t.r, 0.5)).r), float(curveTable.eval(float2(t.g, 0.5)).g),
+                float(curveTable.eval(float2(t.b, 0.5)).b));
+            return pow(v + max(x - 1.0, 0.0), float3(perceptualGamma));
+        }
+
         half4 main(float2 coord) {
             half4 src = image.eval(coord);
             float a = src.a;
@@ -418,6 +431,7 @@ public static class AdjustmentShader
             }
             float y2 = pow(toneCurve(pow(max(y, 0.0), 1.0 / perceptualGamma)), perceptualGamma);
             c = y > 1e-6 ? c * (y2 / y) : float3(y2);
+            if (curveOn > 0.0) c = applyCurve(c);
 
             // Vibrance then saturation around luminance
             float mx = max(c.r, max(c.g, c.b));
@@ -552,6 +566,26 @@ public static class AdjustmentShader
             ?? throw new InvalidOperationException("Could not create the vignetting table image.");
     });
 
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<float[], SKImage> CurveImages = new();
+
+    /// <summary>A tone curve table (<see cref="ToneCurveTable"/>) as a 1024 × 1 half-float RGB image (made once per table).</summary>
+    private static SKImage CurveImage(float[] table) => CurveImages.GetValue(table, t =>
+    {
+        int n = t.Length / 3;
+        var halves = new Half[n * 4];
+        for (int i = 0; i < n; i++)
+        {
+            halves[i * 4] = (Half)t[i * 3];
+            halves[i * 4 + 1] = (Half)t[i * 3 + 1];
+            halves[i * 4 + 2] = (Half)t[i * 3 + 2];
+            halves[i * 4 + 3] = (Half)1f;
+        }
+        var bytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(halves.AsSpan()).ToArray();
+        using var data = SKData.CreateCopy(bytes);
+        return SKImage.FromPixels(new SKImageInfo(n, 1, SKColorType.RgbaF16, SKAlphaType.Opaque), data, n * 8)
+            ?? throw new InvalidOperationException("Could not create the tone curve image.");
+    });
+
     private readonly record struct HeadroomInput(SKShader Shader, float Scale, SKShader Fine, bool HasFine);
 
     /// <summary>Brightest linear value handed from one pass to the next (≈ 6 stops above white).</summary>
@@ -564,6 +598,10 @@ public static class AdjustmentShader
     {
         var effect = Effect;
         var p = PreparedAdjustments.From(settings);
+        // The tone curve is whole-image only (the global pass).
+        var curve = sharpen ? p.CurveTable : null;
+        using var curveShader = curve is null ? SKShader.CreateColor(SKColors.White)
+            : CurveImage(curve).ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, new SKSamplingOptions(SKFilterMode.Linear));
         var uniforms = new SKRuntimeEffectUniforms(effect)
         {
             ["exposureGain"] = p.ExposureGain,
@@ -608,6 +646,7 @@ public static class AdjustmentShader
             ["textureAmount"] = p.TextureAmount,
             ["textureStep"] = pixelScale,
             ["clarityAmount"] = p.ClarityAmount,
+            ["curveOn"] = curve is null ? 0f : 1f,
             ["headroomScale"] = headroom.Scale,
             ["addHeadroom"] = sharpen && headroom.Scale > 0 ? 1f : 0f,
             ["addFine"] = sharpen && headroom.HasFine ? 1f : 0f,
@@ -629,6 +668,7 @@ public static class AdjustmentShader
             ["headroom"] = headroom.Shader,
             ["lensTable"] = lens.Table,
             ["fine"] = headroom.Fine,
+            ["curveTable"] = curveShader,
         };
         return effect.ToShader(uniforms, children);
     }

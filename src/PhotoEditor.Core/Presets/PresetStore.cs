@@ -19,13 +19,15 @@ public static class PresetFactory
                 AdjustmentParameters.Shadows, AdjustmentParameters.Whites, AdjustmentParameters.Blacks);
         if (groups.HasFlag(SettingsGroups.Color))
             Add(AdjustmentParameters.Temperature, AdjustmentParameters.Tint, AdjustmentParameters.Vibrance, AdjustmentParameters.Saturation);
+        if (groups.HasFlag(SettingsGroups.ToneCurve))
+            Add([.. AdjustmentParameters.ToneCurveSliders]);
         if (groups.HasFlag(SettingsGroups.Hsl))
             Add([.. AdjustmentParameters.Hsl]);
         if (groups.HasFlag(SettingsGroups.Vignette))
             Add(AdjustmentParameters.VignetteAmount, AdjustmentParameters.VignetteMidpoint,
                 AdjustmentParameters.VignetteRoundness, AdjustmentParameters.VignetteFeather);
         if (groups.HasFlag(SettingsGroups.Detail))
-            Add([.. AdjustmentParameters.GlobalOnly]);
+            Add([.. AdjustmentParameters.GlobalOnly.Except(AdjustmentParameters.ToneCurveSliders)]);
         return ids;
     }
 
@@ -44,6 +46,9 @@ public static class PresetFactory
                 Values = ids.ToImmutableSortedDictionary(id => id, id => AdjustmentParameters.ById(id)!.Get(state.Adjustments)),
             });
         }
+        var a = state.Adjustments;
+        if (groups.HasFlag(SettingsGroups.ToneCurve) && !(a.Curve.IsLinear && a.CurveRed.IsLinear && a.CurveGreen.IsLinear && a.CurveBlue.IsLinear))
+            steps.Add(new CurvesStep { Curve = a.Curve, CurveRed = a.CurveRed, CurveGreen = a.CurveGreen, CurveBlue = a.CurveBlue });
         if (groups.HasFlag(SettingsGroups.Masks))
         {
             foreach (var mask in state.Masks.Where(m => m.Components.Count > 0))

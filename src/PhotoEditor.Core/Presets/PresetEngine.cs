@@ -41,6 +41,14 @@ public static class PresetEngine
                 SetValuesStep s => ApplySetValues(state, s, log),
                 AddMaskStep m => ApplyAddMask(state, m, image, detector, log),
                 GoalStep g => ApplyGoal(state, g, probe, log),
+                CurvesStep c => state with
+                {
+                    Adjustments = state.Adjustments with
+                    {
+                        Curve = (c.Curve ?? PointCurve.Linear).Normalized(), CurveRed = (c.CurveRed ?? PointCurve.Linear).Normalized(),
+                        CurveGreen = (c.CurveGreen ?? PointCurve.Linear).Normalized(), CurveBlue = (c.CurveBlue ?? PointCurve.Linear).Normalized(),
+                    },
+                },
                 _ => state,
             };
         }

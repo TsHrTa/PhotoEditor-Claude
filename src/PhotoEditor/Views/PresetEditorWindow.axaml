@@ -65,6 +65,12 @@
                         </Border>
                     </DataTemplate>
 
+                    <DataTemplate DataType="vm:CurvesStepViewModel">
+                        <Border Classes="step">
+                            <ContentControl Content="{Binding}" ContentTemplate="{StaticResource StepHeader}" />
+                        </Border>
+                    </DataTemplate>
+
                     <DataTemplate DataType="vm:MaskStepViewModel">
                         <Border Classes="step">
                             <StackPanel Spacing="6">

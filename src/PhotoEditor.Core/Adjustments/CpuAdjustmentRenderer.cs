@@ -68,7 +68,8 @@ public static class CpuAdjustmentRenderer
         var lensGain = new LensGain(lensVignetting, (float)Math.Clamp(state.Adjustments.LensVignetting, -100, 100) / 100f, width, height);
         var layers = state.Masks
             .Where(m => m.IsActive)
-            .Select(m => new MaskLayer(PreparedAdjustments.From(m.Adjustments), MaskRasterizer.RasterizeToBytes(m, width, height)))
+            // The tone curve is whole-image only.
+            .Select(m => new MaskLayer(PreparedAdjustments.From(m.Adjustments) with { CurveTable = null }, MaskRasterizer.RasterizeToBytes(m, width, height)))
             .ToArray();
         var result = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         var frame = VignetteMath.Frame.From(state.Crop.Frame(width, height));
@@ -399,6 +400,10 @@ public static class CpuAdjustmentRenderer
         {
             r = g = b = y2;
         }
+
+        // Tone curve panel: per channel, on perceptual values (like Lightroom's curves, it also changes saturation).
+        if (p.CurveTable is { } curve)
+            ToneCurveTable.Apply(curve, ref r, ref g, ref b);
 
         // Vibrance (weighted by how muted the colour is), then saturation, around luminance.
         float max = MathF.Max(r, MathF.Max(g, b));
