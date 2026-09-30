@@ -43,6 +43,9 @@ public sealed class PreviewImage
         return new PreviewImage(full, preview);
     }
 
+    /// <summary>A preview image made of existing images (the preview may be the full image itself).</summary>
+    public static PreviewImage FromImages(SKImage full, SKImage preview) => new(full, preview);
+
     /// <summary>
     /// High-quality, fast downscale: halves (a bilinear sample at exactly half size averages 2 × 2 pixels, i.e. a
     /// box filter) while the image is more than twice the target, then one bilinear step. ~4× faster than

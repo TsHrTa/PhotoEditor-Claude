@@ -46,7 +46,7 @@ public partial class MainViewModel
 
     private void ShowPreview()
     {
-        var preview = ShowOriginal ? _originalPreview : _workingPreview ?? _originalPreview;
+        var preview = ShowOriginal ? _originalPreview : _retouchedPreview ?? _workingPreview ?? _originalPreview;
         if (preview is not null && !ReferenceEquals(Preview, preview))
             Preview = preview;
     }
@@ -62,6 +62,9 @@ public partial class MainViewModel
         _workingAmounts = (0, 0);
         _originalPreview = originalPreview;
         _workingPreview = null;
+        _retouchedPreview = null;
+        _retouchedFrom = default;
+        UpdateRetouchedPreview();
         ScheduleRestoreUpdate();
     }
 
@@ -83,6 +86,7 @@ public partial class MainViewModel
             _working = null;
             _workingAmounts = (0, 0);
             _workingPreview = null;
+            UpdateRetouchedPreview();
             ShowPreview();
             return;
         }
@@ -97,6 +101,7 @@ public partial class MainViewModel
         _working = working;
         _workingAmounts = amounts;
         _workingPreview = preview;
+        UpdateRetouchedPreview();
         ShowPreview();
     }
 

@@ -22,6 +22,12 @@ public static class CpuAdjustmentRenderer
     /// </summary>
     public static SKBitmap Render(SKBitmap source, EditState state)
     {
+        // Spot removal works on the photo's pixels, before everything else.
+        if (state.Spots.Count > 0)
+        {
+            using var retouched = Retouch.Retouching.Apply(source, state.Spots);
+            return Render(retouched, state with { Spots = [] });
+        }
         using var src = source.ColorType == SKColorType.Rgba8888 && source.AlphaType == SKAlphaType.Premul
             ? null
             : source.Copy(SKColorType.Rgba8888);

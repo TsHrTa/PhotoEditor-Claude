@@ -14,4 +14,7 @@ public enum EditTool
 
     /// <summary>AI selection: click on an object (Alt+click to exclude) or drag a box around it.</summary>
     ObjectSelect,
+
+    /// <summary>Spot removal: click to heal / clone a spot, drag a spot or its source to move it.</summary>
+    Spot,
 }

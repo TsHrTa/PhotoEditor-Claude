@@ -56,6 +56,13 @@ public sealed class HazeMap
     /// <summary>The map of <paramref name="photo"/>, computed once per image object (the viewer draws many frames).</summary>
     public static HazeMap For(SKImage photo) => Cache.GetValue(photo, Compute);
 
+    /// <summary>Lets <paramref name="to"/> use the map already computed for <paramref name="from"/> (see ToneBaseMap.Share).</summary>
+    public static void Share(SKImage from, SKImage to)
+    {
+        if (Cache.TryGetValue(from, out var map))
+            Cache.AddOrUpdate(to, map);
+    }
+
     public static HazeMap Compute(SKImage photo)
     {
         using var bitmap = SKBitmap.FromImage(photo);

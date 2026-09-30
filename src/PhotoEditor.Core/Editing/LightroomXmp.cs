@@ -148,6 +148,8 @@ public static class LightroomXmp
         }
         if (a.DeblurAmount != 0)
             notes.Add("AI deblur (Lightroom has no equivalent setting)");
+        if (state.Spots.Count > 0)
+            notes.Add("spot removal (not written for Lightroom yet)");
 
         Set("Exposure2012", Signed(Limit(a.Exposure, 5, "exposure"), "0.00"));
         Set("Contrast2012", Signed(Limit(a.Contrast, 100, "contrast")));

@@ -12,6 +12,7 @@ using PhotoEditor.Core.Adjustments;
 using PhotoEditor.Core.Editing;
 using PhotoEditor.Core.Masks;
 using PhotoEditor.Core.Imaging;
+using PhotoEditor.Core.Retouch;
 using PhotoEditor.Core.Viewing;
 using SkiaSharp;
 
@@ -50,6 +51,12 @@ public class ImageViewer : Control
     public static readonly StyledProperty<double> BrushFeatherProperty =
         AvaloniaProperty.Register<ImageViewer, double>(nameof(BrushFeather), 0.5);
 
+    public static readonly StyledProperty<Guid?> SelectedSpotProperty =
+        AvaloniaProperty.Register<ImageViewer, Guid?>(nameof(SelectedSpot));
+
+    public static readonly StyledProperty<double> SpotRadiusProperty =
+        AvaloniaProperty.Register<ImageViewer, double>(nameof(SpotRadius), 0.02);
+
     public static readonly DirectProperty<ImageViewer, double> ZoomProperty =
         AvaloniaProperty.RegisterDirect<ImageViewer, double>(nameof(Zoom), v => v.Zoom);
 
@@ -82,6 +89,9 @@ public class ImageViewer : Control
     private CropHandle _cropHandle;
     private (double X, double Y) _cropFrom;
 
+    // Spot / spot source drag in progress: which, and the pointer's offset from the circle's centre (normalised)
+    private (SpotEditKind Kind, Guid Id, double Dx, double Dy)? _spotDrag;
+
     // Gradient creation / handle drag in progress
     private GradientHandle _dragHandle;
     private MaskComponent? _dragOriginal;
@@ -90,7 +100,7 @@ public class ImageViewer : Control
     static ImageViewer()
     {
         AffectsRender<ImageViewer>(SourceProperty, StateProperty, OverlayMaskProperty,
-            ToolProperty, EditableComponentProperty, BrushRadiusProperty, BrushFeatherProperty);
+            ToolProperty, EditableComponentProperty, BrushRadiusProperty, BrushFeatherProperty, SelectedSpotProperty, SpotRadiusProperty);
         ClipToBoundsProperty.OverrideDefaultValue<ImageViewer>(true);
         FocusableProperty.OverrideDefaultValue<ImageViewer>(true);
     }
@@ -143,6 +153,23 @@ public class ImageViewer : Control
         get => GetValue(BrushFeatherProperty);
         set => SetValue(BrushFeatherProperty, value);
     }
+
+    /// <summary>The spot drawn highlighted (spot removal tool).</summary>
+    public Guid? SelectedSpot
+    {
+        get => GetValue(SelectedSpotProperty);
+        set => SetValue(SelectedSpotProperty, value);
+    }
+
+    /// <summary>Radius of a new spot as a fraction of the image's longer side (for the cursor).</summary>
+    public double SpotRadius
+    {
+        get => GetValue(SpotRadiusProperty);
+        set => SetValue(SpotRadiusProperty, value);
+    }
+
+    /// <summary>Spot removal tool: add a spot, or drag a spot / its source.</summary>
+    public event EventHandler<SpotEditEventArgs>? SpotEdit;
 
     /// <summary>Brush input in normalised image coordinates (0..1).</summary>
     public event EventHandler<BrushStrokeEventArgs>? BrushStroke;
@@ -299,6 +326,11 @@ public class ImageViewer : Control
                 e.Handled = true;
                 return;
             }
+            if (Tool == EditTool.Spot)
+            {
+                PressSpot(e, pos);
+                return;
+            }
             if (Tool == EditTool.Brush)
             {
                 _stroking = true;
@@ -369,6 +401,10 @@ public class ImageViewer : Control
         {
             RaiseStroke(BrushStrokePhase.Move, p, false);
         }
+        else if (_spotDrag is { } drag)
+        {
+            SpotEdit?.Invoke(this, new SpotEditEventArgs(drag.Kind, drag.Id, SpotDragPoint(drag, p), EditPhase.Move));
+        }
         else if (_dragOriginal is { } original)
         {
             ComponentEdit?.Invoke(this, new ComponentEditEventArgs(Dragged(original, p), EditPhase.Move, false));
@@ -391,8 +427,8 @@ public class ImageViewer : Control
         {
             Cursor = HitTestHandle(editable, p) != GradientHandle.None ? new Cursor(StandardCursorType.Hand) : null;
         }
-        if (Tool == EditTool.Brush)
-            InvalidateVisual(); // move the brush cursor
+        if (Tool is EditTool.Brush or EditTool.Spot)
+            InvalidateVisual(); // move the brush / spot cursor
     }
 
     private MaskComponent Dragged(MaskComponent original, Point viewPoint)
@@ -410,7 +446,7 @@ public class ImageViewer : Control
     {
         base.OnPointerExited(e);
         _pointer = null;
-        if (Tool == EditTool.Brush)
+        if (Tool is EditTool.Brush or EditTool.Spot)
             InvalidateVisual();
     }
 
@@ -456,6 +492,13 @@ public class ImageViewer : Control
             RaiseStroke(BrushStrokePhase.End, e.GetPosition(this), false);
             return;
         }
+        if (_spotDrag is { } drag)
+        {
+            _spotDrag = null;
+            e.Pointer.Capture(null);
+            SpotEdit?.Invoke(this, new SpotEditEventArgs(drag.Kind, drag.Id, SpotDragPoint(drag, e.GetPosition(this)), EditPhase.End));
+            return;
+        }
         if (_dragOriginal is { } original)
         {
             var final = Dragged(original, e.GetPosition(this));
@@ -485,6 +528,11 @@ public class ImageViewer : Control
         {
             _dragOriginal = null;
             ComponentEdit?.Invoke(this, new ComponentEditEventArgs(null, EditPhase.End, false));
+        }
+        if (_spotDrag is { } drag)
+        {
+            _spotDrag = null;
+            SpotEdit?.Invoke(this, new SpotEditEventArgs(drag.Kind, drag.Id, SpotCenter(drag), EditPhase.End));
         }
         _panStart = null;
         _selectStart = _selectCurrent = null;
@@ -520,6 +568,80 @@ public class ImageViewer : Control
 
     /// <summary>Degrees by which image axes appear rotated in the view (the crop's straighten angle, reversed).</summary>
     private double DisplayRotation => _mirror ? _displayFrame.Angle : -_displayFrame.Angle;
+
+    // ---- Spot removal tool ----
+
+    /// <summary>Radius on screen of a circle with <paramref name="radius"/> (fraction of the longer side).</summary>
+    private double ViewRadius(double radius) => radius * Math.Max(ImageWidth, ImageHeight) * _view.Scale;
+
+    /// <summary>
+    /// A press with the spot tool: on the selected spot's source circle drags the source, on a spot drags the spot
+    /// (the selected spot is tested first, then the newest), elsewhere adds a spot.
+    /// </summary>
+    private void PressSpot(PointerPressedEventArgs e, Point pos)
+    {
+        e.Handled = true;
+        var spots = State.Spots;
+        var order = spots.Reverse().OrderByDescending(s => s.Id == SelectedSpot).ToList();
+        foreach (var kind in new[] { SpotEditKind.MoveSource, SpotEditKind.Move })
+        {
+            foreach (var spot in order)
+            {
+                if (kind == SpotEditKind.MoveSource && spot.Id != SelectedSpot)
+                    continue; // only the selected spot shows its source
+                var center = kind == SpotEditKind.Move ? spot.Center : spot.Source;
+                if (Point.Distance(ToView(center), pos) > Math.Max(ViewRadius(spot.Radius), HandleHitRadius))
+                    continue;
+                var p = ToNormalized(pos);
+                var drag = (kind, spot.Id, (double)center.X - p.X, (double)center.Y - p.Y);
+                _spotDrag = drag;
+                e.Pointer.Capture(this);
+                SpotEdit?.Invoke(this, new SpotEditEventArgs(kind, spot.Id, center, EditPhase.Begin));
+                return;
+            }
+        }
+        var point = ToNormalized(pos);
+        if (point.X is >= 0 and <= 1 && point.Y is >= 0 and <= 1)
+            SpotEdit?.Invoke(this, new SpotEditEventArgs(SpotEditKind.Add, null, point, EditPhase.End));
+    }
+
+    private BrushPoint SpotDragPoint((SpotEditKind Kind, Guid Id, double Dx, double Dy) drag, Point viewPoint)
+    {
+        var p = ToNormalized(viewPoint);
+        return new BrushPoint((float)Math.Clamp(p.X + drag.Dx, 0, 1), (float)Math.Clamp(p.Y + drag.Dy, 0, 1));
+    }
+
+    private BrushPoint SpotCenter((SpotEditKind Kind, Guid Id, double Dx, double Dy) drag) =>
+        State.Spots.Find(s => s.Id == drag.Id) is { } spot ? (drag.Kind == SpotEditKind.Move ? spot.Center : spot.Source) : default;
+
+    private static readonly IPen SpotSelected = new Pen(Brushes.White, 2);
+
+    /// <summary>Each spot: its circle (solid), its source (dashed) and a line from the source to the spot.</summary>
+    private void DrawSpots(DrawingContext context)
+    {
+        foreach (var spot in State.Spots)
+        {
+            bool selected = spot.Id == SelectedSpot;
+            var c = ToView(spot.Center);
+            var s = ToView(spot.Source);
+            double r = ViewRadius(spot.Radius);
+            var d = c - s;
+            double length = Math.Sqrt(d.X * d.X + d.Y * d.Y);
+            if (selected && length > 2 * r)
+            {
+                var u = d / length;
+                context.DrawLine(GuideShadow, s + u * r, c - u * r);
+                context.DrawLine(GuideLine, s + u * r, c - u * r);
+            }
+            context.DrawEllipse(null, GuideShadow, c, r, r);
+            context.DrawEllipse(null, selected ? SpotSelected : GuideLine, c, r, r);
+            if (selected)
+            {
+                context.DrawEllipse(null, GuideShadow, s, r, r);
+                context.DrawEllipse(null, GuideDashed, s, r, r);
+            }
+        }
+    }
 
     // ---- Crop tool ----
 
@@ -701,6 +823,17 @@ public class ImageViewer : Control
             var box = new Rect(s0, s1);
             context.DrawRectangle(null, GuideShadow, box);
             context.DrawRectangle(null, GuideDashed, box);
+        }
+
+        if (Tool == EditTool.Spot)
+        {
+            DrawSpots(context);
+            if (_pointer is { } sp && _spotDrag is null)
+            {
+                double r = ViewRadius(SpotRadius);
+                context.DrawEllipse(null, new Pen(new SolidColorBrush(Color.FromArgb(160, 0, 0, 0)), 3), sp, r, r);
+                context.DrawEllipse(null, new Pen(new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)), 1), sp, r, r);
+            }
         }
 
         if (Tool == EditTool.Brush && _pointer is { } p)

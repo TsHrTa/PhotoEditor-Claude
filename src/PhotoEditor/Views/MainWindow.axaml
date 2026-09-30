@@ -58,13 +58,14 @@
                     <Flyout Placement="BottomEdgeAlignedLeft">
                         <StackPanel Spacing="4" MinWidth="200">
                             <TextBlock Text="Copy these settings:" FontWeight="SemiBold" />
-                            <CheckBox Content="Light (and dehaze)" IsChecked="{Binding CopyLight}" />
+                            <CheckBox Content="Light (texture, clarity, dehaze)" IsChecked="{Binding CopyLight}" />
                             <CheckBox Content="Color (white balance, vibrance, saturation)" IsChecked="{Binding CopyColor}" />
                             <CheckBox Content="HSL" IsChecked="{Binding CopyHsl}" />
                             <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />
                             <CheckBox Content="Detail (sharpening, soften, AI)" IsChecked="{Binding CopyDetail}" />
                             <CheckBox Content="Crop and straighten" IsChecked="{Binding CopyCrop}" />
                             <CheckBox Content="Masks" IsChecked="{Binding CopyMasks}" />
+                            <CheckBox Content="Spot removal" IsChecked="{Binding CopySpots}" />
                             <Button Content="Copy" HorizontalAlignment="Right" Click="OnCopySettingsClick" />
                         </StackPanel>
                     </Flyout>
@@ -206,7 +207,7 @@
                                         <TextBlock Text="Preset name:" FontWeight="SemiBold" />
                                         <TextBox Text="{Binding NewPresetName}" />
                                         <TextBlock Text="Include:" FontWeight="SemiBold" Margin="0,4,0,0" />
-                                        <CheckBox Content="Light (and dehaze)" IsChecked="{Binding CopyLight}" />
+                                        <CheckBox Content="Light (texture, clarity, dehaze)" IsChecked="{Binding CopyLight}" />
                                         <CheckBox Content="Color" IsChecked="{Binding CopyColor}" />
                                         <CheckBox Content="HSL" IsChecked="{Binding CopyHsl}" />
                                         <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />
@@ -256,6 +257,38 @@
                                    VerticalAlignment="Center" IsVisible="{Binding HasImage}" />
                         <Button Grid.Column="1" Content="Reset crop" Command="{Binding ResetCropCommand}"
                                 IsEnabled="{Binding HasCrop}" ToolTip.Tip="Remove the crop, straighten and rotation" />
+                    </Grid>
+                </StackPanel>
+            </Expander>
+
+            <Expander Header="Retouch" IsExpanded="True" HorizontalAlignment="Stretch">
+                <StackPanel Spacing="6">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <ToggleButton Content="Spot removal (Q)" IsChecked="{Binding IsSpotActive}" IsEnabled="{Binding HasImage}"
+                                      ToolTip.Tip="Click a spot (dust, blemish, small object) to remove it; a matching source is picked automatically. Drag a circle to move it; drag the dashed source circle of the selected spot to pick another source. Delete removes the selected spot." />
+                        <RadioButton Content="Heal" GroupName="SpotMode" IsChecked="{Binding SpotHeal}"
+                                     ToolTip.Tip="Texture from the source, colour and brightness fitted to the surroundings" />
+                        <RadioButton Content="Clone" GroupName="SpotMode" IsChecked="{Binding SpotClone}"
+                                     ToolTip.Tip="An exact copy of the source" />
+                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+                        <TextBlock Text="Size" VerticalAlignment="Bottom" />
+                        <TextBlock Grid.Column="1" Text="{Binding SpotSize, StringFormat='{}{0:0.0} %'}" VerticalAlignment="Bottom" />
+                        <Slider Grid.Row="1" Grid.ColumnSpan="2" Minimum="0.2" Maximum="10" Value="{Binding SpotSize}"
+                                SmallChange="0.1" LargeChange="0.5" ToolTip.Tip="Radius in % of the photo's longer side" />
+                        <TextBlock Grid.Row="2" Text="Feather" VerticalAlignment="Bottom" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SpotFeather, StringFormat='{}{0:0}'}" VerticalAlignment="Bottom" />
+                        <Slider Grid.Row="3" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding SpotFeather}" />
+                        <TextBlock Grid.Row="4" Text="Opacity" VerticalAlignment="Bottom" />
+                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SpotOpacity, StringFormat='{}{0:0}'}" VerticalAlignment="Bottom" />
+                        <Slider Grid.Row="5" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding SpotOpacity}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                        <TextBlock Text="{Binding SpotCountText}" Foreground="Gray" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Delete spot" Command="{Binding DeleteSpotCommand}"
+                                ToolTip.Tip="Remove the selected spot (Delete)" />
+                        <Button Grid.Column="2" Content="Remove all" Command="{Binding RemoveAllSpotsCommand}"
+                                IsEnabled="{Binding HasSpots}" />
                     </Grid>
                 </StackPanel>
             </Expander>
@@ -377,7 +410,9 @@
                                   Tool="{Binding ActiveTool}"
                                   EditableComponent="{Binding EditableComponent}"
                                   BrushRadius="{Binding BrushRadius}"
-                                  BrushFeather="{Binding BrushFeatherFraction}" />
+                                  BrushFeather="{Binding BrushFeatherFraction}"
+                                  SelectedSpot="{Binding SelectedSpotId}"
+                                  SpotRadius="{Binding SpotCursorRadius}" />
             <TextBlock Text="Drop a photo or a folder here"
                        Foreground="Gray"
                        HorizontalAlignment="Center" VerticalAlignment="Center"

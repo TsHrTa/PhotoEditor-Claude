@@ -73,6 +73,16 @@ public sealed class ToneBaseMap
     /// <summary>The map of <paramref name="photo"/>, computed once per image object.</summary>
     public static ToneBaseMap For(SKImage photo) => Cache.GetValue(photo, Compute);
 
+    /// <summary>
+    /// Lets <paramref name="to"/> (e.g. the photo with a few spots removed) use the map already computed for
+    /// <paramref name="from"/>, instead of computing its own.
+    /// </summary>
+    public static void Share(SKImage from, SKImage to)
+    {
+        if (Cache.TryGetValue(from, out var map))
+            Cache.AddOrUpdate(to, map);
+    }
+
     public static ToneBaseMap Compute(SKImage photo)
     {
         using var bitmap = SKBitmap.FromImage(photo);

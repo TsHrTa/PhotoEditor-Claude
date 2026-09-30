@@ -186,6 +186,7 @@ public partial class MainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsRadialGradientActive))]
     [NotifyPropertyChangedFor(nameof(IsCropActive))]
     [NotifyPropertyChangedFor(nameof(IsObjectSelectActive))]
+    [NotifyPropertyChangedFor(nameof(IsSpotActive))]
     public partial EditTool ActiveTool { get; set; }
 
     /// <summary>When on, left-dragging on the image paints into the selected mask.</summary>
@@ -612,6 +613,8 @@ public partial class MainViewModel : ViewModelBase
         if (oldValue.Adjustments.DenoiseAmount != newValue.Adjustments.DenoiseAmount
             || oldValue.Adjustments.DeblurAmount != newValue.Adjustments.DeblurAmount)
             ScheduleRestoreUpdate();
+        if (!ReferenceEquals(oldValue.Spots, newValue.Spots))
+            OnSpotsChanged();
         if (oldValue.Crop != newValue.Crop || oldValue.Orientation != newValue.Orientation)
         {
             if (!_settingCropAngle)
@@ -756,11 +759,12 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty] public partial bool CopyDetail { get; set; } = true;
     [ObservableProperty] public partial bool CopyCrop { get; set; }
     [ObservableProperty] public partial bool CopyMasks { get; set; }
+    [ObservableProperty] public partial bool CopySpots { get; set; }
 
     private SettingsGroups SelectedCopyGroups =>
         (CopyLight ? SettingsGroups.Light : 0) | (CopyColor ? SettingsGroups.Color : 0) | (CopyHsl ? SettingsGroups.Hsl : 0)
         | (CopyVignette ? SettingsGroups.Vignette : 0) | (CopyDetail ? SettingsGroups.Detail : 0)
-        | (CopyCrop ? SettingsGroups.Crop : 0) | (CopyMasks ? SettingsGroups.Masks : 0);
+        | (CopyCrop ? SettingsGroups.Crop : 0) | (CopyMasks ? SettingsGroups.Masks : 0) | (CopySpots ? SettingsGroups.Spots : 0);
 
     private EditState? _copiedState;
     private SettingsGroups _copiedGroups;
@@ -801,7 +805,7 @@ public partial class MainViewModel : ViewModelBase
         {
             (SettingsGroups.Light, "Light"), (SettingsGroups.Color, "Color"), (SettingsGroups.Hsl, "HSL"),
             (SettingsGroups.Vignette, "Vignette"), (SettingsGroups.Detail, "Detail"), (SettingsGroups.Crop, "Crop"),
-            (SettingsGroups.Masks, "Masks"),
+            (SettingsGroups.Masks, "Masks"), (SettingsGroups.Spots, "Spot removal"),
         }.Where(g => groups.HasFlag(g.Flag)).Select(g => g.Name));
 
     /// <summary>

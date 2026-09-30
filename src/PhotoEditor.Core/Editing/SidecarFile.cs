@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using PhotoEditor.Core.Adjustments;
 using PhotoEditor.Core.Masks;
+using PhotoEditor.Core.Retouch;
 
 namespace PhotoEditor.Core.Editing;
 
@@ -14,6 +15,7 @@ public sealed record EditDocument
     public int Version { get; init; } = CurrentVersion;
     public AdjustmentSettings Adjustments { get; init; } = AdjustmentSettings.Default;
     public ImmutableList<Mask> Masks { get; init; } = [];
+    public ImmutableList<Spot> Spots { get; init; } = [];
     public Crop Crop { get; init; } = Crop.None;
 
     /// <summary>Rotation / flip after the crop.</summary>
@@ -23,9 +25,12 @@ public sealed record EditDocument
     public PhotoLabels? Labels { get; init; }
 
     public static EditDocument From(EditState state) =>
-        new() { Adjustments = state.Adjustments, Masks = state.Masks, Crop = state.Crop, Orientation = state.Orientation };
+        new() { Adjustments = state.Adjustments, Masks = state.Masks, Spots = state.Spots, Crop = state.Crop, Orientation = state.Orientation };
 
-    public EditState ToState() => new() { Adjustments = Adjustments, Masks = Masks, Crop = Crop, Orientation = new(Orientation.Turns, Orientation.Flip) };
+    public EditState ToState() => new()
+    {
+        Adjustments = Adjustments, Masks = Masks, Spots = Spots, Crop = Crop, Orientation = new(Orientation.Turns, Orientation.Flip),
+    };
 
     public bool Equals(EditDocument? other) =>
         other is not null && Version == other.Version && ToState() == other.ToState();
@@ -69,6 +74,7 @@ public static class SidecarFile
         {
             Adjustments = Normalize(doc.Adjustments ?? AdjustmentSettings.Default),
             Masks = masks,
+            Spots = (doc.Spots ?? []).Where(s => s is not null).Select(s => s.Normalized()).ToImmutableList(),
             Crop = CropGeometry.Normalize(doc.Crop),
         };
     }

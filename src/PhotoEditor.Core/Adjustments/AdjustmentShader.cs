@@ -584,8 +584,14 @@ public static class AdjustmentShader
         RenderRaster(source, new EditState { Adjustments = settings });
 
     /// <summary>As above, with masks rasterised at the image size.</summary>
+    /// <remarks>Spot removal is applied to <paramref name="source"/> first (the app shows a retouched image).</remarks>
     public static SKBitmap RenderRaster(SKBitmap source, EditState state)
     {
+        if (state.Spots.Count > 0)
+        {
+            using var retouched = Retouch.Retouching.Apply(source, state.Spots);
+            return RenderRaster(retouched, state with { Spots = [] });
+        }
         var info = new SKImageInfo(source.Width, source.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
         using var image = SKImage.FromBitmap(source);
         Headroom.Attach(image, Headroom.Of(source));

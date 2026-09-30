@@ -28,10 +28,13 @@ public enum SettingsGroups
     /// <summary>All masks with their adjustments.</summary>
     Masks = 64,
 
+    /// <summary>Spot removal (e.g. sensor dust in the same place on a series).</summary>
+    Spots = 128,
+
     /// <summary>What "Copy settings" selects initially (crop and masks usually belong to one photo).</summary>
     Default = Light | Color | Hsl | Vignette | Detail,
 
-    All = Default | Crop | Masks,
+    All = Default | Crop | Masks | Spots,
 }
 
 /// <summary>Copies selected parts of one photo's edit onto another's.</summary>
@@ -74,6 +77,8 @@ public static class SettingsTransfer
         }
         if (groups.HasFlag(SettingsGroups.Masks))
             result = result with { Masks = source.Masks.Select(m => m with { Id = Guid.NewGuid() }).ToImmutableList() };
+        if (groups.HasFlag(SettingsGroups.Spots))
+            result = result with { Spots = source.Spots.Select(s => s with { Id = Guid.NewGuid() }).ToImmutableList() };
         return result;
     }
 

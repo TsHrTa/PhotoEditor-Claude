@@ -24,6 +24,17 @@ public sealed class Headroom
         Scale = scale;
     }
 
+    /// <summary>
+    /// A layer whose bitmap may still change (spot removal updates it in place); <paramref name="image"/> shows its
+    /// current pixels.
+    /// </summary>
+    public Headroom(SKBitmap bitmap, float scale, SKImage image)
+    {
+        Bitmap = bitmap;
+        Scale = scale;
+        _image = image;
+    }
+
     /// <summary>RGBA8888, opaque; red / green / blue = how far the channel goes above white (0..255 = 0..<see cref="Scale"/>).</summary>
     public SKBitmap Bitmap { get; }
 
