@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Net.Http;
 using System.Linq;
 using System.Threading.Tasks;
@@ -197,13 +198,48 @@ public partial class MainViewModel
                     SelectedSpotId = spotId;
                     _spotDragKey = $"spot-drag-{Guid.NewGuid()}"; // one undo step per drag
                 }
-                ApplyEdit(UpdateSpot(State, spotId, s => kind == SpotEditKind.Move ? s with { Center = point } : s with { Source = point }),
+                ApplyEdit(UpdateSpot(State, spotId, s => kind == SpotEditKind.Move ? Moved(s, point) : s with { Source = point }),
                     _spotDragKey);
                 break;
         }
     }
 
     private string? _spotDragKey;
+
+    /// <summary>The spot moved so its centre is at <paramref name="center"/> (a painted stroke moves along; the source stays).</summary>
+    private static Spot Moved(Spot spot, BrushPoint center)
+    {
+        float dx = center.X - spot.Center.X, dy = center.Y - spot.Center.Y;
+        return spot with
+        {
+            Center = center,
+            Path = spot.Path.Select(p => new BrushPoint(Math.Clamp(p.X + dx, 0f, 1f), Math.Clamp(p.Y + dy, 0f, 1f))).ToImmutableList(),
+        };
+    }
+
+    /// <summary>A stroke painted with the spot tool: AI Remove, or a painted heal / clone spot with an automatic source.</summary>
+    public async Task PaintedAsync(IReadOnlyList<BrushPoint> path)
+    {
+        if (_newSpotMode == SpotMode.Remove)
+        {
+            await RemoveAsync(path);
+            return;
+        }
+        if (Original is null || EditBase is not { } image || path.Count == 0)
+            return;
+        var points = SimplifiedPath(path, _newSpotRadius).ToList();
+        var center = new BrushPoint(points.Average(p => p.X), points.Average(p => p.Y));
+        var source = points.Count > 1
+            ? Retouching.FindStrokeSource(image, points, _newSpotRadius, center)
+            : Retouching.FindSource(image, center, _newSpotRadius, State.Spots);
+        var spot = new Spot
+        {
+            Mode = _newSpotMode, Center = center, Source = source, Path = points.Count > 1 ? [.. points] : [],
+            Radius = _newSpotRadius, Feather = _newSpotFeather, Opacity = _newSpotOpacity,
+        };
+        ApplyEdit(State with { Spots = State.Spots.Add(spot) });
+        SelectedSpotId = spot.Id;
+    }
 
     // ---- AI Remove ----
 

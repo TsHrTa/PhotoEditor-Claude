@@ -264,7 +264,7 @@
             <Expander Header="Retouch" IsExpanded="True" HorizontalAlignment="Stretch">
                 <StackPanel Spacing="6">
                     <ToggleButton HorizontalAlignment="Left" Content="Spot removal (Q)" IsChecked="{Binding IsSpotActive}" IsEnabled="{Binding HasImage}"
-                                      ToolTip.Tip="Click a spot (dust, blemish, small object) to remove it; a matching source is picked automatically. Drag a circle to move it; drag the dashed source circle of the selected spot to pick another source. Delete removes the selected spot." />
+                                      ToolTip.Tip="Click a spot (dust, blemish, small object) to remove it, or drag along something long (a wire, a crack) to paint over it; a matching source beside it is picked automatically. Drag a spot to move it; drag the selected spot's source to pick another. Delete removes the selected spot. Remove (AI): paint over anything; AI fills it in." />
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <RadioButton Content="Heal" GroupName="SpotMode" IsChecked="{Binding SpotHeal}"
                                      ToolTip.Tip="Texture from the source, colour and brightness fitted to the surroundings" />

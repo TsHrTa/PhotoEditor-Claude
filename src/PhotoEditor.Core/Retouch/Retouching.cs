@@ -11,7 +11,7 @@ namespace PhotoEditor.Core.Retouch;
 /// the circle, interpolated harmonically inside (Poisson kernel of the disk — the membrane of Poisson image
 /// editing, in closed form). Clone copies the source.
 /// </summary>
-public static class Retouching
+public static partial class Retouching
 {
     /// <summary>Directions sampled on the boundary ring.</summary>
     private const int BoundarySamples = 64;
@@ -54,7 +54,7 @@ public static class Retouching
     /// <summary>The pixels a spot writes (its circle), in an image of the given size.</summary>
     public static SKRectI DestinationBounds(Spot spot, int width, int height)
     {
-        if (spot.Mode == SpotMode.Remove)
+        if (spot.Mode == SpotMode.Remove || IsStroke(spot))
             return RemoveFill.Bounds(spot, width, height);
         var c = Circle.Of(spot, width, height);
         return Bounds(c.X, c.Y, c.Radius, width, height);
@@ -68,6 +68,8 @@ public static class Retouching
             var own = RemoveFill.Bounds(spot, width, height); // the fill is stored; it only blends over its own pixels
             return (own, own);
         }
+        if (IsStroke(spot))
+            return StrokeReadBounds(spot, width, height);
         var c = Circle.Of(spot, width, height);
         return (Bounds(c.X, c.Y, c.Radius + 4, width, height), Bounds(c.SourceX, c.SourceY, c.Radius + 4, width, height));
     }
@@ -82,6 +84,8 @@ public static class Retouching
             throw new ArgumentException("Spot removal needs an RGBA8888 bitmap.", nameof(bitmap));
         if (spot.Mode == SpotMode.Remove)
             RemoveFill.Apply(bitmap, spot, layer);
+        else if (IsStroke(spot))
+            ApplyStrokeSpot(bitmap, spot);
         else
             ApplySpotCore(bitmap, spot);
     }

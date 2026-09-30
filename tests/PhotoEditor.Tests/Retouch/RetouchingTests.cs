@@ -152,6 +152,50 @@ public sealed class RetouchingTests
         Assert.Equal(0, Headroom.Of(src)!.Bitmap.GetPixel(100, 200).Red); // the original is untouched
     }
 
+    /// <summary>The skin scene with a dark diagonal "wire" (3 px wide) from (60, 60) to (340, 240).</summary>
+    private static SKBitmap Wire()
+    {
+        var bmp = Skin();
+        for (int y = 0; y < 300; y++)
+            for (int x = 0; x < 400; x++)
+            {
+                // distance to the line through (60, 60) and (340, 240)
+                double t = Math.Clamp(((x - 60) * 280 + (y - 60) * 180) / (280.0 * 280 + 180 * 180), 0, 1);
+                double dx = 60 + 280 * t - x, dy = 60 + 180 * t - y;
+                if (dx * dx + dy * dy <= 2.25)
+                    bmp.SetPixel(x, y, new SKColor(20, 16, 14));
+            }
+        return bmp;
+    }
+
+    [Fact]
+    public void StrokeHeal_RemovesAWire_WithAnAutomaticSource()
+    {
+        using var src = Wire();
+        var path = Enumerable.Range(0, 15).Select(i => N(60 + 280 * i / 14.0, 60 + 180 * i / 14.0)).ToList();
+        var center = N(200, 150);
+        float radius = 6f / 400;
+        var source = Retouching.FindStrokeSource(src, path, radius, center);
+        var spot = new Spot { Mode = SpotMode.Heal, Path = [.. path], Center = center, Source = source, Radius = radius, Feather = 0.3f };
+        using var healed = Retouching.Apply(src, [spot]);
+        // Along the wire: no dark pixels left, brightness like the surroundings (the gradient).
+        for (int i = 1; i < 14; i++)
+        {
+            int x = 60 + 280 * i / 14, y = 60 + 180 * i / 14;
+            double expected = 90 + x * 0.25;
+            Assert.InRange(healed.GetPixel(x, y).Red, expected - 12, expected + 12);
+        }
+        // The offset is beside the wire, not along it.
+        double ox = (source.X - center.X) * 400, oy = (source.Y - center.Y) * 300;
+        double along = Math.Abs(ox * 280 + oy * 180) / Math.Sqrt(280.0 * 280 + 180 * 180);
+        double across = Math.Abs(ox * 180 - oy * 280) / Math.Sqrt(280.0 * 280 + 180 * 180);
+        Assert.True(across > along && across >= 2 * 6, $"offset {ox:F0},{oy:F0}"); // clear of the stroke
+        // Clone copies the shape from the source.
+        using var cloned = Retouching.Apply(src, [spot with { Mode = SpotMode.Clone, Feather = 0 }]);
+        Assert.Equal(src.GetPixel(200 + (int)Math.Round(ox), 150 + (int)Math.Round(oy)), cloned.GetPixel(200, 150));
+        Assert.Equal(src.GetPixel(200, 60), healed.GetPixel(200, 60)); // away from the stroke: unchanged
+    }
+
     [Fact]
     public void CopyPaste_CopiesSpotsOnlyWhenChosen_WithNewIds()
     {

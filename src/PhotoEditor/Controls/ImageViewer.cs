@@ -537,11 +537,19 @@ public class ImageViewer : Control
             _paint = null;
             e.Pointer.Capture(null);
             var end = e.GetPosition(this);
-            // A click (no drag) on a spot selects it; anything else is a stroke to remove.
-            if (Point.Distance(_paintStart, end) < BoxDragThreshold && HitSpot(end) is { } hit)
+            // A click (no drag): on a spot selects it; elsewhere adds a circle (heal / clone) or a dot (remove).
+            // A drag paints a stroke.
+            bool click = Point.Distance(_paintStart, end) < BoxDragThreshold;
+            if (click && HitSpot(end) is { } hit)
                 SpotEdit?.Invoke(this, new SpotEditEventArgs(SpotEditKind.Select, hit.Id, hit.Center, EditPhase.End));
+            else if (click && !SpotPainting)
+            {
+                var point = painted[0];
+                if (point.X is >= 0 and <= 1 && point.Y is >= 0 and <= 1)
+                    SpotEdit?.Invoke(this, new SpotEditEventArgs(SpotEditKind.Add, null, point, EditPhase.End));
+            }
             else
-                SpotPainted?.Invoke(this, painted);
+                SpotPainted?.Invoke(this, click ? [painted[0]] : painted);
             InvalidateVisual();
             return;
         }
@@ -646,7 +654,7 @@ public class ImageViewer : Control
                 if (kind == SpotEditKind.MoveSource && spot.Id != SelectedSpot)
                     continue; // only the selected spot shows its source
                 var center = kind == SpotEditKind.Move ? spot.Center : spot.Source;
-                if (Point.Distance(ToView(center), pos) > Math.Max(ViewRadius(spot.Radius), HandleHitRadius))
+                if (!Hits(spot, kind == SpotEditKind.MoveSource, pos))
                     continue;
                 var p = ToNormalized(pos);
                 var drag = (kind, spot.Id, (double)center.X - p.X, (double)center.Y - p.Y);
@@ -661,9 +669,19 @@ public class ImageViewer : Control
             SpotEdit?.Invoke(this, new SpotEditEventArgs(SpotEditKind.Select, removed.Id, removed.Center, EditPhase.End));
             return;
         }
-        var point = ToNormalized(pos);
-        if (point.X is >= 0 and <= 1 && point.Y is >= 0 and <= 1)
-            SpotEdit?.Invoke(this, new SpotEditEventArgs(SpotEditKind.Add, null, point, EditPhase.End));
+        // Empty photo: a click adds a circle, a drag paints a stroke (decided on release).
+        _paint = [ToNormalized(pos)];
+        _paintStart = pos;
+        e.Pointer.Capture(this);
+    }
+
+    /// <summary>A view point on a spot (its circle or stroke), or with <paramref name="atSource"/> on its source.</summary>
+    private bool Hits(Spot spot, bool atSource, Point pos)
+    {
+        double r = Math.Max(ViewRadius(spot.Radius), HandleHitRadius);
+        var points = spot.Path.Count > 1 ? spot.Path : [spot.Center];
+        float dx = atSource ? spot.Source.X - spot.Center.X : 0, dy = atSource ? spot.Source.Y - spot.Center.Y : 0;
+        return points.Any(p => Point.Distance(ToView(new BrushPoint(p.X + dx, p.Y + dy)), pos) <= r);
     }
 
     /// <summary>The newest spot under a view point (a circle, or a Remove stroke), or null.</summary>
@@ -672,8 +690,7 @@ public class ImageViewer : Control
         foreach (var spot in State.Spots.Reverse())
         {
             double r = Math.Max(ViewRadius(spot.Radius), HandleHitRadius);
-            var points = spot.Mode == SpotMode.Remove && spot.Path.Count > 0 ? spot.Path : [spot.Center];
-            if (points.Any(p => Point.Distance(ToView(p), pos) <= r))
+            if (Hits(spot, false, pos))
                 return spot;
         }
         return null;
@@ -723,6 +740,23 @@ public class ImageViewer : Control
             DrawStroke(context, painting, SpotRadius, Color.FromArgb(110, 255, 255, 255));
         foreach (var spot in State.Spots)
         {
+            if (spot.Path.Count > 1 && spot.Mode != SpotMode.Remove)
+            {
+                // Painted heal / clone: selected shows the stroke, its source and the link; otherwise a ring.
+                var at = ToView(spot.Center);
+                if (spot.Id == SelectedSpot)
+                {
+                    float sdx = spot.Source.X - spot.Center.X, sdy = spot.Source.Y - spot.Center.Y;
+                    DrawStroke(context, spot.Path, spot.Radius, Color.FromArgb(90, 255, 255, 255));
+                    DrawStroke(context, spot.Path.Select(p => new BrushPoint(p.X + sdx, p.Y + sdy)).ToList(), spot.Radius,
+                        Color.FromArgb(70, 120, 190, 255));
+                    context.DrawLine(GuideShadow, at, ToView(spot.Source));
+                    context.DrawLine(GuideDashed, at, ToView(spot.Source));
+                }
+                context.DrawEllipse(null, GuideShadow, at, 5, 5);
+                context.DrawEllipse(null, spot.Id == SelectedSpot ? SpotSelected : GuideLine, at, 5, 5);
+                continue;
+            }
             if (spot.Mode == SpotMode.Remove)
             {
                 // Selected: the stroke as a band; otherwise a small ring where it is.

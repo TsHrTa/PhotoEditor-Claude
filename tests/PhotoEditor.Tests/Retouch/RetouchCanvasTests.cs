@@ -28,7 +28,7 @@ public sealed class RetouchCanvasTests
         var spots = new List<Spot>();
         for (int step = 0; step < 60; step++)
         {
-            int action = spots.Count == 0 ? 0 : rnd.Next(5);
+            int action = spots.Count == 0 ? 0 : rnd.Next(6);
             switch (action)
             {
                 case 0 or 1: // add
@@ -42,6 +42,15 @@ public sealed class RetouchCanvasTests
                 case 3: // move a source
                     int j = rnd.Next(spots.Count);
                     spots[j] = spots[j] with { Source = P() };
+                    break;
+                case 4: // a painted heal / clone stroke
+                    var start = P();
+                    spots.Add(new Spot
+                    {
+                        Mode = rnd.Next(2) == 0 ? SpotMode.Heal : SpotMode.Clone, Center = start, Source = P(),
+                        Radius = 0.02f + (float)rnd.NextDouble() * 0.03f, Feather = (float)rnd.NextDouble(),
+                        Path = [start, new BrushPoint(Math.Clamp(start.X + 0.2f, 0, 1), Math.Clamp(start.Y + 0.1f, 0, 1)), P()],
+                    });
                     break;
                 default: // remove
                     spots.RemoveAt(rnd.Next(spots.Count));
