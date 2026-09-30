@@ -403,6 +403,26 @@
                             </StackPanel>
                             </Panel>
                             </Border>
+                            <!-- Transform: Upright buttons above the sliders -->
+                            <Border IsVisible="{Binding Upright, Converter={x:Static ObjectConverters.IsNotNull}}">
+                            <Panel DataContext="{Binding Upright}">
+                            <StackPanel Spacing="4" x:DataType="vm:MainViewModel">
+                                <TextBlock Text="Upright" />
+                                <WrapPanel>
+                                    <Button Content="Auto" Command="{Binding UprightCommand}" CommandParameter="Auto" Margin="0,0,4,4"
+                                            ToolTip.Tip="Level the photo and make converging verticals parallel; horizontal perspective only partly" />
+                                    <Button Content="Level" Command="{Binding UprightCommand}" CommandParameter="Level" Margin="0,0,4,4"
+                                            ToolTip.Tip="Rotate only, so horizontal and vertical lines are level / upright" />
+                                    <Button Content="Vertical" Command="{Binding UprightCommand}" CommandParameter="Vertical" Margin="0,0,4,4"
+                                            ToolTip.Tip="Level and make converging verticals parallel (buildings)" />
+                                    <Button Content="Full" Command="{Binding UprightCommand}" CommandParameter="Full" Margin="0,0,4,4"
+                                            ToolTip.Tip="Level, vertical and horizontal perspective" />
+                                    <Button Content="Off" Command="{Binding UprightCommand}" CommandParameter="Off" Margin="0,0,4,4"
+                                            ToolTip.Tip="Set vertical, horizontal and rotate back to 0" />
+                                </WrapPanel>
+                            </StackPanel>
+                            </Panel>
+                            </Border>
                             <!-- Tone curve: the point curve editor above the region sliders -->
                             <Border IsVisible="{Binding ToneCurve, Converter={x:Static ObjectConverters.IsNotNull}}">
                             <Panel DataContext="{Binding ToneCurve}">

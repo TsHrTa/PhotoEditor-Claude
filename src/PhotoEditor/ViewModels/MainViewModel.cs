@@ -34,6 +34,7 @@ public partial class MainViewModel : ViewModelBase
                 IsGlobalOnly = g.All(p => AdjustmentParameters.GlobalOnly.Contains(p.Parameter)),
                 Lens = g.Key == AdjustmentParameters.Lens ? this : null,
                 ToneCurve = g.Key == AdjustmentParameters.ToneCurve ? this : null,
+                Upright = g.Key == AdjustmentParameters.Transform ? this : null,
             })
             .ToList();
         LoadPresets();
@@ -47,6 +48,7 @@ public partial class MainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(CropSizeText))]
     [NotifyCanExecuteChangedFor(nameof(PasteSettingsCommand))]
     [NotifyCanExecuteChangedFor(nameof(ApplyPresetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(UprightCommand))]
     public partial SKBitmap? Original { get; private set; }
 
     [ObservableProperty]
