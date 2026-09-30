@@ -99,7 +99,7 @@ public sealed class RestorePipeline(ModelStore models, RestoreCache cache) : IDi
         if (ReferenceEquals(result, original))
             result = original.Copy();
         // The AI works on the 8-bit photo; the highlights above white stay those of the original.
-        Headroom.Attach(result, Headroom.Of(original));
+        Headroom.Attach(result, Headroom.Of(original)?.WithoutFine());
         return result;
     }
 

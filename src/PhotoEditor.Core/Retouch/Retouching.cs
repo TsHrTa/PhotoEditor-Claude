@@ -30,9 +30,14 @@ public static class Retouching
         if (Headroom.Of(source) is { } headroom && headroom.Width == source.Width && headroom.Height == source.Height)
         {
             var extra = headroom.Bitmap.Copy();
+            var fine = headroom.Fine?.Copy();
             foreach (var spot in spots)
+            {
                 ApplySpotCore(extra, spot);
-            Headroom.Attach(result, new Headroom(extra, headroom.Scale));
+                if (fine is not null)
+                    ApplySpotCore(fine, spot);
+            }
+            Headroom.Attach(result, new Headroom(extra, headroom.Scale, fine));
         }
         return result;
     }

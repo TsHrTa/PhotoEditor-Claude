@@ -73,6 +73,10 @@ public static class AdjustmentShader
         uniform shader headroom;
         uniform float headroomScale;
         uniform float addHeadroom;
+        // The fraction of an 8-bit step the photo rounded away (see Headroom.Fine): value = (stored − 128/255) × 255
+        // × fineStep; added in the global pass when addFine = 1.
+        uniform shader fine;
+        uniform float addFine;
         // Brightest linear value this pass hands on: 1 for the last pass, more between passes so a mask can
         // still bring back what an earlier pass pushed above white.
         uniform float outputLimit;
@@ -376,6 +380,7 @@ public static class AdjustmentShader
             }
             // Highlights above white (after the detail filters, which work on the 8-bit photo)
             if (addHeadroom > 0.0) s += headroomScale * float3(headroom.eval(coord).rgb);
+            if (addFine > 0.0) s += (float3(fine.eval(coord).rgb) - 128.0 / 255.0) * (255.0 / 65025.0);
 
             // Linear light
             float3 c = float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b));
@@ -471,7 +476,10 @@ public static class AdjustmentShader
         using var headroomShader = headroomMap is null
             ? SKShader.CreateColor(SKColors.Black)
             : headroomMap.Image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling);
-        var extra = new HeadroomInput(headroomShader, headroomMap?.Scale ?? 0f);
+        using var fineShader = headroomMap?.FineImage is { } fineImage
+            ? fineImage.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, sampling)
+            : SKShader.CreateColor(SKColors.Black);
+        var extra = new HeadroomInput(headroomShader, headroomMap?.Scale ?? 0f, fineShader, headroomMap?.Fine is not null);
         var masks = state.Masks.Select(m => (Mask: m, Image: m.IsActive ? maskImage(m) : null)).Where(m => m.Image is not null).ToList();
         var frame = VignetteMath.Frame.From(state.Crop.Frame(image.Width, image.Height));
         // Soften taps are a whole number of full-resolution pixels apart (as on the CPU at export).
@@ -504,7 +512,7 @@ public static class AdjustmentShader
 
     private readonly record struct ToneInput(SKShader Shader, bool Bound);
 
-    private readonly record struct HeadroomInput(SKShader Shader, float Scale);
+    private readonly record struct HeadroomInput(SKShader Shader, float Scale, SKShader Fine, bool HasFine);
 
     /// <summary>Brightest linear value handed from one pass to the next (≈ 6 stops above white).</summary>
     public const float PassLimit = 64f;
@@ -562,6 +570,7 @@ public static class AdjustmentShader
             ["clarityAmount"] = p.ClarityAmount,
             ["headroomScale"] = headroom.Scale,
             ["addHeadroom"] = sharpen && headroom.Scale > 0 ? 1f : 0f,
+            ["addFine"] = sharpen && headroom.HasFine ? 1f : 0f,
             ["outputLimit"] = last ? 1f : PassLimit,
         };
         var children = new SKRuntimeEffectChildren(effect)
@@ -572,6 +581,7 @@ public static class AdjustmentShader
             ["toneBase"] = tone.Shader,
             ["mask"] = mask,
             ["headroom"] = headroom.Shader,
+            ["fine"] = headroom.Fine,
         };
         return effect.ToShader(uniforms, children);
     }

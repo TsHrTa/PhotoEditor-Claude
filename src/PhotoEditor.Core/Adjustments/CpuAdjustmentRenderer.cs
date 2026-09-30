@@ -53,6 +53,8 @@ public static class CpuAdjustmentRenderer
         nint inPtr = input.GetPixels(), outPtr = result.GetPixels();
         nint extraPtr = headroom?.Bitmap.GetPixels() ?? 0;
         int extraRowBytes = headroom?.Bitmap.RowBytes ?? 0;
+        nint finePtr = headroom?.Fine?.GetPixels() ?? 0;
+        int fineRowBytes = headroom?.Fine?.RowBytes ?? 0;
         // Soften / Texture (global or in a mask) use the original's fine detail.
         // Dehaze (global or in a mask) uses the photo's haze map, computed from the original.
         var haze = p.HasDehaze || layers.Any(l => l.Adjustments.HasDehaze) ? HazeMap.Compute(original) : null;
@@ -73,8 +75,9 @@ public static class CpuAdjustmentRenderer
                 var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
                 var outRow = new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
                 var extraRow = headroom is null ? default : new ReadOnlySpan<byte>((byte*)extraPtr + (long)y * extraRowBytes, width * 4);
+                var fineRow = finePtr == 0 ? default : new ReadOnlySpan<byte>((byte*)finePtr + (long)y * fineRowBytes, width * 4);
                 ProcessRow(inRow, outRow, p, layers, y, frame, soften, haze, height, detailFilters, toneBase, originalPixels,
-                    extraRow, headroom?.Scale ?? 0f);
+                    extraRow, headroom?.Scale ?? 0f, fineRow);
             }
         });
         return result;
@@ -85,11 +88,11 @@ public static class CpuAdjustmentRenderer
 
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
     public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
-        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null, null, default, default, 0f);
+        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null, null, default, default, 0f, default);
 
     private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y,
         in VignetteMath.Frame frame, Softening? soften, HazeMap? haze, int height, DetailFilters? detailFilters,
-        ToneBaseMap? toneBase, ToneSource originalPixels, ReadOnlySpan<byte> headroom, float headroomScale)
+        ToneBaseMap? toneBase, ToneSource originalPixels, ReadOnlySpan<byte> headroom, float headroomScale, ReadOnlySpan<byte> fine)
     {
         int width = input.Length / 4;
         // The global pass hands values up to PassLimit to the masks; the last pass clips at white.
@@ -141,9 +144,21 @@ public static class CpuAdjustmentRenderer
                     s1 += headroom[i + 1] * headroomScale / 255f;
                     s2 += headroom[i + 2] * headroomScale / 255f;
                 }
+                if (!fine.IsEmpty)
+                {
+                    s0 += Headroom.FineOffset(fine[i]);
+                    s1 += Headroom.FineOffset(fine[i + 1]);
+                    s2 += Headroom.FineOffset(fine[i + 2]);
+                }
                 r = ColorMath.SrgbToLinear(s0);
                 g = ColorMath.SrgbToLinear(s1);
                 b = ColorMath.SrgbToLinear(s2);
+            }
+            else if (a8 == 255 && !fine.IsEmpty)
+            {
+                r = ColorMath.SrgbByteToLinear(input[i], Headroom.FineOffset(fine[i]));
+                g = ColorMath.SrgbByteToLinear(input[i + 1], Headroom.FineOffset(fine[i + 1]));
+                b = ColorMath.SrgbByteToLinear(input[i + 2], Headroom.FineOffset(fine[i + 2]));
             }
             else if (a8 == 255)
             {

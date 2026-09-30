@@ -64,11 +64,13 @@ public sealed class HeadroomTests
     }
 
     [Fact]
-    public void Develop_FlatPhoto_HasNoHeadroom()
+    public void Develop_FlatPhoto_HasNothingAboveWhite()
     {
         var rgb = Enumerable.Repeat((ushort)20000, 50 * 40 * 3).ToArray();
         using var photo = RawImageLoader.Develop(rgb, 50, 40);
-        Assert.Null(Headroom.Of(photo));
+        var headroom = Headroom.Of(photo)!;
+        Assert.All(headroom.Bitmap.Pixels, p => Assert.Equal(0, p.Red + p.Green + p.Blue));
+        Assert.All(headroom.Fine!.Pixels, p => Assert.Equal(Headroom.FineZero, p.Red));
         Assert.Equal(255, photo.GetPixel(10, 10).Red);
     }
 
@@ -195,6 +197,50 @@ public sealed class HeadroomTests
     {
         Headroom.Attach(copy, Headroom.Of(from));
         return true;
+    }
+
+    /// <summary>
+    /// A smooth, very dark RAW gradient (linear 0.0005 … 0.01 after brightening, 1024 steps) with a white top
+    /// row so the brightening is 1; returns the photo and each column's exact encoded value.
+    /// </summary>
+    private static (SKBitmap Photo, double[] Exact) DarkRamp()
+    {
+        const int w = 1024, h = 8;
+        var rgb = new ushort[w * h * 3];
+        var exact = new double[w];
+        for (int x = 0; x < w; x++)
+        {
+            double linear = 0.0005 + 0.0095 * x / (w - 1);
+            var v = (ushort)Math.Round(RawImageLoader.ToCurve(linear) * 65535);
+            exact[x] = RawImageLoader.ToCurve(RawImageLoader.FromCurve(v / 65535.0)); // what the 16 bits hold
+            for (int y = 0; y < h; y++)
+                rgb[(y * w + x) * 3] = rgb[(y * w + x) * 3 + 1] = rgb[(y * w + x) * 3 + 2] = v;
+        }
+        for (int i = 0; i < w * 3; i++)
+            rgb[i] = 65535; // a white top row (12 % of the pixels): the brightening stays 1
+        return (RawImageLoader.Develop(rgb, w, h), exact);
+    }
+
+    [Fact]
+    public void LiftedShadows_KeepTheirGradient_WithTheFineLayer()
+    {
+        var (photo, exact) = DarkRamp();
+        using var _ = photo;
+        var settings = new AdjustmentSettings { Exposure = 4 };
+        using var fine = CpuAdjustmentRenderer.Render(photo, settings);
+        using var gpu = AdjustmentShader.RenderRaster(photo, settings);
+        using var coarse = photo.Copy();
+        Headroom.Attach(coarse, Headroom.Of(photo)!.WithoutFine());
+        using var eightBit = CpuAdjustmentRenderer.Render(coarse, settings);
+
+        int Expected(int x) => (int)Math.Round(ColorMath.LinearToSrgb(Math.Min(16 * ColorMath.SrgbToLinear((float)exact[x]), 1f)) * 255);
+        int ErrorOf(SKBitmap b) => Enumerable.Range(0, 1024).Max(x => Math.Abs(b.GetPixel(x, 4).Red - Expected(x)));
+        // Largest jump between neighbouring columns: a smooth gradient moves ≤ 1–2 levels, banding jumps.
+        int JumpOf(SKBitmap b) => Enumerable.Range(1, 1023).Max(x => Math.Abs(b.GetPixel(x, 4).Red - b.GetPixel(x - 1, 4).Red));
+        Assert.True(ErrorOf(fine) <= 1, $"fine: error {ErrorOf(fine)}");
+        Assert.True(ErrorOf(gpu) <= 1, $"shader: error {ErrorOf(gpu)}");
+        Assert.True(JumpOf(fine) <= 2, $"fine: jump {JumpOf(fine)}");
+        Assert.True(ErrorOf(eightBit) >= 4 && JumpOf(eightBit) >= 6, $"8-bit: error {ErrorOf(eightBit)}, jump {JumpOf(eightBit)}");
     }
 
     /// <summary>Real Canon CR2 when PHOTOEDITOR_RAW points to one: the photo matches LibRaw's own brightened output.</summary>

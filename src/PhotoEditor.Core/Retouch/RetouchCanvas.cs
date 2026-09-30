@@ -12,7 +12,7 @@ namespace PhotoEditor.Core.Retouch;
 public sealed class RetouchCanvas : IDisposable
 {
     private readonly SKPixmap _base;
-    private readonly SKPixmap? _baseHeadroom;
+    private readonly SKPixmap? _baseHeadroom, _baseFine;
     private IReadOnlyList<Spot> _applied = [];
 
     /// <param name="photo">The unretouched photo (RGBA8888; must stay alive and unchanged while the canvas is used).</param>
@@ -27,6 +27,11 @@ public sealed class RetouchCanvas : IDisposable
             _baseHeadroom = headroom.Bitmap.PeekPixels();
             HeadroomBitmap = Copy(_baseHeadroom);
             HeadroomScale = headroom.Scale;
+            if (headroom.Fine is not null)
+            {
+                _baseFine = headroom.Fine.PeekPixels();
+                FineBitmap = Copy(_baseFine);
+            }
         }
     }
 
@@ -36,6 +41,9 @@ public sealed class RetouchCanvas : IDisposable
     /// <summary>The retouched headroom layer, if the photo has one.</summary>
     public SKBitmap? HeadroomBitmap { get; }
     public float HeadroomScale { get; }
+
+    /// <summary>The retouched fine layer (see <see cref="Headroom.Fine"/>), if the photo has one.</summary>
+    public SKBitmap? FineBitmap { get; }
 
     public int Width => Bitmap.Width;
     public int Height => Bitmap.Height;
@@ -81,12 +89,16 @@ public sealed class RetouchCanvas : IDisposable
             Restore(Bitmap, _base, rect);
             if (HeadroomBitmap is not null && _baseHeadroom is not null)
                 Restore(HeadroomBitmap, _baseHeadroom, rect);
+            if (FineBitmap is not null && _baseFine is not null)
+                Restore(FineBitmap, _baseFine, rect);
         }
         foreach (var spot in spots.Where(redo.Contains))
         {
             Retouching.ApplySpot(Bitmap, spot);
             if (HeadroomBitmap is not null)
                 Retouching.ApplySpot(HeadroomBitmap, spot);
+            if (FineBitmap is not null)
+                Retouching.ApplySpot(FineBitmap, spot);
         }
         _applied = [.. spots];
         return true;
@@ -101,7 +113,8 @@ public sealed class RetouchCanvas : IDisposable
     {
         var image = Wrap(Bitmap);
         if (HeadroomBitmap is not null)
-            Headroom.Attach(image, new Headroom(HeadroomBitmap, HeadroomScale, Wrap(HeadroomBitmap)));
+            Headroom.Attach(image, new Headroom(HeadroomBitmap, HeadroomScale, Wrap(HeadroomBitmap),
+                FineBitmap, FineBitmap is null ? null : Wrap(FineBitmap)));
         Adjustments.ToneBaseMap.Share(photo, image);
         Adjustments.HazeMap.Share(photo, image);
         return image;
@@ -138,6 +151,8 @@ public sealed class RetouchCanvas : IDisposable
     {
         Bitmap.Dispose();
         HeadroomBitmap?.Dispose();
+        FineBitmap?.Dispose();
+        _baseFine?.Dispose();
         _base.Dispose();
         _baseHeadroom?.Dispose();
     }

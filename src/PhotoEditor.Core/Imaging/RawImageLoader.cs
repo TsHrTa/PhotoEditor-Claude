@@ -57,7 +57,7 @@ public static class RawImageLoader
 
     /// <summary>
     /// Decodes the RAW file into an 8-bit RGBA bitmap that looks as LibRaw's default output; the highlights above
-    /// white are attached as its <see cref="Headroom"/>.
+    /// white and the finer shadow steps are attached as its <see cref="Headroom"/>.
     /// </summary>
     public static SKBitmap Load(string path)
     {
@@ -96,8 +96,8 @@ public static class RawImageLoader
 
     /// <summary>
     /// Turns LibRaw's un-brightened 16-bit RGB into the photo: brightened like LibRaw's auto-brightening (the 99th
-    /// percentile of the brightest channel becomes white), with the values above white kept in a
-    /// <see cref="Headroom"/> attached to the result (none when nothing goes above white).
+    /// percentile of the brightest channel becomes white), with the values above white and the fraction of an
+    /// 8-bit step below it kept in a <see cref="Headroom"/> attached to the result.
     /// </summary>
     public static SKBitmap Develop(ushort[] rgb, int width, int height)
     {
@@ -135,43 +135,41 @@ public static class RawImageLoader
         double gain = white > 0 ? Math.Min(65535.0 / white, MaxBrightening) : 1;
         float scale = (float)(ToCurve(gain) - 1);
 
-        // Per 16-bit value: the 8-bit photo value and the stored headroom.
+        // Per 16-bit value: the 8-bit photo value, the stored headroom and the rounded-away fraction.
         var photo = new byte[65536];
         var extra = new byte[65536];
+        var fraction = new byte[65536];
         for (int v = 0; v < 65536; v++)
         {
             double e = ToCurve(gain * FromCurve(v / 65535.0));
             photo[v] = (byte)Math.Round(Math.Min(e, 1) * 255);
             extra[v] = e > 1 && scale > 0 ? (byte)Math.Clamp(Math.Round((e - 1) / scale * 255), 0, 255) : (byte)0;
+            fraction[v] = e >= 1 ? Headroom.FineZero
+                : (byte)Math.Clamp(Math.Round(Headroom.FineZero + (e - photo[v] / 255.0) / Headroom.FineStep), 0, 255);
         }
 
         var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
-        var headroom = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque));
-        nint photoPtr = bitmap.GetPixels(), extraPtr = headroom.GetPixels();
-        int anyAbove = 0;
+        var info = new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque);
+        var headroom = new SKBitmap(info);
+        var fine = new SKBitmap(info);
+        nint photoPtr = bitmap.GetPixels(), extraPtr = headroom.GetPixels(), finePtr = fine.GetPixels();
         Parallel.For(0, height, y =>
         {
             unsafe
             {
                 byte* p = (byte*)photoPtr + (long)y * bitmap.RowBytes;
                 byte* h = (byte*)extraPtr + (long)y * headroom.RowBytes;
-                bool above = false;
+                byte* f = (byte*)finePtr + (long)y * fine.RowBytes;
                 for (int x = 0, i = y * width * 3; x < width; x++, i += 3)
                 {
                     ushort r = rgb[i], g = rgb[i + 1], b = rgb[i + 2];
                     p[x * 4] = photo[r]; p[x * 4 + 1] = photo[g]; p[x * 4 + 2] = photo[b]; p[x * 4 + 3] = 255;
-                    byte er = extra[r], eg = extra[g], eb = extra[b];
-                    h[x * 4] = er; h[x * 4 + 1] = eg; h[x * 4 + 2] = eb; h[x * 4 + 3] = 255;
-                    above |= (er | eg | eb) != 0;
+                    h[x * 4] = extra[r]; h[x * 4 + 1] = extra[g]; h[x * 4 + 2] = extra[b]; h[x * 4 + 3] = 255;
+                    f[x * 4] = fraction[r]; f[x * 4 + 1] = fraction[g]; f[x * 4 + 2] = fraction[b]; f[x * 4 + 3] = 255;
                 }
-                if (above)
-                    Interlocked.Exchange(ref anyAbove, 1);
             }
         });
-        if (anyAbove != 0)
-            Headroom.Attach(bitmap, new Headroom(headroom, scale));
-        else
-            headroom.Dispose();
+        Headroom.Attach(bitmap, new Headroom(headroom, Math.Max(scale, 1e-3f), fine));
         return bitmap;
     }
 
