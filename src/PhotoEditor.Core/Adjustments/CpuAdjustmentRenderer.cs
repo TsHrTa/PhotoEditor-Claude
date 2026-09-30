@@ -47,16 +47,16 @@ public static class CpuAdjustmentRenderer
         nint inPtr = input.GetPixels(), outPtr = result.GetPixels();
         nint extraPtr = headroom?.Bitmap.GetPixels() ?? 0;
         int extraRowBytes = headroom?.Bitmap.RowBytes ?? 0;
-        // Soften (global or in a mask) subtracts the original's fine detail.
+        // Soften / Texture (global or in a mask) use the original's fine detail.
         // Dehaze (global or in a mask) uses the photo's haze map, computed from the original.
         var haze = p.HasDehaze || layers.Any(l => l.Adjustments.HasDehaze) ? HazeMap.Compute(original) : null;
-        // Local highlights / shadows (global or in a mask) use the photo's base brightness map.
-        var toneBase = p.HasLocalTone || layers.Any(l => l.Adjustments.HasLocalTone) ? ToneBaseMap.Compute(original, headroom) : null;
+        // Local highlights / shadows and clarity (global or in a mask) use the photo's base brightness map.
+        var toneBase = p.NeedsToneBase || layers.Any(l => l.Adjustments.NeedsToneBase) ? ToneBaseMap.Compute(original, headroom) : null;
         var originalPixels = new ToneSource(original.GetPixels(), original.RowBytes, headroom);
         DetailFilters? detailFilters = p.HasNoiseReduction || p.HasDefringe
             ? new DetailFilters(original.GetPixels(), original.RowBytes, width, height)
             : null;
-        Softening? soften = p.HasSoften || layers.Any(l => l.Adjustments.HasSoften)
+        Softening? soften = UsesDetail(p) || layers.Any(l => UsesDetail(l.Adjustments))
             ? new Softening(original.GetPixels(), original.RowBytes, width, height, PreparedAdjustments.SoftenStepFor(Math.Max(width, height)))
             : null;
 
@@ -98,11 +98,10 @@ public static class CpuAdjustmentRenderer
             }
 
             float r, g, b;
-            // The original's fine detail at this pixel, computed once when a pass softens.
-            float dr = 0, dg = 0, db = 0;
-            bool hasDetail = false;
+            // The original's fine detail at this pixel, computed once when a pass softens or adds texture.
+            var detail = new PixelDetail(soften, i / 4, y);
             bool above = !headroom.IsEmpty && (headroom[i] | headroom[i + 1] | headroom[i + 2]) != 0;
-            if ((p.HasSoften && soften is not null) || detailFilters is not null || above)
+            if ((UsesDetail(p) && soften is not null) || detailFilters is not null || above)
             {
                 float inv = 1f / a8;
                 float s0 = input[i] * inv, s1 = input[i + 1] * inv, s2 = input[i + 2] * inv;
@@ -128,14 +127,8 @@ public static class CpuAdjustmentRenderer
                     }
                     s0 = Math.Clamp(s0, 0f, 1f); s1 = Math.Clamp(s1, 0f, 1f); s2 = Math.Clamp(s2, 0f, 1f);
                 }
-                if (p.HasSoften && soften is { } sg0)
-                {
-                    sg0.Detail(i / 4, y, out dr, out dg, out db);
-                    hasDetail = true;
-                    s0 = Math.Clamp(s0 - p.SoftenAmount * dr, 0f, 1f);
-                    s1 = Math.Clamp(s1 - p.SoftenAmount * dg, 0f, 1f);
-                    s2 = Math.Clamp(s2 - p.SoftenAmount * db, 0f, 1f);
-                }
+                if (soften is not null)
+                    SoftenAndTexture(ref detail, p, ref s0, ref s1, ref s2);
                 if (above)
                 {
                     s0 += headroom[i] * headroomScale / 255f;
@@ -184,24 +177,12 @@ public static class CpuAdjustmentRenderer
                 float m = layer.Mask[y * width + i / 4] / 255f;
                 if (m <= 0f)
                     continue;
-                if (layer.Adjustments.HasSoften && soften is { } s1)
-                {
-                    if (!hasDetail)
-                    {
-                        s1.Detail(i / 4, y, out dr, out dg, out db);
-                        hasDetail = true;
-                    }
-                    float k = layer.Adjustments.SoftenAmount;
-                    r = ColorMath.SrgbToLinear(Math.Clamp(sr - k * dr, 0f, MathF.Max(sr, 1f)));
-                    g = ColorMath.SrgbToLinear(Math.Clamp(sg - k * dg, 0f, MathF.Max(sg, 1f)));
-                    b = ColorMath.SrgbToLinear(Math.Clamp(sb - k * db, 0f, MathF.Max(sb, 1f)));
-                }
-                else
-                {
-                    r = ColorMath.SrgbToLinear(sr);
-                    g = ColorMath.SrgbToLinear(sg);
-                    b = ColorMath.SrgbToLinear(sb);
-                }
+                float lr = sr, lg = sg, lb = sb;
+                if (soften is not null)
+                    SoftenAndTexture(ref detail, layer.Adjustments, ref lr, ref lg, ref lb);
+                r = ColorMath.SrgbToLinear(lr);
+                g = ColorMath.SrgbToLinear(lg);
+                b = ColorMath.SrgbToLinear(lb);
                 if (layer.Adjustments.HasDehaze && haze is not null)
                 {
                     if (t < 0f)
@@ -222,6 +203,60 @@ public static class CpuAdjustmentRenderer
             output[i + 1] = ColorMath.ToByte(sg * a);
             output[i + 2] = ColorMath.ToByte(sb * a);
             output[i + 3] = a8;
+        }
+    }
+
+    private static bool UsesDetail(in PreparedAdjustments p) => p.HasSoften || p.HasTexture;
+
+    /// <summary>
+    /// Soften, then texture, on unpremultiplied sRGB values (as the shader); values stay ≥ 0 and are not pushed
+    /// above white (nor clipped when they already are, in a mask pass).
+    /// </summary>
+    private static void SoftenAndTexture(ref PixelDetail detail, in PreparedAdjustments p, ref float s0, ref float s1, ref float s2)
+    {
+        if (p.HasSoften)
+        {
+            detail.Get(out float dr, out float dg, out float db);
+            s0 = Math.Clamp(s0 - p.SoftenAmount * dr, 0f, MathF.Max(s0, 1f));
+            s1 = Math.Clamp(s1 - p.SoftenAmount * dg, 0f, MathF.Max(s1, 1f));
+            s2 = Math.Clamp(s2 - p.SoftenAmount * db, 0f, MathF.Max(s2, 1f));
+        }
+        if (p.HasTexture)
+        {
+            float t = p.TextureAmount * detail.Texture();
+            s0 = Math.Clamp(s0 + t, 0f, MathF.Max(s0, 1f));
+            s1 = Math.Clamp(s1 + t, 0f, MathF.Max(s1, 1f));
+            s2 = Math.Clamp(s2 + t, 0f, MathF.Max(s2, 1f));
+        }
+    }
+
+    /// <summary>The original's detail at one pixel, computed on first use and shared by all passes.</summary>
+    private struct PixelDetail(Softening? soften, int x, int y)
+    {
+        private bool _hasDetail, _hasTexture;
+        private float _dr, _dg, _db, _texture;
+
+        /// <summary>Fine detail per channel: pixel − bilateral blur (Soften).</summary>
+        public void Get(out float dr, out float dg, out float db)
+        {
+            if (!_hasDetail)
+            {
+                soften!.Value.Detail(x, y, out _dr, out _dg, out _db);
+                _hasDetail = true;
+            }
+            (dr, dg, db) = (_dr, _dg, _db);
+        }
+
+        /// <summary>Medium-size detail on luminance: 3 × 3 blur − bilateral blur (Texture).</summary>
+        public float Texture()
+        {
+            if (!_hasTexture)
+            {
+                Get(out float dr, out float dg, out float db);
+                _texture = soften!.Value.SmallBlurMinusCenter(x, y) + ToneCurve.Luminance(dr, dg, db);
+                _hasTexture = true;
+            }
+            return _texture;
         }
     }
 
@@ -264,6 +299,16 @@ public static class CpuAdjustmentRenderer
         if (p.HasLocalTone)
         {
             float gain = ToneCurve.LocalGain(y * baseRatio, p);
+            r *= gain;
+            g *= gain;
+            b *= gain;
+            y *= gain;
+        }
+
+        // Clarity: the pixel's contrast against its area, scaled (also local, on the same base).
+        if (p.HasClarity)
+        {
+            float gain = ToneCurve.ClarityGain(y * baseRatio, baseRatio, p.ClarityAmount);
             r *= gain;
             g *= gain;
             b *= gain;

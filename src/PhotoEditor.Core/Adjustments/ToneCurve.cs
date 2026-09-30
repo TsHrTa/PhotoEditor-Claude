@@ -49,6 +49,19 @@ public static class ToneCurve
         return Math.Clamp(y2 / yb, 1f / MaxLocalGain, MaxLocalGain);
     }
 
+    /// <summary>
+    /// Clarity as a brightness factor: the pixel's contrast against its area (pixel / base, in stops) is scaled by
+    /// 1 + <paramref name="amount"/> × a midtone weight of the base, i.e. factor = baseRatio^(−amount · weight) with
+    /// baseRatio = base / pixel. Flat areas and pixels on an edge the base follows get ≈ 1 (no halos). Mirrored in the shader.
+    /// </summary>
+    public static float ClarityGain(float baseLuminance, float baseRatio, float amount)
+    {
+        float x = MathF.Pow(MathF.Max(baseLuminance, 0f), 1f / PerceptualGamma);
+        float weight = Math.Clamp(4f * x * (1f - x), 0f, 1f);
+        float gain = MathF.Pow(MathF.Max(baseRatio, 1e-6f), -amount * weight);
+        return Math.Clamp(gain, 1f / PreparedAdjustments.MaxClarityGain, PreparedAdjustments.MaxClarityGain);
+    }
+
     /// <summary>Shifts the upper range, fully at and above white (recovers over-exposure).</summary>
     public static float Highlights(float x, float amount) => x + amount * SmoothStep(0.35f, 1f, x);
 

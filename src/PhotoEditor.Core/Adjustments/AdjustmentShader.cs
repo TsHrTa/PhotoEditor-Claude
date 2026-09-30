@@ -78,6 +78,11 @@ public static class AdjustmentShader
         uniform float outputLimit;
         uniform float softenAmount;
         uniform float softenStep;
+        // Texture: amount (detail added, negative smooths) and the small blur's tap spacing (1 full-resolution pixel).
+        uniform float textureAmount;
+        uniform float textureStep;
+        // Clarity: extra local contrast in stops per stop (see clarityGain).
+        uniform float clarityAmount;
         const float softenRangeSigma = 0.1;
 
         const float perceptualGamma = 2.2;
@@ -314,6 +319,28 @@ public static class AdjustmentShader
             return exp2(ab.r * l + (ab.g * 16.0 - 16.0) - l);
         }
 
+        // Medium-size detail for Texture, part 1: luminance of a 3 × 3 (1-2-1) blur of the original minus the pixel's.
+        float smallBlurMinusCenter(float2 coord) {
+            half4 c0 = source.eval(coord);
+            if (c0.a <= 0.0) return 0.0;
+            float3 center = float3(c0.rgb) / c0.a;
+            float sum = 0.0;
+            for (int j = -1; j <= 1; j++) {
+                for (int i = -1; i <= 1; i++) {
+                    float w = (2.0 - abs(float(i))) * (2.0 - abs(float(j))) / 16.0;
+                    sum += w * lum(sourceAt(coord + float2(float(i), float(j)) * textureStep, center));
+                }
+            }
+            return sum - lum(center);
+        }
+
+        // Clarity as a factor: the pixel's contrast against its area (pixel / base) scaled, mostly in the midtones.
+        float clarityGain(float baseLuminance, float ratio) {
+            float x = pow(max(baseLuminance, 0.0), 1.0 / perceptualGamma);
+            float weight = clamp(4.0 * x * (1.0 - x), 0.0, 1.0);
+            return clamp(pow(max(ratio, 1e-6), -clarityAmount * weight), 0.25, 4.0);
+        }
+
         // Highlights / shadows as a factor: the curve moves the base brightness, the pixel follows (detail kept).
         float localGain(float baseLuminance) {
             float yb = max(baseLuminance, 1e-6);
@@ -339,7 +366,14 @@ public static class AdjustmentShader
                 if (defringePurple > 0.0 || defringeGreen > 0.0) s += defringe(coord, c0);
                 s = clamp(s, 0.0, 1.0);
             }
-            if (softenAmount > 0.0) s = clamp(s - softenAmount * softDetail(coord), float3(0.0), max(s, float3(1.0)));
+            if (softenAmount > 0.0 || textureAmount != 0.0) {
+                float3 sd = softDetail(coord);
+                if (softenAmount > 0.0) s = clamp(s - softenAmount * sd, float3(0.0), max(s, float3(1.0)));
+                if (textureAmount != 0.0) {
+                    float t = textureAmount * (smallBlurMinusCenter(coord) + lum(sd));
+                    s = clamp(s + t, float3(0.0), max(s, float3(1.0)));
+                }
+            }
             // Highlights above white (after the detail filters, which work on the 8-bit photo)
             if (addHeadroom > 0.0) s += headroomScale * float3(headroom.eval(coord).rgb);
 
@@ -350,8 +384,14 @@ public static class AdjustmentShader
 
             // Local highlights / shadows, then the tone curve on perceptual luminance, applied as a ratio
             float y = dot(c, float3(0.2126, 0.7152, 0.0722));
+            float ratio = highlightsAmount != 0.0 || shadowsAmount != 0.0 || clarityAmount != 0.0 ? baseRatioAt(coord) : 1.0;
             if (highlightsAmount != 0.0 || shadowsAmount != 0.0) {
-                float gain = localGain(y * baseRatioAt(coord));
+                float gain = localGain(y * ratio);
+                c *= gain;
+                y *= gain;
+            }
+            if (clarityAmount != 0.0) {
+                float gain = clarityGain(y * ratio, ratio);
                 c *= gain;
                 y *= gain;
             }
@@ -469,7 +509,7 @@ public static class AdjustmentShader
     /// <summary>Brightest linear value handed from one pass to the next (≈ 6 stops above white).</summary>
     public const float PassLimit = 64f;
 
-    private static bool LocalTone(AdjustmentSettings s) => s.Highlights != 0 || s.Shadows != 0;
+    private static bool LocalTone(AdjustmentSettings s) => s.Highlights != 0 || s.Shadows != 0 || s.Clarity != 0;
 
     private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, HazeInput haze, ToneInput tone, HeadroomInput headroom,
         AdjustmentSettings settings, VignetteMath.Frame frame, float pixelScale, float softenStep, bool sharpen, bool last)
@@ -517,6 +557,9 @@ public static class AdjustmentShader
             ["hazeLight"] = haze.Map is { } m ? new[] { m.LightR, m.LightG, m.LightB } : new[] { 1f, 1f, 1f },
             ["dehazeAmount"] = haze.Map is null ? 0f : p.DehazeAmount,
             ["softenStep"] = softenStep,
+            ["textureAmount"] = p.TextureAmount,
+            ["textureStep"] = pixelScale,
+            ["clarityAmount"] = p.ClarityAmount,
             ["headroomScale"] = headroom.Scale,
             ["addHeadroom"] = sharpen && headroom.Scale > 0 ? 1f : 0f,
             ["outputLimit"] = last ? 1f : PassLimit,

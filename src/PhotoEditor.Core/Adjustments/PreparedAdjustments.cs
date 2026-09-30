@@ -35,7 +35,9 @@ public readonly record struct PreparedAdjustments(
     float PurpleHueFrom,
     float PurpleHueTo,
     float GreenHueFrom,
-    float GreenHueTo)
+    float GreenHueTo,
+    float TextureAmount,
+    float ClarityAmount)
 {
     /// <summary>Hue (degrees) of Lightroom's purple / green defringe range ends 0 and 100.</summary>
     public const float PurpleHue0 = 240f, PurpleHue100 = 350f, GreenHue0 = 40f, GreenHue100 = 190f;
@@ -62,6 +64,22 @@ public readonly record struct PreparedAdjustments(
 
     /// <summary>Highlights or shadows are set (applied locally on the base brightness).</summary>
     public bool HasLocalTone => HighlightsAmount != 0f || ShadowsAmount != 0f;
+
+    public bool HasClarity => ClarityAmount != 0f;
+
+    /// <summary>The pass needs the photo's base brightness (<see cref="ToneBaseMap"/>).</summary>
+    public bool NeedsToneBase => HasLocalTone || HasClarity;
+
+    public bool HasTexture => TextureAmount != 0f;
+
+    /// <summary>Texture: medium-size detail added (× this) at slider 100.</summary>
+    public const float TextureStrengthAt100 = 1f;
+
+    /// <summary>Clarity: extra local contrast (in stops, × this) at slider 100, at full midtone weight.</summary>
+    public const float ClarityStrengthAt100 = 0.6f;
+
+    /// <summary>Largest brightening / darkening (factor) clarity may apply to a pixel.</summary>
+    public const float MaxClarityGain = 4f;
 
     public bool HasNoiseReduction => NoiseLuminanceAmount > 0f || NoiseColorAmount > 0f;
     public bool HasDefringe => DefringePurpleAmount > 0f || DefringeGreenAmount > 0f;
@@ -140,7 +158,9 @@ public readonly record struct PreparedAdjustments(
             PurpleHueFrom: HueRange(s.DefringePurpleHueLow, s.DefringePurpleHueHigh, PurpleHue0, PurpleHue100).From,
             PurpleHueTo: HueRange(s.DefringePurpleHueLow, s.DefringePurpleHueHigh, PurpleHue0, PurpleHue100).To,
             GreenHueFrom: HueRange(s.DefringeGreenHueLow, s.DefringeGreenHueHigh, GreenHue0, GreenHue100).From,
-            GreenHueTo: HueRange(s.DefringeGreenHueLow, s.DefringeGreenHueHigh, GreenHue0, GreenHue100).To);
+            GreenHueTo: HueRange(s.DefringeGreenHueLow, s.DefringeGreenHueHigh, GreenHue0, GreenHue100).To,
+            TextureAmount: (float)Math.Clamp(s.Texture, -100, 200) / 100f * TextureStrengthAt100,
+            ClarityAmount: (float)Math.Clamp(s.Clarity, -100, 200) / 100f * ClarityStrengthAt100);
     }
 
     /// <summary>

@@ -95,6 +95,18 @@ public sealed record AdjustmentSettings
     /// <summary>Dehaze −100..100: removes (positive) or adds (negative) haze, based on the photo's haze map. Also in masks.</summary>
     public double Dehaze { get; init; }
 
+    /// <summary>
+    /// Texture −100..200: strengthens (positive) or smooths (negative) medium-size detail such as skin, bark or
+    /// fabric, without boosting pixel-level noise or strong edges. Also in masks.
+    /// </summary>
+    public double Texture { get; init; }
+
+    /// <summary>
+    /// Clarity −100..200: local contrast of areas against their surroundings (mostly midtones), edge-aware so it
+    /// makes no halos; negative gives a soft, flat look. Also in masks.
+    /// </summary>
+    public double Clarity { get; init; }
+
     // HSL panel, one entry per colour band (see HslBands).
     public HslBand Reds { get; init; } = HslBand.Zero;
     public HslBand Oranges { get; init; } = HslBand.Zero;

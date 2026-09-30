@@ -156,8 +156,9 @@ public static class LightroomXmp
         Set("Whites2012", Signed(Limit(a.Whites, 100, "whites")));
         Set("Blacks2012", Signed(Limit(a.Blacks, 100, "blacks")));
         Set("Vibrance", Signed(Limit(a.Vibrance, 100, "vibrance")));
-        // Closest Lightroom equivalent of Soften: negative Texture (smooths fine detail, keeps edges).
-        Set("Texture", Signed(-a.Soften));
+        // Soften has no own Lightroom slider; its closest equivalent is negative Texture (smooths fine detail, keeps edges).
+        Set("Texture", Signed(Limit(a.Texture - a.Soften, 100, "texture")));
+        Set("Clarity2012", Signed(Limit(a.Clarity, 100, "clarity")));
         Set("Dehaze", Signed(a.Dehaze));
         Set("Saturation", Signed(Limit(a.Saturation, 100, "saturation")));
 
@@ -347,7 +348,8 @@ public static class LightroomXmp
             new XAttribute(Crs + "LocalTemperature", Local(a.Temperature / 100)),
             new XAttribute(Crs + "LocalTint", Local(a.Tint / 100)),
             new XAttribute(Crs + "LocalSaturation", Local(a.Saturation / 100)),
-            new XAttribute(Crs + "LocalTexture", Local(-a.Soften / 100)),
+            new XAttribute(Crs + "LocalTexture", Local((a.Texture - a.Soften) / 100)),
+            new XAttribute(Crs + "LocalClarity2012", Local(a.Clarity / 100)),
             new XAttribute(Crs + "LocalDehaze", Local(a.Dehaze / 100)));
 
         static string Local(double value) => Number(Math.Clamp(value, -1, 1), "0.000000");
@@ -438,7 +440,8 @@ public static class LightroomXmp
             Whites = Get("Whites2012"),
             Blacks = Get("Blacks2012"),
             Vibrance = Get("Vibrance"),
-            Soften = Math.Max(0, -Get("Texture")),
+            Texture = Get("Texture"),
+            Clarity = Get("Clarity2012"),
             Dehaze = Get("Dehaze"),
             Temperature = geometry.IsRaw ? 0 : Get("IncrementalTemperature"),
             Tint = geometry.IsRaw ? 0 : Get("IncrementalTint"),
@@ -509,7 +512,8 @@ public static class LightroomXmp
                         Temperature = (ReadNumber(correction, "LocalTemperature") ?? 0) * 100,
                         Tint = (ReadNumber(correction, "LocalTint") ?? 0) * 100,
                         Saturation = (ReadNumber(correction, "LocalSaturation") ?? 0) * 100,
-                        Soften = Math.Max(0, -(ReadNumber(correction, "LocalTexture") ?? 0) * 100),
+                        Texture = (ReadNumber(correction, "LocalTexture") ?? 0) * 100,
+                        Clarity = (ReadNumber(correction, "LocalClarity2012") ?? 0) * 100,
                         Dehaze = (ReadNumber(correction, "LocalDehaze") ?? 0) * 100,
                     }),
                     Components = [component],

@@ -320,12 +320,32 @@ public class LightroomXmpTests
     }
 
     [Fact]
-    public void Soften_RoundTripsAsNegativeTexture()
+    public void Soften_IsWrittenAsNegativeTexture()
     {
-        var state = new EditState { Adjustments = new AdjustmentSettings { Soften = 40 } };
+        var state = new EditState { Adjustments = new AdjustmentSettings { Soften = 40, Texture = 10 } };
         var xml = LightroomXmp.Write(state, Landscape, null, out _);
-        Assert.Contains("crs:Texture=\"-40\"", xml);
-        Assert.Equal(40, LightroomXmp.Read(xml, Landscape).Adjustments.Soften);
+        Assert.Contains("crs:Texture=\"-30\"", xml);
+        // Lightroom's Texture comes back as the Texture slider (it smooths when negative).
+        Assert.Equal(-30, LightroomXmp.Read(xml, Landscape).Adjustments.Texture);
+    }
+
+    [Fact]
+    public void TextureAndClarity_RoundTrip_GlobalAndInAMask()
+    {
+        var local = new AdjustmentSettings { Texture = -40, Clarity = 60 };
+        var state = new EditState
+        {
+            Adjustments = new AdjustmentSettings { Texture = 35, Clarity = 150 },
+            Masks = [new Mask { Adjustments = local, Components = [new RadialGradientComponent()] }],
+        };
+        var xml = LightroomXmp.Write(state, Landscape, null, out var notes);
+        Assert.Contains("crs:Clarity2012=\"+100\"", xml);
+        Assert.Contains(notes, n => n.Contains("clarity"));
+        var read = LightroomXmp.Read(xml, Landscape);
+        Assert.Equal(35, read.Adjustments.Texture);
+        Assert.Equal(100, read.Adjustments.Clarity);
+        Assert.Equal(-40, read.Masks[0].Adjustments.Texture, 6);
+        Assert.Equal(60, read.Masks[0].Adjustments.Clarity, 6);
     }
 
     [Fact]

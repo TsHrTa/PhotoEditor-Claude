@@ -131,6 +131,12 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter DeblurAmount =
         new(Detail, "Deblur (AI)", 0, 100, s => s.DeblurAmount, (s, v) => s with { DeblurAmount = v }, id: "deblurAmount");
 
+    public static readonly AdjustmentParameter Texture =
+        new(Effects, "Texture", -100, 200, s => s.Texture, (s, v) => s with { Texture = v }, id: "texture");
+
+    public static readonly AdjustmentParameter Clarity =
+        new(Effects, "Clarity", -100, 200, s => s.Clarity, (s, v) => s with { Clarity = v }, id: "clarity");
+
     public static readonly AdjustmentParameter Dehaze =
         new(Effects, "Dehaze", -100, 100, s => s.Dehaze, (s, v) => s with { Dehaze = v }, id: "dehaze");
 
@@ -150,7 +156,7 @@ public static class AdjustmentParameters
         Temperature, Tint, Vibrance, Saturation,
         .. Hsl,
         VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
-        Dehaze, Soften,
+        Texture, Clarity, Dehaze, Soften,
         DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor,
         DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
     ];

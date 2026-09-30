@@ -4,6 +4,8 @@ namespace PhotoEditor.Core.Adjustments;
 /// CPU version of the shader's <c>softDetail</c>: the fine detail of the original photo (pixel minus an
 /// edge-preserving 7 × 7 bilateral blur, spatial sigma 1.5 taps, range sigma on sRGB luminance). Soften subtracts
 /// amount × detail. Taps are whole pixels apart and clamped at the border, like the shader at export scale.
+/// Texture uses the same blur: its detail is a 3 × 3 blur of the pixel minus the bilateral blur (medium-size
+/// detail without pixel-level noise), see <see cref="SmallBlurMinusCenter"/>.
 /// </summary>
 public readonly unsafe struct Softening
 {
@@ -63,6 +65,36 @@ public readonly unsafe struct Softening
         dr = cr - sr / wsum;
         dg = cg - sg / wsum;
         db = cb - sb / wsum;
+    }
+
+    /// <summary>
+    /// Luminance of a 3 × 3 Gaussian (1-2-1, taps 1 px apart) of the original around (x, y) minus the pixel's own:
+    /// texture detail = this + luminance of <see cref="Detail"/>. Transparent taps count as the centre.
+    /// </summary>
+    public float SmallBlurMinusCenter(int x, int y)
+    {
+        byte* c0 = _pixels + (long)y * _rowBytes + x * 4;
+        if (c0[3] == 0)
+            return 0;
+        float yc = Luminance(c0);
+        float sum = 0;
+        for (int j = -1; j <= 1; j++)
+        {
+            byte* row = _pixels + (long)Math.Clamp(y + j, 0, _height - 1) * _rowBytes;
+            for (int i = -1; i <= 1; i++)
+            {
+                byte* t = row + Math.Clamp(x + i, 0, _width - 1) * 4;
+                float w = (2 - Math.Abs(i)) * (2 - Math.Abs(j)) / 16f;
+                sum += w * (t[3] == 0 ? yc : Luminance(t));
+            }
+        }
+        return sum - yc;
+    }
+
+    private static float Luminance(byte* p)
+    {
+        float inv = 1f / p[3];
+        return 0.2126f * p[0] * inv + 0.7152f * p[1] * inv + 0.0722f * p[2] * inv;
     }
 
     private static float[] CreateSpatial()
