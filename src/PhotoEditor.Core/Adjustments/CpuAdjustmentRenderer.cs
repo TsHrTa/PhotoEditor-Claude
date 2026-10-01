@@ -21,7 +21,18 @@ public static class CpuAdjustmentRenderer
     /// vignette follows the crop frame.
     /// </summary>
     /// <param name="lens">The photo's lens information, for the lens corrections (null = unknown).</param>
-    public static SKBitmap Render(SKBitmap source, EditState state, Lens.PhotoLens? lens = null)
+    public static SKBitmap Render(SKBitmap source, EditState state, Lens.PhotoLens? lens = null) =>
+        Render(source, state, lens, floatOutput: false);
+
+    /// <summary>
+    /// As <see cref="Render(SKBitmap, EditState, Lens.PhotoLens?)"/> but returns an RgbaF16 bitmap: the sRGB-encoded result
+    /// unrounded, so the crop, rotation and resizing that follow work on it without quantising, and only the final
+    /// encoding to 8 bits rounds (with dither, see <see cref="ToBytes(SKBitmap, bool)"/>).
+    /// </summary>
+    public static SKBitmap RenderFloat(SKBitmap source, EditState state, Lens.PhotoLens? lens = null) =>
+        Render(source, state, lens, floatOutput: true);
+
+    private static SKBitmap Render(SKBitmap source, EditState state, Lens.PhotoLens? lens, bool floatOutput)
     {
         // Lens corrections, then spot removal, work on the photo's pixels, before everything else.
         var correction = Lens.LensSetup.For(lens ?? Lens.PhotoLens.Unknown, state.Adjustments, source.Width, source.Height,
@@ -32,7 +43,7 @@ public static class CpuAdjustmentRenderer
             var retouched = Retouch.Retouching.Apply(corrected, state.Spots);
             try
             {
-                return RenderCorrected(retouched, state, correction?.Shading);
+                return RenderCorrected(retouched, state, correction?.Shading, floatOutput);
             }
             finally
             {
@@ -48,7 +59,7 @@ public static class CpuAdjustmentRenderer
     }
 
     /// <summary>Renders a photo whose lens corrections (except the vignetting, <paramref name="lensVignetting"/>) and spots are done.</summary>
-    private static SKBitmap RenderCorrected(SKBitmap source, EditState state, Lens.LensShading? lensVignetting)
+    private static SKBitmap RenderCorrected(SKBitmap source, EditState state, Lens.LensShading? lensVignetting, bool floatOutput)
     {
         using var src = source.ColorType == SKColorType.Rgba8888 && source.AlphaType == SKAlphaType.Premul
             ? null
@@ -73,7 +84,7 @@ public static class CpuAdjustmentRenderer
             .Select(m => new MaskLayer(PreparedAdjustments.From(m.Adjustments) with { CurveTable = null, SceneExposure = sceneExposure },
                 MaskRasterizer.RasterizeToBytes(m, width, height)))
             .ToArray();
-        var result = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var result = new SKBitmap(new SKImageInfo(width, height, floatOutput ? SKColorType.RgbaF16 : SKColorType.Rgba8888, SKAlphaType.Premul));
         var frame = VignetteMath.Frame.From(state.Crop.Frame(width, height));
         int rowBytesIn = input.RowBytes, rowBytesOut = result.RowBytes;
         nint inPtr = input.GetPixels(), outPtr = result.GetPixels();
@@ -94,18 +105,26 @@ public static class CpuAdjustmentRenderer
             ? new Softening(original.GetPixels(), original.RowBytes, width, height, PreparedAdjustments.SoftenStepFor(Math.Max(width, height)))
             : null;
 
-        Parallel.For(0, height, y =>
+        Parallel.For(0, height, () => new float[width * 4], (y, _, row) =>
         {
             unsafe
             {
                 var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
-                var outRow = new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
                 var extraRow = headroom is null ? default : new ReadOnlySpan<byte>((byte*)extraPtr + (long)y * extraRowBytes, width * 4);
                 var fineRow = finePtr == 0 ? default : new ReadOnlySpan<byte>((byte*)finePtr + (long)y * fineRowBytes, width * 4);
-                ProcessRow(inRow, outRow, p, layers, y, frame, soften, haze, height, detailFilters, toneBase, originalPixels,
+                ProcessRow(inRow, row, p, layers, y, frame, soften, haze, height, detailFilters, toneBase, originalPixels,
                     extraRow, headroom?.Scale ?? 0f, fineRow, lensGain);
+                if (floatOutput)
+                {
+                    var halves = new Span<Half>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
+                    for (int i = 0; i < row.Length; i++)
+                        halves[i] = (Half)row[i];
+                }
+                else
+                    ToBytes(row, new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4));
             }
-        });
+            return row;
+        }, _ => { });
         return result;
     }
 
@@ -113,11 +132,27 @@ public static class CpuAdjustmentRenderer
     private sealed record MaskLayer(PreparedAdjustments Adjustments, byte[] Mask);
 
     /// <summary>Processes one row of premultiplied RGBA8888 pixels.</summary>
-    public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p) =>
-        ProcessRow(input, output, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null, null, default, default, 0f, default,
+    public static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p)
+    {
+        var row = new float[input.Length];
+        ProcessRow(input, row, p, [], 0, VignetteMath.Frame.Full(input.Length / 4, 1), null, null, 1, null, null, default, default, 0f, default,
             new LensGain(null, p.LensVignettingAmount, input.Length / 4, 1));
+        ToBytes(row, output);
+    }
 
-    private static void ProcessRow(ReadOnlySpan<byte> input, Span<byte> output, in PreparedAdjustments p, MaskLayer[] layers, int y,
+    /// <summary>Premultiplied floats (0..1) of one row to RGBA8888 bytes (rounded, as the row was always written).</summary>
+    private static void ToBytes(ReadOnlySpan<float> row, Span<byte> output)
+    {
+        for (int i = 0; i < row.Length; i += 4)
+        {
+            output[i] = ColorMath.ToByte(row[i]);
+            output[i + 1] = ColorMath.ToByte(row[i + 1]);
+            output[i + 2] = ColorMath.ToByte(row[i + 2]);
+            output[i + 3] = ColorMath.ToByte(row[i + 3]);
+        }
+    }
+
+    private static void ProcessRow(ReadOnlySpan<byte> input, Span<float> output, in PreparedAdjustments p, MaskLayer[] layers, int y,
         in VignetteMath.Frame frame, Softening? soften, HazeMap? haze, int height, DetailFilters? detailFilters,
         ToneBaseMap? toneBase, ToneSource originalPixels, ReadOnlySpan<byte> headroom, float headroomScale, ReadOnlySpan<byte> fine,
         in LensGain lensGain)
@@ -269,10 +304,10 @@ public static class CpuAdjustmentRenderer
             }
 
             float a = a8 / 255f;
-            output[i] = ColorMath.ToByte(sr * a);
-            output[i + 1] = ColorMath.ToByte(sg * a);
-            output[i + 2] = ColorMath.ToByte(sb * a);
-            output[i + 3] = a8;
+            output[i] = sr * a;
+            output[i + 1] = sg * a;
+            output[i + 2] = sb * a;
+            output[i + 3] = a;
         }
     }
 
@@ -461,7 +496,7 @@ public static class CpuAdjustmentRenderer
             return source;
         var f = crop.Frame(source.Width, source.Height);
         var (w, h) = crop.OutputSize(source.Width, source.Height);
-        var result = new SKBitmap(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var result = new SKBitmap(new SKImageInfo(w, h, source.ColorType == SKColorType.RgbaF16 ? SKColorType.RgbaF16 : SKColorType.Rgba8888, SKAlphaType.Premul));
         using var canvas = new SKCanvas(result);
         using var image = SKImage.FromBitmap(source);
         canvas.Clear(SKColors.Transparent);

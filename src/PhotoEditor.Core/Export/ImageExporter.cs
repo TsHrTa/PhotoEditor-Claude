@@ -29,7 +29,9 @@ public static class ImageExporter
     {
         if (IsSameFile(sourcePath, destinationPath))
             throw new InvalidOperationException("The export would overwrite the original photo; choose another file name.");
-        using var rendered = CpuAdjustmentRenderer.Render(original, state, Lens.PhotoLens.Of(sourcePath));
+        // Float from here to the encoder: crop, rotation and resizing work on the unrounded result and the only rounding
+        // to 8 bits (with dither) is the last step.
+        using var rendered = CpuAdjustmentRenderer.RenderFloat(original, state, Lens.PhotoLens.Of(sourcePath));
         var cropped = CpuAdjustmentRenderer.ApplyCrop(rendered, state.Crop);
         var oriented = state.Orientation.Apply(cropped);
         var sized = options.LongEdge is { } edge ? Resize(oriented, edge) : oriented;
@@ -70,14 +72,16 @@ public static class ImageExporter
         var (w, h) = PreviewImage.PreviewSize(source.Width, source.Height, Math.Max(1, longEdge));
         if (w == source.Width && h == source.Height)
             return source;
-        return source.Resize(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul),
+        return source.Resize(new SKImageInfo(w, h, source.ColorType, SKAlphaType.Premul),
                    new SKSamplingOptions(new SKCubicResampler(1f / 3, 1f / 3)))
                ?? throw new InvalidOperationException("Could not resize the image.");
     }
 
     public static byte[] Encode(SKBitmap bitmap, ExportOptions options)
     {
-        using var pixmap = bitmap.PeekPixels();
+        // A float result is rounded to 8 bits here, with dither.
+        using var bytes = bitmap.ColorType == SKColorType.RgbaF16 ? FloatBitmap.ToBytes(bitmap) : null;
+        using var pixmap = (bytes ?? bitmap).PeekPixels();
         using var data = options.Format switch
         {
             ExportFormat.Png => pixmap.Encode(new SKPngEncoderOptions(SKPngEncoderFilterFlags.AllFilters, zLibLevel: 6)),
