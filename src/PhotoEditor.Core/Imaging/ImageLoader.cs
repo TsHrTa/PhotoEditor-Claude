@@ -22,9 +22,11 @@ public static class ImageLoader
         using var codec = SKCodec.Create(stream)
             ?? throw new InvalidDataException($"Unsupported or corrupt image: {path}");
 
+        // A profile other than sRGB (Adobe RGB, Display P3, …) is converted to sRGB, not read as sRGB.
+        var profiled = IccColor.NeedsConversion(codec.Info.ColorSpace) ? IccColor.DecodeToSrgb(codec, codec.Info.Size) : null;
         var info = new SKImageInfo(codec.Info.Width, codec.Info.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
-        var bitmap = new SKBitmap(info);
-        var result = codec.GetPixels(info, bitmap.GetPixels());
+        var bitmap = profiled ?? new SKBitmap(info);
+        var result = profiled is not null ? SKCodecResult.Success : codec.GetPixels(info, bitmap.GetPixels());
         if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput)
         {
             bitmap.Dispose();

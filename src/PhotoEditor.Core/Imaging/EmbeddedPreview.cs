@@ -341,6 +341,8 @@ public static class EmbeddedPreview
                 break;
             }
         }
+        if (IccColor.NeedsConversion(codec.Info.ColorSpace) && IccColor.DecodeToSrgb(codec, size) is { } converted)
+            return converted;
         var info = new SKImageInfo(size.Width, size.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
         var bitmap = new SKBitmap(info);
         var result = codec.GetPixels(info, bitmap.GetPixels());

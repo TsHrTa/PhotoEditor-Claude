@@ -122,27 +122,6 @@ public static class LinearResampler
         return (photo, resized);
     }
 
-    private const int EncodeSteps = 16384;
-    private static readonly float[] EncodeTable = BuildEncodeTable();
-
-    private static float[] BuildEncodeTable()
-    {
-        var table = new float[EncodeSteps + 2];
-        for (int i = 0; i < table.Length; i++)
-            table[i] = ColorMath.LinearToSrgb((float)i / EncodeSteps);
-        return table;
-    }
-
-    /// <summary>sRGB encoding, interpolated from a table below white (error &lt; 1e-5, under the fine layer's step).</summary>
-    private static float EncodeFast(float linear)
-    {
-        if (linear >= 1f)
-            return ColorMath.LinearToSrgb(linear);
-        float at = linear * EncodeSteps;
-        int i = (int)at;
-        return EncodeTable[i] + (EncodeTable[i + 1] - EncodeTable[i]) * (at - i);
-    }
-
     /// <summary>A channel as linear light: the 8-bit value, the part above white and the rounded-away fraction.</summary>
     private static float Decode(byte photo, byte above, byte fraction, float scale)
     {
@@ -155,7 +134,7 @@ public static class LinearResampler
 
     private static unsafe void Encode(float linear, float scale, byte* photo, byte* extra, byte* fine)
     {
-        float e = EncodeFast(linear);
+        float e = ColorMath.LinearToSrgbFast(linear);
         if (e >= 1f)
         {
             *photo = 255;

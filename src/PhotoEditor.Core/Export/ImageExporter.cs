@@ -81,7 +81,10 @@ public static class ImageExporter
     {
         // A float result is rounded to 8 bits here, with dither.
         using var bytes = bitmap.ColorType == SKColorType.RgbaF16 ? FloatBitmap.ToBytes(bitmap) : null;
-        using var pixmap = (bytes ?? bitmap).PeekPixels();
+        var pixels = bytes ?? bitmap;
+        // Tagged sRGB: the file carries an sRGB profile, so viewers that manage colour show what the editor showed.
+        using var srgb = SKColorSpace.CreateSrgb();
+        using var pixmap = new SKPixmap(pixels.Info.WithColorSpace(srgb), pixels.GetPixels(), pixels.RowBytes);
         using var data = options.Format switch
         {
             ExportFormat.Png => pixmap.Encode(new SKPngEncoderOptions(SKPngEncoderFilterFlags.AllFilters, zLibLevel: 6)),

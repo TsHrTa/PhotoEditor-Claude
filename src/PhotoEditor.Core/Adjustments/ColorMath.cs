@@ -23,6 +23,32 @@ public static class ColorMath
     /// </summary>
     public static float SrgbByteToLinear(byte b, float offset) => SrgbToLinearTable[b] + SrgbSlopeTable[b] * offset;
 
+    private const int EncodeSteps = 16384;
+    private static readonly float[] EncodeTable = BuildEncodeTable();
+
+    private static float[] BuildEncodeTable()
+    {
+        var table = new float[EncodeSteps + 2];
+        for (int i = 0; i < table.Length; i++)
+            table[i] = LinearToSrgb((float)i / EncodeSteps);
+        return table;
+    }
+
+    /// <summary>
+    /// <see cref="LinearToSrgb"/> interpolated from a table below white (error &lt; 1e-5, under the RAW fine layer's
+    /// step); exact above it. For per-pixel work on whole images.
+    /// </summary>
+    public static float LinearToSrgbFast(float linear)
+    {
+        if (linear >= 1f)
+            return LinearToSrgb(linear);
+        if (linear <= 0f)
+            return 0f;
+        float at = linear * EncodeSteps;
+        int i = (int)at;
+        return EncodeTable[i] + (EncodeTable[i + 1] - EncodeTable[i]) * (at - i);
+    }
+
     public static byte ToByte(float c) => (byte)Math.Clamp((int)MathF.Round(c * 255f), 0, 255);
 
     private static float[] BuildSlopeTable()
