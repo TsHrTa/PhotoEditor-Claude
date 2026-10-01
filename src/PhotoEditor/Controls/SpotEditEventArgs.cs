@@ -26,3 +26,10 @@ public sealed class SpotEditEventArgs(SpotEditKind kind, Guid? spot, BrushPoint 
     public BrushPoint Point { get; } = point;
     public EditPhase Phase { get; } = phase;
 }
+
+/// <summary>A stroke painted with the spot tool, in normalised full-image coordinates; <see cref="Erase"/> = Alt was held.</summary>
+public sealed class SpotPaintedEventArgs(System.Collections.Generic.IReadOnlyList<BrushPoint> path, bool erase) : EventArgs
+{
+    public System.Collections.Generic.IReadOnlyList<BrushPoint> Path { get; } = path;
+    public bool Erase { get; } = erase;
+}

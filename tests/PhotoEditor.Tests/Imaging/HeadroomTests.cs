@@ -438,7 +438,9 @@ public sealed class HeadroomTests
                 total++;
                 if (c.Red >= 254 && c.Green >= 254 && c.Blue >= 254)
                     blown++;
-                if (c.Red > 200 && c.Blue > 200 && c.Green < Math.Min(c.Red, c.Blue) - 25)
+                // Tinted cores, not the purple fringes along branches (already purple before the edit).
+                var s = small.GetPixel(x, y);
+                if (c.Red > 200 && c.Blue > 200 && c.Green < Math.Min(c.Red, c.Blue) - 25 && s.Green >= Math.Min(s.Red, s.Blue) - 10)
                     pink++;
             }
         Assert.True(blown < total / 20, $"{100.0 * blown / total:0.0} % blown");

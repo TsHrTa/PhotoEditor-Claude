@@ -105,6 +105,57 @@ public sealed class RemoveTests : IDisposable
         Assert.Equal(3, read.Spots[0].Path.Count);
     }
 
+    /// <summary>
+    /// A selection built from several strokes (user request: paint more, erase parts, then remove): the pole plus a
+    /// separate dot, with the pole's middle erased. Coverage, the model's hole, the bounds and the blended fill all
+    /// follow it, and the sidecar keeps the strokes.
+    /// </summary>
+    [Fact]
+    public void Selection_OfSeveralStrokes_AddsAndErases()
+    {
+        var spot = new Spot
+        {
+            Mode = SpotMode.Remove,
+            Strokes =
+            [
+                new RemoveStroke([new BrushPoint(200f / 400, 55f / 300), new BrushPoint(200f / 400, 245f / 300)], 9f / 400),
+                new RemoveStroke([new BrushPoint(100f / 400, 100f / 300)], 6f / 400),
+                new RemoveStroke([new BrushPoint(200f / 400, 150f / 300)], 12f / 400, Erase: true),
+            ],
+        };
+        var strokes = RemoveFill.Strokes(spot, 400, 300);
+        Assert.Equal(1f, RemoveFill.Coverage(strokes, 200, 80));
+        Assert.Equal(1f, RemoveFill.Coverage(strokes, 100, 100));
+        Assert.Equal(0f, RemoveFill.Coverage(strokes, 200, 150)); // erased
+        Assert.Equal(0f, RemoveFill.Coverage(strokes, 150, 100));
+        var bounds = RemoveFill.Bounds(spot, 400, 300);
+        Assert.True(bounds.Left <= 94 && bounds.Right >= 209 && bounds.Top <= 46 && bounds.Bottom >= 254, bounds.ToString());
+
+        using var photo = WallWithPole();
+        var (image, hole) = RemoveFill.ModelInput(photo, spot);
+        image.Dispose();
+        var rect = RemoveFill.ContextRect(spot, 400, 300);
+        bool HoleAt(float x, float y)
+        {
+            float s = RemoveFill.ModelSize / rect.Width;
+            return hole[(int)((y - rect.Top) * s) * RemoveFill.ModelSize + (int)((x - rect.Left) * s)];
+        }
+        Assert.True(HoleAt(200, 80) && HoleAt(100, 100));
+        Assert.False(HoleAt(200, 150));
+        Assert.False(HoleAt(150, 100));
+
+        var grey = new SKBitmap(new SKImageInfo(512, 512, SKColorType.Rgba8888, SKAlphaType.Premul));
+        grey.Erase(new SKColor(120, 120, 120));
+        using var result = Retouching.Apply(photo, [spot with { Fill = FillStore.Save(grey) }]);
+        Assert.Equal(new SKColor(120, 120, 120), result.GetPixel(200, 80));
+        Assert.Equal(photo.GetPixel(200, 150), result.GetPixel(200, 150)); // the erased part keeps the photo
+
+        var state = new EditState { Spots = [spot] };
+        var json = SidecarFile.Serialize(EditDocument.From(state));
+        Assert.DoesNotContain("removeStrokes", json);
+        Assert.Equal(state, SidecarFile.Deserialize(json).ToState());
+    }
+
     /// <summary>The real model when PHOTOEDITOR_MODELS points to a folder with lama/lama_fp32.onnx.</summary>
     [Fact]
     public void Lama_RemovesThePole()

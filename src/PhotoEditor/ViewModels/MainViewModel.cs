@@ -21,6 +21,7 @@ public partial class MainViewModel : ViewModelBase
 {
     public MainViewModel()
     {
+        LoadFilmstripLayout();
         var parameters = AdjustmentParameters.All
             .Select(p => new ParameterViewModel(p, () => CurrentAdjustments, s => ApplyEdit(WithCurrentAdjustments(s), p.ToString()),
                 () => CurrentDefaults))
@@ -613,6 +614,7 @@ public partial class MainViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(Title));
         OnPropertyChanged(nameof(CanBatchExport));
+        ClearRemoveSelection(); // painted on the previous photo
     }
 
     private AdjustmentSettings? _shownAdjustments;

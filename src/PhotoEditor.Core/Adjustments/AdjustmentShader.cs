@@ -145,8 +145,30 @@ public static class AdjustmentShader
             return l + (max(c, 0.0) - lo) * ((h - l) / (hi - lo));
         }
         float highlightsStep(float x, float a) {
-            if (a < 0.0 && x > 1.0) { float d = x - 1.0; return 1.0 + a + d / (1.0 - 10.0 * a * d); }
-            return x + a * smoothstep(0.35, 1.0, x);
+            if (x <= 0.4 || (a > 0.0 && x >= 1.0)) return x;
+            if (x < 1.0) {
+                float t = (x - 0.4) / 0.6;
+                if (a < 0.0) return x + a * t * t * (2.0 - t);
+                float h = 1.0 - pow(1.0 - t, 1.0 + 12.0 * a);
+                return 0.4 + (t + t * (h - t)) * 0.6;
+            }
+            float d = x - 1.0;
+            float slope = 1.0 + a / 0.6;
+            return 1.0 + a + slope * d / (1.0 - 10.0 * a * d);
+        }
+        // A brightening gain limited so the brightest channel approaches white softly (see ToneCurve.LimitBrightening).
+        float limitBrightening(float hi, float gain) {
+            float v = hi * gain;
+            if (gain <= 1.0 || hi <= 0.0 || v <= 0.6) return gain;
+            float s = 0.6 + 0.4 * (1.0 - exp(-(v - 0.6) / 0.4));
+            return max(s / hi, 1.0);
+        }
+        // Colours above white fade to white before the final clip (see ToneCurve.RollToWhite).
+        float3 rollToWhite(float3 c) {
+            float hi = max(c.r, max(c.g, c.b));
+            if (hi <= 1.0) return c;
+            float e = hi - 1.0;
+            return c + (hi - c) * (e * e / (e * e + 1.0));
         }
         float shadowsStep(float x, float a) {
             float xs = clamp(x, 0.0, 1.0);
@@ -326,30 +348,32 @@ public static class AdjustmentShader
             return (c0 - y0) - sum / wsum;
         }
 
-        // Weight of hue h in [r.x, r.y] with 20° soft edges, across the 360° wrap.
+        // Weight of hue h in [r.x, r.y] with 25° soft edges, across the 360° wrap.
         float hueBand(float h, float2 r) {
-            return smoothstep(r.x - 20.0, r.x, h) * (1.0 - smoothstep(r.y, r.y + 20.0, h));
+            return smoothstep(r.x - 25.0, r.x, h) * (1.0 - smoothstep(r.y, r.y + 25.0, h));
         }
         float hueRange(float h, float2 r) {
             return max(hueBand(h, r), max(hueBand(h + 360.0, r), hueBand(h - 360.0, r)));
         }
 
-        // Defringe: desaturates purple / green pixels next to a strong brightness edge (largest difference to the
-        // 8 neighbours at fringeStep). Returns the change to add.
+        // Defringe: desaturates purple / green pixels near a brightness edge (largest difference to the 8 neighbours
+        // at fringeStep and at 3 × fringeStep). Returns the change to add.
         float3 defringe(float2 coord, float3 c0) {
             float y0 = lum(c0);
             float edgeDiff = 0.0;
-            for (int j = -1; j <= 1; j++) {
-                for (int i = -1; i <= 1; i++) {
-                    float y = lum(sourceAt(coord + float2(float(i), float(j)) * fringeStep, c0));
-                    edgeDiff = max(edgeDiff, abs(y - y0));
+            for (int ring = 1; ring <= 3; ring += 2) {
+                for (int j = -1; j <= 1; j++) {
+                    for (int i = -1; i <= 1; i++) {
+                        float y = lum(sourceAt(coord + float2(float(i), float(j)) * (fringeStep * float(ring)), c0));
+                        edgeDiff = max(edgeDiff, abs(y - y0));
+                    }
                 }
             }
-            float edge = smoothstep(0.08, 0.25, edgeDiff);
+            float edge = smoothstep(0.04, 0.15, edgeDiff);
             float h = rgbToHsv(c0).x;
             float purple = hueRange(h, purpleHues);
             float green = hueRange(h, greenHues);
-            float k = clamp((defringePurple * purple + defringeGreen * green) * edge, 0.0, 1.0);
+            float k = clamp((defringePurple * purple + defringeGreen * green) * edge * 3.0, 0.0, 1.0);
             return -k * (c0 - y0);
         }
 
@@ -458,6 +482,7 @@ public static class AdjustmentShader
             float ratio = highlightsAmount != 0.0 || shadowsAmount != 0.0 || clarityAmount != 0.0 ? baseRatioAt(coord) : 1.0;
             if (highlightsAmount != 0.0 || shadowsAmount != 0.0) {
                 float gain = localGain(y * ratio);
+                if (highlightsAmount > 0.0) gain = limitBrightening(max(c.r, max(c.g, c.b)), gain);
                 c *= gain;
                 y *= gain;
             }
@@ -487,6 +512,14 @@ public static class AdjustmentShader
                 c *= exp2(vignetteStops * smoothstep(vignetteLow, vignetteHigh, vignetteDistance(uv)));
             }
 
+            // The last pass rolls colours above white (its own result and what it leaves outside its mask) to white.
+            if (outputLimit <= 1.0) {
+                c = rollToWhite(c);
+                if (max(s0.r, max(s0.g, s0.b)) > 1.0) {
+                    float3 l0 = rollToWhite(float3(srgbToLinear(s0.r), srgbToLinear(s0.g), srgbToLinear(s0.b)));
+                    s0 = float3(linearToSrgb(l0.r), linearToSrgb(l0.g), linearToSrgb(l0.b));
+                }
+            }
             c = clamp(c, 0.0, outputLimit);
             c = float3(linearToSrgb(c.r), linearToSrgb(c.g), linearToSrgb(c.b));
             c = mix(min(s0, linearToSrgb(outputLimit)), c, float(mask.eval(coord).r));

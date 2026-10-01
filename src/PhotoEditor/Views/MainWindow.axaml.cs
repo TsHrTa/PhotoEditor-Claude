@@ -29,6 +29,9 @@ public partial class MainWindow : Window
         });
         // Arrow keys move through the folder. Handled before focus navigation (which would take them otherwise).
         AddHandler(KeyDownEvent, OnArrowKey, RoutingStrategies.Tunnel);
+        AddHandler(KeyDownEvent, OnSpaceKey, RoutingStrategies.Tunnel);
+        AddHandler(KeyUpEvent, OnSpaceKey, RoutingStrategies.Tunnel);
+        Deactivated += (_, _) => Viewer.HandTool = false;
         AddKeyBinding(Key.E, new AsyncRelayCommand(ExportAsync));
         KeyBindings.Add(new KeyBinding
         {
@@ -63,13 +66,14 @@ public partial class MainWindow : Window
         AddPlainKeyBinding(Key.OemPipe, () => ViewModel?.ToggleBeforeAfterCommand.Execute(null));
         AddPlainKeyBinding(Key.OemBackslash, () => ViewModel?.ToggleBeforeAfterCommand.Execute(null));
         AddPlainKeyBinding(Key.O, () => ViewModel?.ToggleMaskOverlayCommand.Execute(null));
+        AddPlainKeyBinding(Key.F6, () => ViewModel?.ToggleFilmstripCommand.Execute(null));
         // handledEventsToo: the slider thumb handles the pointer itself.
         AddHandler(DoubleTappedEvent, OnDoubleTapped, RoutingStrategies.Bubble, handledEventsToo: true);
         Viewer.BrushStroke += OnBrushStroke;
         Viewer.ComponentEdit += OnComponentEdit;
         Viewer.CropEdit += OnCropEdit;
         Viewer.SpotEdit += (_, e) => ViewModel?.EditSpot(e.Kind, e.Spot, e.Point, e.Phase);
-        Viewer.SpotPainted += async (_, path) => { if (ViewModel is { } vm) await vm.PaintedAsync(path); };
+        Viewer.SpotPainted += (_, e) => ViewModel?.Painted(e.Path, e.Erase);
         AddPlainKeyBinding(Key.Q, () => { if (ViewModel is { } vm) vm.IsSpotActive = !vm.IsSpotActive; });
         AddPlainKeyBinding(Key.Delete, () => { if (ViewModel is { IsSpotActive: true } vm) vm.DeleteSpotCommand.Execute(null); });
         AddPlainKeyBinding(Key.Back, () => { if (ViewModel is { IsSpotActive: true } vm) vm.DeleteSpotCommand.Execute(null); });
@@ -95,8 +99,21 @@ public partial class MainWindow : Window
             AddPlainKeyBinding(Key.D0 + stars, () => ViewModel?.SetRating(rating));
             AddPlainKeyBinding(Key.NumPad0 + stars, () => ViewModel?.SetRating(rating));
         }
-        AddPlainKeyBinding(Key.Enter, () => { if (ViewModel is { IsCropActive: true } vm) vm.ActiveTool = EditTool.None; });
-        AddPlainKeyBinding(Key.Escape, () => { if (ViewModel is { } vm) vm.ActiveTool = EditTool.None; });
+        AddPlainKeyBinding(Key.Enter, () =>
+        {
+            if (ViewModel is { IsCropActive: true } vm)
+                vm.ActiveTool = EditTool.None;
+            else if (ViewModel is { HasRemoveSelection: true } remove)
+                remove.ApplyRemoveCommand.Execute(null);
+        });
+        // Esc first discards an AI Remove selection, then leaves the tool.
+        AddPlainKeyBinding(Key.Escape, () =>
+        {
+            if (ViewModel is { HasRemoveSelection: true } remove)
+                remove.ClearRemoveSelectionCommand.Execute(null);
+            else if (ViewModel is { } vm)
+                vm.ActiveTool = EditTool.None;
+        });
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
     }
@@ -131,6 +148,63 @@ public partial class MainWindow : Window
         var command = e.Key == Key.Right ? vm.NextPhotoCommand : vm.PreviousPhotoCommand;
         if (command.CanExecute(null))
             command.Execute(null);
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// Holding Space turns the viewer into the hand tool (drag to pan), pausing the selected tool, as in Lightroom /
+    /// Photoshop. Handled here so Space doesn't also press a focused button; left alone while typing in a text box.
+    /// </summary>
+    private void OnSpaceKey(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Space || FocusManager?.GetFocusedElement() is TextBox)
+            return;
+        Viewer.HandTool = e.RoutedEvent == KeyDownEvent;
+        e.Handled = true;
+    }
+
+    // Filmstrip resize: pointer Y and thumbnail height at the press (null = not dragging).
+    private (double Y, double Thumb)? _filmstripDrag;
+
+    /// <summary>Dragging this far below the smallest size hides the thumbnails.</summary>
+    private const double FilmstripHideDistance = 30;
+
+    private void OnFilmstripGripPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (ViewModel is not { } vm || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed || e.ClickCount > 1)
+            return;
+        // Hidden: the drag starts from nothing, so dragging up shows the thumbnails growing from the smallest size.
+        double thumb = vm.IsFilmstripVisible ? vm.FilmstripThumbHeight : MainViewModel.MinFilmstripThumb - FilmstripHideDistance;
+        _filmstripDrag = (e.GetPosition(this).Y, thumb);
+        e.Pointer.Capture((IInputElement?)sender);
+        e.Handled = true;
+    }
+
+    private void OnFilmstripGripMoved(object? sender, PointerEventArgs e) => DragFilmstrip(e, done: false);
+
+    private void OnFilmstripGripReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        DragFilmstrip(e, done: true);
+        _filmstripDrag = null;
+        e.Pointer.Capture(null);
+    }
+
+    /// <summary>Up = larger thumbnails; down past the smallest size hides them.</summary>
+    private void DragFilmstrip(PointerEventArgs e, bool done)
+    {
+        if (_filmstripDrag is not { } drag || ViewModel is not { } vm)
+            return;
+        double thumb = drag.Thumb + (drag.Y - e.GetPosition(this).Y);
+        if (thumb < MainViewModel.MinFilmstripThumb - FilmstripHideDistance)
+            vm.IsFilmstripVisible = false;
+        else
+            vm.ResizeFilmstrip(thumb, done);
+        e.Handled = true;
+    }
+
+    private void OnFilmstripGripDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        ViewModel?.ToggleFilmstripCommand.Execute(null);
         e.Handled = true;
     }
 

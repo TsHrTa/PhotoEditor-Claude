@@ -101,6 +101,7 @@ public class ImageViewer : Control
     // Remove stroke being painted: its points (normalised) and where the press was (view)
     private List<BrushPoint>? _paint;
     private Point _paintStart;
+    private bool _paintErase;
 
     // Gradient creation / handle drag in progress
     private GradientHandle _dragHandle;
@@ -144,6 +145,25 @@ public class ImageViewer : Control
         set => SetValue(ToolProperty, value);
     }
 
+    /// <summary>
+    /// Hand tool held (Space): left-drag pans whatever <see cref="Tool"/> is, and the tool's cursor is hidden; the
+    /// tool resumes when it is released. A stroke or drag already in progress is not interrupted.
+    /// </summary>
+    public bool HandTool
+    {
+        get => _handTool;
+        set
+        {
+            if (_handTool == value)
+                return;
+            _handTool = value;
+            if (_panStart is null)
+                Cursor = value ? new Cursor(StandardCursorType.Hand) : null;
+            InvalidateVisual();
+        }
+    }
+    private bool _handTool;
+
     /// <summary>Gradient whose on-canvas handles are shown and can be dragged.</summary>
     public MaskComponent? EditableComponent
     {
@@ -186,7 +206,7 @@ public class ImageViewer : Control
         set => SetValue(SpotPaintingProperty, value);
     }
 
-    /// <summary>A Remove stroke being filled (drawn until it becomes a spot).</summary>
+    /// <summary>The AI Remove selection being painted / filled (drawn until it becomes a spot).</summary>
     public Spot? PendingSpot
     {
         get => GetValue(PendingSpotProperty);
@@ -196,8 +216,8 @@ public class ImageViewer : Control
     /// <summary>Spot removal tool: add a spot, or drag a spot / its source.</summary>
     public event EventHandler<SpotEditEventArgs>? SpotEdit;
 
-    /// <summary>A Remove stroke was painted (normalised points).</summary>
-    public event EventHandler<IReadOnlyList<BrushPoint>>? SpotPainted;
+    /// <summary>A stroke was painted with the spot tool (normalised points; Alt held at the press = erase).</summary>
+    public event EventHandler<SpotPaintedEventArgs>? SpotPainted;
 
     /// <summary>Brush input in normalised image coordinates (0..1).</summary>
     public event EventHandler<BrushStrokeEventArgs>? BrushStroke;
@@ -335,7 +355,7 @@ public class ImageViewer : Control
         var point = e.GetCurrentPoint(this);
         var props = point.Properties;
         var pos = point.Position;
-        if (props.IsLeftButtonPressed)
+        if (props.IsLeftButtonPressed && !HandTool)
         {
             if (Tool == EditTool.Crop && HitTestCrop(pos) is var cropHandle and not CropHandle.None)
             {
@@ -448,6 +468,11 @@ public class ImageViewer : Control
             Update(() => _view.Pan(p.X - start.X, p.Y - start.Y));
             return;
         }
+        else if (HandTool)
+        {
+            Cursor = new Cursor(StandardCursorType.Hand);
+            return;
+        }
         else if (Tool == EditTool.Crop)
         {
             Cursor = CropCursor(HitTestCrop(p));
@@ -549,7 +574,7 @@ public class ImageViewer : Control
                     SpotEdit?.Invoke(this, new SpotEditEventArgs(SpotEditKind.Add, null, point, EditPhase.End));
             }
             else
-                SpotPainted?.Invoke(this, click ? [painted[0]] : painted);
+                SpotPainted?.Invoke(this, new SpotPaintedEventArgs(click ? [painted[0]] : painted, _paintErase));
             InvalidateVisual();
             return;
         }
@@ -638,6 +663,7 @@ public class ImageViewer : Control
         e.Handled = true;
         if (SpotPainting)
         {
+            _paintErase = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
             _paint = [ToNormalized(pos)];
             _paintStart = pos;
             e.Pointer.Capture(this);
@@ -670,6 +696,7 @@ public class ImageViewer : Control
             return;
         }
         // Empty photo: a click adds a circle, a drag paints a stroke (decided on release).
+        _paintErase = false;
         _paint = [ToNormalized(pos)];
         _paintStart = pos;
         e.Pointer.Capture(this);
@@ -678,6 +705,9 @@ public class ImageViewer : Control
     /// <summary>A view point on a spot (its circle or stroke), or with <paramref name="atSource"/> on its source.</summary>
     private bool Hits(Spot spot, bool atSource, Point pos)
     {
+        if (spot.Mode == SpotMode.Remove)
+            return spot.RemoveStrokes.Any(s => !s.Erase
+                && s.Path.Any(p => Point.Distance(ToView(p), pos) <= Math.Max(ViewRadius(s.Radius), HandleHitRadius)));
         double r = Math.Max(ViewRadius(spot.Radius), HandleHitRadius);
         var points = spot.Path.Count > 1 ? spot.Path : [spot.Center];
         float dx = atSource ? spot.Source.X - spot.Center.X : 0, dy = atSource ? spot.Source.Y - spot.Center.Y : 0;
@@ -731,13 +761,69 @@ public class ImageViewer : Control
         context.DrawGeometry(null, pen, geometry);
     }
 
+    /// <summary>A Remove selection's outline in image pixels (painted strokes minus erased ones, in order), made once per spot.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Spot, Tuple<double, double, Geometry?>> SelectionShapes = new();
+
+    private Geometry? SelectionShape(Spot spot)
+    {
+        if (!SelectionShapes.TryGetValue(spot, out var cached) || cached.Item1 != ImageWidth || cached.Item2 != ImageHeight)
+        {
+            cached = Tuple.Create(ImageWidth, ImageHeight, BuildSelectionShape(spot));
+            SelectionShapes.AddOrUpdate(spot, cached);
+        }
+        return cached.Item3;
+    }
+
+    private Geometry? BuildSelectionShape(Spot spot)
+    {
+        double longSide = Math.Max(ImageWidth, ImageHeight);
+        Geometry? shape = null;
+        foreach (var stroke in spot.RemoveStrokes)
+        {
+            double r = stroke.Radius * longSide;
+            var points = stroke.Path.Select(p => new Point(p.X * ImageWidth, p.Y * ImageHeight)).ToList();
+            Geometry g;
+            if (points.Count == 1)
+                g = new EllipseGeometry(new Rect(points[0].X - r, points[0].Y - r, 2 * r, 2 * r));
+            else
+            {
+                var line = new StreamGeometry();
+                using (var c = line.Open())
+                {
+                    c.BeginFigure(points[0], false);
+                    foreach (var p in points.Skip(1))
+                        c.LineTo(p);
+                    c.EndFigure(false);
+                }
+                g = line.GetWidenedGeometry(new Pen(Brushes.Black, 2 * r, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round));
+            }
+            shape = shape is null
+                ? (stroke.Erase ? null : g)
+                : new CombinedGeometry(stroke.Erase ? GeometryCombineMode.Exclude : GeometryCombineMode.Union, shape, g);
+        }
+        return shape;
+    }
+
+    /// <summary>A Remove selection filled with <paramref name="color"/>.</summary>
+    private void DrawSelection(DrawingContext context, Spot spot, Color color)
+    {
+        if (SelectionShape(spot) is not { } shape)
+            return;
+        // Image pixel → view is affine (zoom, pan, straighten, mirror).
+        var o = ImagePixelToView(0, 0);
+        var ex = ImagePixelToView(1, 0) - o;
+        var ey = ImagePixelToView(0, 1) - o;
+        using (context.PushTransform(new Matrix(ex.X, ex.Y, ey.X, ey.Y, o.X, o.Y)))
+            context.DrawGeometry(new SolidColorBrush(color), null, shape);
+    }
+
     /// <summary>Each spot: its circle (solid), its source (dashed) and a line from the source to the spot.</summary>
     private void DrawSpots(DrawingContext context)
     {
         if (PendingSpot is { } pending)
-            DrawStroke(context, pending.Path, pending.Radius, Color.FromArgb(110, 255, 80, 80));
+            DrawSelection(context, pending, Color.FromArgb(110, 255, 80, 80));
         if (_paint is { } painting)
-            DrawStroke(context, painting, SpotRadius, Color.FromArgb(110, 255, 255, 255));
+            DrawStroke(context, painting, SpotRadius, _paintErase ? Color.FromArgb(120, 0, 0, 0) : Color.FromArgb(110, 255, 255, 255));
         foreach (var spot in State.Spots)
         {
             if (spot.Path.Count > 1 && spot.Mode != SpotMode.Remove)
@@ -759,9 +845,9 @@ public class ImageViewer : Control
             }
             if (spot.Mode == SpotMode.Remove)
             {
-                // Selected: the stroke as a band; otherwise a small ring where it is.
+                // Selected: the stroke(s) as a band; otherwise a small ring where it is.
                 if (spot.Id == SelectedSpot)
-                    DrawStroke(context, spot.Path, spot.Radius, Color.FromArgb(90, 255, 255, 255));
+                    DrawSelection(context, spot, Color.FromArgb(90, 255, 255, 255));
                 var at = ToView(spot.Center);
                 context.DrawEllipse(null, GuideShadow, at, 5, 5);
                 context.DrawEllipse(null, spot.Id == SelectedSpot ? SpotSelected : GuideLine, at, 5, 5);
@@ -901,7 +987,7 @@ public class ImageViewer : Control
             return;
         _panStart = null;
         pointer.Capture(null);
-        Cursor = null;
+        Cursor = HandTool ? new Cursor(StandardCursorType.Hand) : null;
     }
 
     /// <summary>View positions of the draggable handles of a gradient.</summary>
@@ -974,7 +1060,7 @@ public class ImageViewer : Control
         if (Tool == EditTool.Spot)
         {
             DrawSpots(context);
-            if (_pointer is { } sp && _spotDrag is null && _paint is null)
+            if (_pointer is { } sp && _spotDrag is null && _paint is null && !HandTool)
             {
                 double r = ViewRadius(SpotRadius);
                 context.DrawEllipse(null, new Pen(new SolidColorBrush(Color.FromArgb(160, 0, 0, 0)), 3), sp, r, r);
@@ -982,7 +1068,7 @@ public class ImageViewer : Control
             }
         }
 
-        if (Tool == EditTool.Brush && _pointer is { } p)
+        if (Tool == EditTool.Brush && _pointer is { } p && !HandTool)
         {
             // Brush cursor: outer circle = radius, inner = where the feather starts.
             double r = BrushRadius * Math.Max(ImageWidth, ImageHeight) * _view.Scale;

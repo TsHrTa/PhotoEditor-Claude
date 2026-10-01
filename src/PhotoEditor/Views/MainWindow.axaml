@@ -125,7 +125,16 @@
 
         <Border DockPanel.Dock="Bottom" IsVisible="{Binding HasFolder}" Background="#181818">
           <DockPanel>
+            <!-- Drag the top edge to resize the thumbnails (down past the smallest size hides them); double-click hides / shows. -->
+            <Border x:Name="FilmstripGrip" DockPanel.Dock="Top" Height="6" Background="#2A2A2A" Cursor="SizeNorthSouth"
+                    PointerPressed="OnFilmstripGripPressed" PointerMoved="OnFilmstripGripMoved"
+                    PointerReleased="OnFilmstripGripReleased" DoubleTapped="OnFilmstripGripDoubleTapped"
+                    ToolTip.Tip="Drag to make the thumbnails larger or smaller (down to hide them); double-click to hide / show (F6)">
+                <Border Width="40" Height="2" CornerRadius="1" Background="#606060" />
+            </Border>
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="8,4">
+                <Button Content="{Binding FilmstripToggleText}" Command="{Binding ToggleFilmstripCommand}" Padding="8,2"
+                        ToolTip.Tip="Hide the thumbnails to give the photo more room, or show them again (F6)" />
                 <TextBlock Text="Show" VerticalAlignment="Center" />
                 <ComboBox ItemsSource="{Binding FilterOptions}" SelectedItem="{Binding SelectedFilter}" Width="160"
                           ToolTip.Tip="Which photos the filmstrip shows" />
@@ -148,7 +157,7 @@
                 </StackPanel>
             </StackPanel>
             <ListBox x:Name="Filmstrip" ItemsSource="{Binding Photos}" SelectedItem="{Binding CurrentPhoto}"
-                     Height="132" Background="Transparent"
+                     Height="{Binding FilmstripHeight}" IsVisible="{Binding IsFilmstripVisible}" Background="Transparent"
                      ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate>
@@ -157,7 +166,9 @@
                 </ListBox.ItemsPanel>
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="vm:FilmstripItem">
-                        <Grid Width="116" RowDefinitions="92,Auto" ToolTip.Tip="{Binding Path}">
+                        <Grid Width="{Binding $parent[ListBox].((vm:MainViewModel)DataContext).FilmstripItemWidth}"
+                              RowDefinitions="Auto,Auto" ToolTip.Tip="{Binding Path}">
+                          <Panel Height="{Binding $parent[ListBox].((vm:MainViewModel)DataContext).FilmstripThumbHeight}">
                             <Image Source="{Binding Thumbnail}" Stretch="Uniform">
                                 <Image.Opacity>
                                     <Binding Path="IsRejected" Converter="{x:Static conv:BoolToOpacity.Instance}" />
@@ -173,6 +184,7 @@
                                     BorderBrush="#181818" BorderThickness="1"
                                     HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,2,0"
                                     IsVisible="{Binding HasEdits}" ToolTip.Tip="Edited" />
+                          </Panel>
                             <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="11" Margin="0,3,0,0"
                                        HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
                         </Grid>
@@ -266,7 +278,7 @@
             <Expander Header="Retouch" IsExpanded="True" HorizontalAlignment="Stretch">
                 <StackPanel Spacing="6">
                     <ToggleButton HorizontalAlignment="Left" Content="Spot removal (Q)" IsChecked="{Binding IsSpotActive}" IsEnabled="{Binding HasImage}"
-                                      ToolTip.Tip="Click a spot (dust, blemish, small object) to remove it, or drag along something long (a wire, a crack) to paint over it; a matching source beside it is picked automatically. Drag a spot to move it; drag the selected spot's source to pick another. Delete removes the selected spot. Remove (AI): paint over anything; AI fills it in." />
+                                      ToolTip.Tip="Click a spot (dust, blemish, small object) to remove it, or drag along something long (a wire, a crack) to paint over it; a matching source beside it is picked automatically. Drag a spot to move it; drag the selected spot's source to pick another. Delete removes the selected spot. Remove (AI): paint over anything (several strokes, Alt + drag erases), then press Remove (Enter); AI fills it in. Hold Space to drag the photo." />
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <RadioButton Content="Heal" GroupName="SpotMode" IsChecked="{Binding SpotHeal}"
                                      ToolTip.Tip="Texture from the source, colour and brightness fitted to the surroundings" />
@@ -287,6 +299,18 @@
                         <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SpotOpacity, StringFormat='{}{0:0}'}" VerticalAlignment="Bottom" />
                         <Slider Grid.Row="5" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding SpotOpacity}" />
                     </Grid>
+                    <!-- AI Remove: paint a selection (several strokes, Alt erases), then fill it. -->
+                    <StackPanel Spacing="4" IsVisible="{Binding IsSpotPainting}">
+                        <TextBlock Text="Paint over what to remove (more strokes add, Alt + drag erases), then press Remove."
+                                   Foreground="Gray" TextWrapping="Wrap" />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                            <Button Content="Remove (Enter)" Classes="accent" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Command="{Binding ApplyRemoveCommand}"
+                                    ToolTip.Tip="Fill the red selection with the AI model" />
+                            <Button Grid.Column="1" Content="Clear (Esc)" Command="{Binding ClearRemoveSelectionCommand}"
+                                    ToolTip.Tip="Discard the selection" />
+                        </Grid>
+                    </StackPanel>
                     <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
                         <TextBlock Text="{Binding SpotCountText}" Foreground="Gray" VerticalAlignment="Center" />
                         <Button Grid.Column="1" Content="Delete spot" Command="{Binding DeleteSpotCommand}"

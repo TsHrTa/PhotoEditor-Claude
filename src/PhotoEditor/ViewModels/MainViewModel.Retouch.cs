@@ -79,6 +79,8 @@ public partial class MainViewModel
     private void SetSpotMode(SpotMode mode)
     {
         _newSpotMode = mode;
+        if (mode != SpotMode.Remove)
+            ClearRemoveSelection();
         if (SelectedSpot is { } spot && (spot.Mode == SpotMode.Remove) != (mode == SpotMode.Remove))
             SelectedSpotId = null;
         else if (SelectedSpot is { } selected && selected.Mode != mode)
@@ -217,15 +219,18 @@ public partial class MainViewModel
         };
     }
 
-    /// <summary>A stroke painted with the spot tool: AI Remove, or a painted heal / clone spot with an automatic source.</summary>
-    public async Task PaintedAsync(IReadOnlyList<BrushPoint> path)
+    /// <summary>
+    /// A stroke painted with the spot tool: adds to (or with <paramref name="erase"/> takes away from) the AI Remove
+    /// selection, or makes a painted heal / clone spot with an automatic source.
+    /// </summary>
+    public void Painted(IReadOnlyList<BrushPoint> path, bool erase)
     {
         if (_newSpotMode == SpotMode.Remove)
         {
-            await RemoveAsync(path);
+            AddRemoveStroke(path, erase);
             return;
         }
-        if (Original is null || EditBase is not { } image || path.Count == 0)
+        if (erase || Original is null || EditBase is not { } image || path.Count == 0)
             return;
         var points = SimplifiedPath(path, _newSpotRadius).ToList();
         var center = new BrushPoint(points.Average(p => p.X), points.Average(p => p.Y));
@@ -247,21 +252,65 @@ public partial class MainViewModel
     private Task<Inpainter>? _inpainterLoading;
     private bool _removing;
 
-    /// <summary>A stroke painted with the Remove mode: the model fills it, then the spot is added (one undo step).</summary>
-    public async Task RemoveAsync(IReadOnlyList<BrushPoint> path)
+    /// <summary>
+    /// Adds a stroke to the selection to remove (shown in red; nothing is filled yet). Erasing strokes take parts of
+    /// it away again; erasing with no selection does nothing.
+    /// </summary>
+    private void AddRemoveStroke(IReadOnlyList<BrushPoint> path, bool erase)
     {
-        if (Original is not { } original || path.Count == 0 || _removing)
+        if (Original is null || path.Count == 0 || _removing)
+            return;
+        var strokes = PendingRemove?.Strokes ?? [];
+        if (erase && strokes.IsEmpty)
+            return;
+        strokes = strokes.Add(new RemoveStroke([.. SimplifiedPath(path, _newSpotRadius)], _newSpotRadius, erase));
+        var painted = strokes.Where(s => !s.Erase).SelectMany(s => s.Path).ToList();
+        PendingRemove = new Spot
+        {
+            Mode = SpotMode.Remove, Opacity = _newSpotOpacity, Strokes = strokes,
+            Radius = strokes.Where(s => !s.Erase).Max(s => s.Radius),
+            Center = new BrushPoint(painted.Average(p => p.X), painted.Average(p => p.Y)),
+        };
+        SelectedSpotId = null;
+        Status = erase
+            ? "Erased from the selection. Remove (Enter) fills it, Clear (Esc) starts over."
+            : "Paint more strokes (Alt + drag erases), then Remove (Enter) fills the selection; Clear (Esc) starts over.";
+    }
+
+    /// <summary>There is a selection to remove (and no fill running).</summary>
+    public bool HasRemoveSelection => PendingRemove is not null && !_removing;
+
+    partial void OnPendingRemoveChanged(Spot? value) => RefreshRemoveCommands();
+
+    private void RefreshRemoveCommands()
+    {
+        OnPropertyChanged(nameof(HasRemoveSelection));
+        ApplyRemoveCommand.NotifyCanExecuteChanged();
+        ClearRemoveSelectionCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Discards the painted selection.</summary>
+    [RelayCommand(CanExecute = nameof(HasRemoveSelection))]
+    private void ClearRemoveSelection()
+    {
+        if (_removing)
+            return;
+        PendingRemove = null;
+    }
+
+    /// <summary>Fills the painted selection with the AI model.</summary>
+    [RelayCommand(CanExecute = nameof(HasRemoveSelection))]
+    private Task ApplyRemove() => PendingRemove is { } selection ? RemoveAsync(selection) : Task.CompletedTask;
+
+    /// <summary>The selection is filled by the model, then the spot is added (one undo step).</summary>
+    private async Task RemoveAsync(Spot spot)
+    {
+        if (Original is not { } original || _removing)
             return;
         _removing = true;
-        var spot = new Spot
-        {
-            Mode = SpotMode.Remove, Radius = _newSpotRadius, Opacity = _newSpotOpacity,
-            Path = [.. SimplifiedPath(path, _newSpotRadius)],
-            Center = new BrushPoint(path.Average(p => p.X), path.Average(p => p.Y)),
-        };
+        RefreshRemoveCommands();
         try
         {
-            PendingRemove = spot;
             var inpainter = await LoadInpainterAsync();
             Status = "Removing (AI)…";
             // What the photo looks like under the stroke now: corrected, with the earlier spots.
@@ -274,7 +323,8 @@ public partial class MainViewModel
                 return;
             spot = spot with { Fill = fill };
             ApplyEdit(State with { Spots = State.Spots.Add(spot) });
-            SelectedSpotId = null; // ready for the next stroke
+            PendingRemove = null;
+            SelectedSpotId = null; // ready for the next selection
             Status = $"Removed in {watch.Elapsed.TotalSeconds:0.0} s ({(inpainter.Device == Core.Ai.InferenceDevice.DirectML ? "GPU" : "CPU")}).";
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.IO.IOException
@@ -284,12 +334,13 @@ public partial class MainViewModel
         }
         finally
         {
-            PendingRemove = null;
+            // On failure the selection stays, so Remove can be tried again.
             _removing = false;
+            RefreshRemoveCommands();
         }
     }
 
-    /// <summary>The stroke being filled (drawn by the viewer until the spot exists).</summary>
+    /// <summary>The selection being painted / filled (drawn by the viewer until the spot exists).</summary>
     [ObservableProperty]
     public partial Spot? PendingRemove { get; private set; }
 

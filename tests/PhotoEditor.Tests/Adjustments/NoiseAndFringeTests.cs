@@ -75,10 +75,33 @@ public sealed class NoiseAndFringeTests
         Assert.True(Chroma(green.GetPixel(20, 10)) > Chroma(src.GetPixel(20, 10)) * 0.9, "green defringe must leave purple alone");
     }
 
+    /// <summary>
+    /// User report: Lightroom removes all the purple, this app only some. A 6-px band of mauve and blue-violet fringe
+    /// (the sample CR3's colours) next to a bright sky is removed completely at 40 (Lightroom ≈ 8 of 20); a blue sky
+    /// next to the same edge keeps its colour.
+    /// </summary>
+    [Fact]
+    public void Defringe_RemovesWideFringeCompletely_KeepsBlueSky()
+    {
+        using var src = new SKBitmap(new SKImageInfo(80, 20, SKColorType.Rgba8888, SKAlphaType.Premul));
+        for (int y = 0; y < 20; y++)
+            for (int x = 0; x < 80; x++)
+                src.SetPixel(x, y, x < 20 ? new SKColor(235, 235, 245)
+                    : x < 23 ? new SKColor(140, 112, 150) // mauve, ≈ 290°
+                    : x < 26 ? new SKColor(95, 70, 160)   // blue-violet, ≈ 257°
+                    : x < 50 ? new SKColor(40, 35, 25)
+                    : x < 56 ? new SKColor(110, 160, 230) // blue sky, ≈ 215°
+                    : new SKColor(40, 35, 25));
+        using var result = CpuAdjustmentRenderer.Render(src, new AdjustmentSettings { DefringePurple = 40 });
+        for (int x = 20; x < 26; x++)
+            Assert.True(Chroma(result.GetPixel(x, 10)) <= 3, $"fringe left at {x}: {result.GetPixel(x, 10)}");
+        Assert.True(Chroma(result.GetPixel(52, 10)) > Chroma(src.GetPixel(52, 10)) * 0.9, "blue sky must stay");
+    }
+
     [Fact]
     public void DefringeHueRange_ChoosesWhichHuesAreRemoved()
     {
-        // The fringe colour (150, 60, 190) has hue ≈ 282°: inside the default purple range (273°–317°).
+        // The fringe colour (150, 60, 190) has hue ≈ 282°: inside the default purple range (254°–326°).
         using var src = new SKBitmap(new SKImageInfo(40, 10, SKColorType.Rgba8888, SKAlphaType.Premul));
         for (int y = 0; y < 10; y++)
             for (int x = 0; x < 40; x++)

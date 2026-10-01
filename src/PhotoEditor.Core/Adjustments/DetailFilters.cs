@@ -77,23 +77,28 @@ public readonly unsafe struct DetailFilters
         nb = cb - y0 - sb / wsum;
     }
 
-    /// <summary>The change that desaturates a purple / green pixel next to a strong brightness edge.</summary>
+    /// <summary>
+    /// The change that desaturates a purple / green pixel near a brightness edge: the largest difference to the
+    /// 8 neighbours at <see cref="PreparedAdjustments.FringeStep"/> and at 3 × that (fringes are several pixels wide).
+    /// </summary>
     public void Defringe(int x, int y, float cr, float cg, float cb, in PreparedAdjustments p,
         out float dr, out float dg, out float db)
     {
         const int step = PreparedAdjustments.FringeStep;
         float y0 = Lum(cr, cg, cb), edgeDiff = 0;
-        for (int j = -1; j <= 1; j++)
-            for (int i = -1; i <= 1; i++)
-            {
-                At(x + i * step, y + j * step, cr, cg, cb, out float r, out float g, out float b);
-                edgeDiff = MathF.Max(edgeDiff, MathF.Abs(Lum(r, g, b) - y0));
-            }
-        float edge = ToneCurve.SmoothStep(0.08f, 0.25f, edgeDiff);
+        for (int ring = 1; ring <= 3; ring += 2)
+            for (int j = -1; j <= 1; j++)
+                for (int i = -1; i <= 1; i++)
+                {
+                    At(x + i * step * ring, y + j * step * ring, cr, cg, cb, out float r, out float g, out float b);
+                    edgeDiff = MathF.Max(edgeDiff, MathF.Abs(Lum(r, g, b) - y0));
+                }
+        float edge = ToneCurve.SmoothStep(PreparedAdjustments.FringeEdgeLow, PreparedAdjustments.FringeEdgeHigh, edgeDiff);
         float h = Hue(cr, cg, cb);
         float purple = PreparedAdjustments.HueRangeWeight(h, p.PurpleHueFrom, p.PurpleHueTo);
         float green = PreparedAdjustments.HueRangeWeight(h, p.GreenHueFrom, p.GreenHueTo);
-        float k = Math.Clamp((p.DefringePurpleAmount * purple + p.DefringeGreenAmount * green) * edge, 0f, 1f);
+        float k = Math.Clamp((p.DefringePurpleAmount * purple + p.DefringeGreenAmount * green) * edge
+            * PreparedAdjustments.DefringeStrength, 0f, 1f);
         dr = -k * (cr - y0);
         dg = -k * (cg - y0);
         db = -k * (cb - y0);

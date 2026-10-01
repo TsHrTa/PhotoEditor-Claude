@@ -47,11 +47,23 @@ public readonly record struct PreparedAdjustments(
     /// </summary>
     public bool SceneExposure { get; init; }
 
-    /// <summary>Hue (degrees) of Lightroom's purple / green defringe range ends 0 and 100.</summary>
-    public const float PurpleHue0 = 240f, PurpleHue100 = 350f, GreenHue0 = 40f, GreenHue100 = 190f;
+    /// <summary>
+    /// Hue (degrees) of Lightroom's purple / green defringe range ends 0 and 100. The purple defaults (30–70) cover
+    /// blue-violet to mauve fringes (254–326°, fading out by 229° / 351°) but not a blue sky (≈ 200–225°).
+    /// </summary>
+    public const float PurpleHue0 = 200f, PurpleHue100 = 380f, GreenHue0 = 40f, GreenHue100 = 190f;
 
-    /// <summary>Fade (degrees) outside a defringe hue range.</summary>
-    public const float DefringeHueFade = 20f;
+    /// <summary>Fade (degrees) outside a defringe hue range. Mirrored in the shader.</summary>
+    public const float DefringeHueFade = 25f;
+
+    /// <summary>
+    /// Defringe amount × this = how much of a fringe pixel's colour is removed (clamped to all of it): a third of the
+    /// slider (Lightroom ≈ 7 of 20) already removes a fringe at a clear edge completely. Mirrored in the shader.
+    /// </summary>
+    public const float DefringeStrength = 3f;
+
+    /// <summary>Brightness difference (sRGB luminance) to a nearby pixel at which defringe starts / is at full strength.</summary>
+    public const float FringeEdgeLow = 0.04f, FringeEdgeHigh = 0.15f;
 
     /// <summary>A hue range in Lightroom's units as degrees, ends in order.</summary>
     private static (float From, float To) HueRange(double low, double high, float hue0, float hue100)
@@ -121,8 +133,8 @@ public readonly record struct PreparedAdjustments(
 
     public bool HasVignette => VignetteStops != 0f;
 
-    /// <summary>Largest shift (in perceptual units) the highlights slider applies at ±100.</summary>
-    public const float MaxHighlightsShift = 0.3f;
+    /// <summary>Largest shift (in perceptual units, at white) the highlights slider applies at ±100.</summary>
+    public const float MaxHighlightsShift = 0.25f;
 
     public static PreparedAdjustments From(AdjustmentSettings s)
     {

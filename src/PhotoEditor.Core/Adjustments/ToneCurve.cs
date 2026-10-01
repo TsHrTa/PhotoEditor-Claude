@@ -62,19 +62,82 @@ public static class ToneCurve
         return Math.Clamp(gain, 1f / PreparedAdjustments.MaxClarityGain, PreparedAdjustments.MaxClarityGain);
     }
 
+    /// <summary>Where the highlights slider starts to act (perceptual; ≈ 13 % grey): midtones below stay put.</summary>
+    public const float HighlightsPivot = 0.4f;
+
+    /// <summary>Steepness of the positive highlights curve per unit of amount (γ = 1 + this × amount; 4 at +100).</summary>
+    public const float HighlightsLiftGamma = 12f;
+
     /// <summary>
-    /// Shifts the upper range, fully at white. Pulled down, the part above white (RAW highlights) is also rolled
-    /// off: d / (1 + k·d) with k = 10 × |amount| (3 at −100), smooth at white, so clouds 2 stops over come back
-    /// under white at −100 (a plain shift recovered only about 1 stop). Mirrored in the shader.
+    /// The highlights curve on t = position between <see cref="HighlightsPivot"/> and white (midtones below stay put).
+    /// <para>
+    /// Pulled down: lowers white by <paramref name="amount"/>, easing in (t²(2 − t), so the slope never drops below
+    /// ≈ 0.45 at −100 and the bright areas keep their contrast instead of turning a flat grey). Above white (RAW
+    /// highlights) the curve continues with its slope at white, rolled off, d / (1 + k·d) with k = 10 × |amount|
+    /// (2.5 at −100), so clouds 2 stops over come back under white.
+    /// </para>
+    /// <para>
+    /// Pushed up: brightens the upper tones but keeps white at white, as Lightroom does (Whites moves the white
+    /// point): t + t·(h − t) with h = 1 − (1 − t)^γ, rising everywhere, slope 1 at the pivot and 0 at white. Values
+    /// above white are left alone.
+    /// </para>
+    /// Mirrored in the shader.
     /// </summary>
     public static float Highlights(float x, float amount)
     {
-        if (amount < 0f && x > 1f)
+        if (x <= HighlightsPivot || (amount > 0f && x >= 1f))
+            return x;
+        if (x < 1f)
         {
-            float d = x - 1f;
-            return 1f + amount + d / (1f - 10f * amount * d);
+            float t = (x - HighlightsPivot) / (1f - HighlightsPivot);
+            if (amount < 0f)
+                return x + amount * t * t * (2f - t);
+            float h = 1f - MathF.Pow(1f - t, 1f + HighlightsLiftGamma * amount);
+            return HighlightsPivot + (t + t * (h - t)) * (1f - HighlightsPivot);
         }
-        return x + amount * SmoothStep(0.35f, 1f, x);
+        float d = x - 1f, slope = 1f + amount / (1f - HighlightsPivot);
+        return 1f + amount + slope * d / (1f - 10f * amount * d);
+    }
+
+    /// <summary>Linear value from which a brightened pixel's brightest channel is compressed towards white.</summary>
+    public const float BrightenKnee = 0.6f;
+
+    /// <summary>
+    /// Limits a brightening <paramref name="gain"/> (&gt; 1) for a pixel whose brightest channel is
+    /// <paramref name="hi"/> (linear), so that channel approaches white softly (exponential shoulder above
+    /// <see cref="BrightenKnee"/>) instead of clipping: all channels keep their ratios, so the colour stays the
+    /// same instead of shifting (yellow → green) or bleaching as it would when one channel clips. Never darkens.
+    /// Mirrored in the shader.
+    /// </summary>
+    public static float LimitBrightening(float hi, float gain)
+    {
+        float v = hi * gain;
+        if (gain <= 1f || hi <= 0f || v <= BrightenKnee)
+            return gain;
+        float s = BrightenKnee + (1f - BrightenKnee) * (1f - MathF.Exp(-(v - BrightenKnee) / (1f - BrightenKnee)));
+        return MathF.Max(s / hi, 1f);
+    }
+
+    /// <summary>
+    /// How fast colours above white fade to white (<see cref="RollToWhite"/>): at this much over white (linear) the
+    /// colour is halfway to white.
+    /// </summary>
+    public const float WhiteRolloff = 1f;
+
+    /// <summary>
+    /// Before the final clip: a pixel whose brightest channel is above white has its other channels raised towards
+    /// it, by e² / (e² + 1) with e = (hi − 1) / <see cref="WhiteRolloff"/> (gentle just over white), so overexposed colours burn out to white as on film
+    /// and in Lightroom, instead of clipping to a saturated colour. No change at or below white. Mirrored in the shader.
+    /// </summary>
+    public static void RollToWhite(ref float r, ref float g, ref float b)
+    {
+        float hi = MathF.Max(r, MathF.Max(g, b));
+        if (hi <= 1f)
+            return;
+        float e = (hi - 1f) / WhiteRolloff, s = e * e / (e * e + 1f);
+        r += (hi - r) * s;
+        g += (hi - g) * s;
+        b += (hi - b) * s;
     }
 
     /// <summary>Bump peaking at x = 1/3, zero at black and white.</summary>

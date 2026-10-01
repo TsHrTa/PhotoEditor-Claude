@@ -223,6 +223,8 @@ public static class CpuAdjustmentRenderer
             ApplyLinear(ref r, ref g, ref b, p, baseRatio);
             if (p.HasVignette)
                 VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, p);
+            if (layers.Length == 0)
+                ToneCurve.RollToWhite(ref r, ref g, ref b);
             // Result of the global pass as unpremultiplied sRGB, like the shader hands to the next pass.
             float sr = ColorMath.LinearToSrgb(Math.Clamp(r, 0f, globalLimit));
             float sg = ColorMath.LinearToSrgb(Math.Clamp(g, 0f, globalLimit));
@@ -231,10 +233,18 @@ public static class CpuAdjustmentRenderer
             for (int li = 0; li < layers.Length; li++)
             {
                 var layer = layers[li];
-                float limit = li == layers.Length - 1 ? 1f : AdjustmentShader.PassLimit;
+                bool last = li == layers.Length - 1;
+                float limit = last ? 1f : AdjustmentShader.PassLimit;
                 float m = layer.Mask[y * width + i / 4] / 255f;
+                // What this pass leaves outside its mask; the last pass rolls it to white (as the shader).
+                float kr = sr, kg = sg, kb = sb;
+                if (last)
+                    RollEncodedToWhite(ref kr, ref kg, ref kb);
                 if (m <= 0f)
+                {
+                    (sr, sg, sb) = (kr, kg, kb);
                     continue;
+                }
                 float lr = sr, lg = sg, lb = sb;
                 if (soften is not null)
                     SoftenAndTexture(ref detail, layer.Adjustments, ref lr, ref lg, ref lb);
@@ -250,10 +260,12 @@ public static class CpuAdjustmentRenderer
                 ApplyLinear(ref r, ref g, ref b, layer.Adjustments, baseRatio);
                 if (layer.Adjustments.HasVignette)
                     VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, layer.Adjustments);
+                if (last)
+                    ToneCurve.RollToWhite(ref r, ref g, ref b);
                 float limitEncoded = ColorMath.LinearToSrgb(limit);
-                sr = Mix(MathF.Min(sr, limitEncoded), ColorMath.LinearToSrgb(Math.Clamp(r, 0f, limit)), m);
-                sg = Mix(MathF.Min(sg, limitEncoded), ColorMath.LinearToSrgb(Math.Clamp(g, 0f, limit)), m);
-                sb = Mix(MathF.Min(sb, limitEncoded), ColorMath.LinearToSrgb(Math.Clamp(b, 0f, limit)), m);
+                sr = Mix(MathF.Min(kr, limitEncoded), ColorMath.LinearToSrgb(Math.Clamp(r, 0f, limit)), m);
+                sg = Mix(MathF.Min(kg, limitEncoded), ColorMath.LinearToSrgb(Math.Clamp(g, 0f, limit)), m);
+                sb = Mix(MathF.Min(kb, limitEncoded), ColorMath.LinearToSrgb(Math.Clamp(b, 0f, limit)), m);
             }
 
             float a = a8 / 255f;
@@ -265,6 +277,18 @@ public static class CpuAdjustmentRenderer
     }
 
     private static bool UsesDetail(in PreparedAdjustments p) => p.HasSoften || p.HasTexture;
+
+    /// <summary><see cref="ToneCurve.RollToWhite"/> on sRGB-encoded values (no change unless one is above white).</summary>
+    private static void RollEncodedToWhite(ref float sr, ref float sg, ref float sb)
+    {
+        if (MathF.Max(sr, MathF.Max(sg, sb)) <= 1f)
+            return;
+        float r = ColorMath.SrgbToLinear(sr), g = ColorMath.SrgbToLinear(sg), b = ColorMath.SrgbToLinear(sb);
+        ToneCurve.RollToWhite(ref r, ref g, ref b);
+        sr = ColorMath.LinearToSrgb(r);
+        sg = ColorMath.LinearToSrgb(g);
+        sb = ColorMath.LinearToSrgb(b);
+    }
 
     /// <summary>
     /// Soften, then texture, on unpremultiplied sRGB values (as the shader); values stay ≥ 0 and are not pushed
@@ -374,6 +398,9 @@ public static class CpuAdjustmentRenderer
         if (p.HasLocalTone)
         {
             float gain = ToneCurve.LocalGain(y * baseRatio, p);
+            // Raised highlights brighten colours without clipping a channel.
+            if (p.HighlightsAmount > 0f)
+                gain = ToneCurve.LimitBrightening(MathF.Max(r, MathF.Max(g, b)), gain);
             r *= gain;
             g *= gain;
             b *= gain;
