@@ -34,8 +34,11 @@ public static class AdjustmentShader
         uniform float vibranceAmount;
         // Per HSL band: hue shift (degrees), saturation factor, luminance (stops).
         uniform float3 hsl[8];
-        // Band centre hues in degrees; hslCenters[8] = 360 closes the circle.
+        // 1 when any band has an adjustment (otherwise the pass skips the HSL panel).
+        uniform float hslOn;
+        // Band centre hues in degrees relative to the first band (red, whose OKLCh hue is hslOrigin); hslCenters[8] = 360 closes the circle.
         uniform float hslCenters[9];
+        uniform float hslOrigin;
         // Vignette: exposure change at full weight, transition band, roundness; the frame it follows
         // (crop centre, half size and (cos, sin) of its angle, in image pixels).
         uniform float vignetteStops;
@@ -232,16 +235,65 @@ public static class AdjustmentShader
             return result;
         }
 
+        // Cube root: pow, then one Newton step (the GPU pow is only accurate to about 1e-3).
+        float cbrt(float x) {
+            if (x <= 0.0) return 0.0;
+            float y = pow(x, 1.0 / 3.0);
+            return y - (y * y * y - x) / (3.0 * y * y);
+        }
+        // Linear sRGB to OKLab (Bjorn Ottosson) and back; the HSL panel works in OKLCh (hue moves keep brightness).
+        float3 toOklab(float3 c) {
+            float l = cbrt(max(0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b, 0.0));
+            float m = cbrt(max(0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b, 0.0));
+            float s = cbrt(max(0.0883024619 * c.r + 0.2817188376 * c.g + 0.6299787005 * c.b, 0.0));
+            return float3(0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+                          1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+                          0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s);
+        }
+        float3 fromOklab(float3 lab) {
+            float l = lab.x + 0.3963377774 * lab.y + 0.2158037573 * lab.z;
+            float m = lab.x - 0.1055613458 * lab.y - 0.0638541728 * lab.z;
+            float s = lab.x - 0.0894841775 * lab.y - 1.2914855480 * lab.z;
+            l = l * l * l;
+            m = m * m * m;
+            s = s * s * s;
+            return float3(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+                          -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+                          -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
+        }
+
+        float3 fitGamut(float3 lab) {
+            float3 rgb = fromOklab(lab);
+            if (min(rgb.r, min(rgb.g, rgb.b)) >= -0.0005) return max(rgb, 0.0);
+            float lo = 0.0;
+            float hi = 1.0;
+            for (int i = 0; i < 10; i++) {
+                float mid = (lo + hi) * 0.5;
+                float3 t = fromOklab(float3(lab.x, lab.y * mid, lab.z * mid));
+                if (min(t.r, min(t.g, t.b)) >= -0.0005) lo = mid; else hi = mid;
+            }
+            return max(fromOklab(float3(lab.x, lab.y * lo, lab.z * lo)), 0.0);
+        }
+
         float3 applyHsl(float3 c) {
-            float3 hsv = rgbToHsv(pow(max(c, 0.0), float3(1.0 / perceptualGamma)));
-            float3 adj = hslAdjustment(hsv.x);
-            float s = hsv.y;
-            float h2 = hsv.x + adj.x;
-            if (h2 < 0.0) h2 += 360.0;
-            if (h2 >= 360.0) h2 -= 360.0;
-            float3 hsv2 = float3(h2, clamp(s * adj.y, 0.0, 1.0), hsv.z);
-            float3 e = float3(hsvChannel(5.0, hsv2), hsvChannel(3.0, hsv2), hsvChannel(1.0, hsv2));
-            return pow(e, float3(perceptualGamma)) * exp2(adj.z * s);
+            float3 lab = toOklab(c);
+            float chroma = length(lab.yz);
+            // Greys have no hue (and atan(0, 0) is undefined): nothing to adjust.
+            if (chroma < 1e-5) return c;
+            float hue = degrees(atan(lab.z, lab.y));
+            if (hue < 0.0) hue += 360.0;
+            float3 adj = hslAdjustment(mod(hue - hslOrigin + 360.0, 360.0));
+            // Hue shift = a rotation of (a, b) and saturation = a scale of it: the original hue never goes through
+            // sin / cos (approximate on some backends, and a saturated blue is very sensitive to it).
+            float th = radians(adj.x);
+            float ct = cos(th);
+            float st = sin(th);
+            float a2 = adj.y * (lab.y * ct - lab.z * st);
+            float b2 = adj.y * (lab.y * st + lab.z * ct);
+            // A colour outside sRGB loses chroma at the same lightness and hue (see GamutMapping).
+            float3 rgb = fitGamut(float3(lab.x, a2, b2));
+            // The luminance change is weighted by chroma so greys stay untouched.
+            return rgb * exp2(adj.z * clamp(chroma / 0.15, 0.0, 1.0));
         }
 
         float vignetteDistance(float2 uv) {
@@ -514,7 +566,7 @@ public static class AdjustmentShader
             factor = limitSaturation(factor, y, mn);
             c = max(y + (c - y) * factor, 0.0);
 
-            c = applyHsl(c);
+            if (hslOn > 0.5) c = applyHsl(c);
 
             if (vignetteStops != 0.0) {
                 float2 d = coord - vignetteCenter;
@@ -538,7 +590,7 @@ public static class AdjustmentShader
         }
         """;
 
-    private static readonly float[] HslCentersUniform = [.. HslBands.Centers, 360f];
+    private static readonly float[] HslCentersUniform = [.. HslBands.RelativeCenters, 360f];
 
     private static readonly Lazy<SKRuntimeEffect> LazyEffect = new(() =>
         SKRuntimeEffect.CreateShader(Source, out var errors)
@@ -702,7 +754,9 @@ public static class AdjustmentShader
             ["saturationFactor"] = p.SaturationFactor,
             ["vibranceAmount"] = p.VibranceAmount,
             ["hsl"] = p.Hsl,
+            ["hslOn"] = p.HasHsl ? 1f : 0f,
             ["hslCenters"] = HslCentersUniform,
+            ["hslOrigin"] = HslBands.Centers[0],
             ["vignetteStops"] = p.VignetteStops,
             ["vignetteLow"] = p.VignetteLow,
             ["vignetteHigh"] = p.VignetteHigh,

@@ -58,20 +58,16 @@ public static class IccColor
     }
 
     /// <summary>
-    /// Brings a linear colour into 0..1: a negative channel (a colour more saturated than sRGB can show) is lifted to 0
-    /// by scaling the colour's distance from its luminance, which keeps hue and brightness; a channel above 1 scales
-    /// the colour down. Colours already inside are unchanged.
+    /// Brings a linear colour into 0..1: a negative channel (a colour more saturated than sRGB can show) is fixed by
+    /// reducing the chroma at the same lightness and hue (<see cref="GamutMapping"/>); a channel above 1 scales the
+    /// colour down. Colours already inside are unchanged.
     /// </summary>
     public static void CompressToGamut(ref float r, ref float g, ref float b)
     {
-        float min = MathF.Min(r, MathF.Min(g, b));
-        if (min < 0f)
+        if (MathF.Min(r, MathF.Min(g, b)) < 0f)
         {
-            float y = Math.Max(0.2126f * r + 0.7152f * g + 0.0722f * b, 0f);
-            float k = y / (y - min);
-            r = y + (r - y) * k;
-            g = y + (g - y) * k;
-            b = y + (b - y) * k;
+            var (l, a, bb) = HslMath.ToOklab(r, g, b);
+            (r, g, b) = GamutMapping.FromOklab(l, a, bb);
         }
         float max = MathF.Max(r, MathF.Max(g, b));
         if (max > 1f)

@@ -13,8 +13,22 @@ public static class HslBands
 
     public static readonly string[] Names = ["Reds", "Oranges", "Yellows", "Greens", "Aquas", "Blues", "Purples", "Magentas"];
 
-    /// <summary>Hue (degrees) at which each band has full effect; between centres the effect is blended.</summary>
-    public static readonly float[] Centers = [0, 30, 60, 120, 180, 240, 270, 300];
+    /// <summary>The band centres as the usual HSL panel names them (HSV hue, degrees).</summary>
+    private static readonly float[] HsvCenters = [0, 30, 60, 120, 180, 240, 270, 300];
+
+    /// <summary>
+    /// Hue (degrees, in OKLCh, where the panel works) at which each band has full effect; between centres the effect is
+    /// blended. They are the OKLCh hues of the fully saturated colours at the HSV centres, so a colour belongs to the
+    /// band a user would call it (red 29, orange 56, yellow 110, green 142, aqua 195, blue 264, purple 292, magenta 328).
+    /// </summary>
+    public static readonly float[] Centers = HsvCenters.Select(h =>
+    {
+        var (r, g, b) = HslMath.HsvToRgb(h, 1f, 1f);
+        return HslMath.Oklch(ColorMath.SrgbToLinear(r), ColorMath.SrgbToLinear(g), ColorMath.SrgbToLinear(b)).Hue;
+    }).ToArray();
+
+    /// <summary>Centres relative to the first (red) band, from 0 up to below 360 and increasing: what <see cref="HslMath.Interpolate"/> works on.</summary>
+    public static readonly float[] RelativeCenters = Centers.Select(c => c - Centers[0]).ToArray();
 
     /// <summary>Hue rotation in degrees at ±100.</summary>
     public const float MaxHueShift = 30f;

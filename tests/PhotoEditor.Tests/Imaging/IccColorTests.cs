@@ -71,11 +71,15 @@ public sealed class IccColorTests : IDisposable
         float r = 0.2f, g = 0.5f, b = 0.7f;
         IccColor.CompressToGamut(ref r, ref g, ref b);
         Assert.Equal((0.2f, 0.5f, 0.7f), (r, g, b));
+        // A colour outside sRGB (a Display P3 green) ends up inside, with the lightness and hue it had (OKLab).
         r = -0.2f; g = 1.04f; b = -0.08f;
-        float y = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        var before = HslMath.Oklch(r, g, b);
         IccColor.CompressToGamut(ref r, ref g, ref b);
-        Assert.InRange(MathF.Min(r, MathF.Min(g, b)), -1e-6f, 1e-6f);
-        Assert.InRange(0.2126f * r + 0.7152f * g + 0.0722f * b, y - 1e-5f, y + 1e-5f);
+        Assert.True(MathF.Min(r, MathF.Min(g, b)) >= 0f);
+        var after = HslMath.Oklch(r, g, b);
+        Assert.InRange(Math.Abs(after.Lightness - before.Lightness), 0f, 0.01f);
+        Assert.InRange(Math.Abs(after.Hue - before.Hue), 0f, 2f);
+        Assert.True(after.Chroma < before.Chroma);
     }
 }
 
