@@ -32,6 +32,13 @@ public sealed record RawMetadata
 /// </summary>
 public static class RawImageLoader
 {
+    /// <summary>
+    /// The demosaicing used for editing and export. DCB: on the sample R8 CR3 (24 MP) it is the sharpest of the
+    /// classic algorithms by a small margin and gives the cleanest edges (AAHD adds zipper artefacts, DHT is softer),
+    /// at 4.7 s instead of PPG's 1.9 s (AHD 2.2 s). The embedded preview is shown while it runs.
+    /// </summary>
+    public const RawDemosaic DefaultDemosaic = RawDemosaic.Dcb;
+
     public static readonly string[] Extensions =
     [
         ".cr3", ".cr2", ".crw", ".nef", ".nrw", ".arw", ".srf", ".sr2", ".dng", ".raf",
@@ -42,7 +49,7 @@ public static class RawImageLoader
         Extensions.Contains(Path.GetExtension(path).ToLowerInvariant());
 
     /// <summary>
-    /// The fallback (Magick.NET). PPG demosaicing: 2.5× faster than LibRaw's default (AHD) — 1.4 s instead of 3.7 s
+    /// The fallback (Magick.NET), PPG demosaicing (faster than AHD: 1.4 s instead of 3.7 s
     /// for a 21 MP CR2 on a 4-core machine — and visually the same at 100 % on real photos. Auto-brightening is off:
     /// LibRaw would clip the brightest 1 % of the photo; <see cref="Develop"/> brightens the same way and keeps what
     /// goes above white.
@@ -66,11 +73,14 @@ public static class RawImageLoader
     /// white and the finer shadow steps are attached as its <see cref="Headroom"/>. Upright (the file's orientation
     /// applied).
     /// </summary>
-    public static SKBitmap Load(string path)
+    public static SKBitmap Load(string path) => Load(path, DefaultDemosaic);
+
+    /// <summary>As <see cref="Load(string)"/> with the given demosaicing algorithm.</summary>
+    public static SKBitmap Load(string path, RawDemosaic demosaic)
     {
         try
         {
-            return LoadWithLibRaw(path);
+            return LoadWithLibRaw(path, demosaic);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
@@ -86,7 +96,7 @@ public static class RawImageLoader
     /// and applies a fixed base rendering (<see cref="Adjustments.RawBaseCurve"/>) instead of LibRaw's per-photo
     /// auto-brightening.
     /// </summary>
-    private static SKBitmap LoadWithLibRaw(string path)
+    private static SKBitmap LoadWithLibRaw(string path, RawDemosaic demosaic)
     {
         using var context = Sdcb.LibRaw.RawContext.OpenFile(path);
         context.Unpack();
@@ -98,7 +108,7 @@ public static class RawImageLoader
             o.HighlightMode = 1; // channel multipliers normalised by the largest: nothing clips before the sensor
             o.NoAutoBright = true;
             o.OutputBps = 16;
-            o.UserQual = Sdcb.LibRaw.DemosaicAlgorithm.PatternedPixelGrouping;
+            o.UserQual = (Sdcb.LibRaw.DemosaicAlgorithm)(int)demosaic;
         });
         var multipliers = context.PreMultipler.Take(3).ToArray();
         if (multipliers.Length != 3 || multipliers.Any(m => !(m > 0)))
@@ -491,4 +501,16 @@ public static class RawImageLoader
     /// <summary>1/250 s as 1/250, 2.5 s as 25/10.</summary>
     private static Rational ExposureRational(double seconds) =>
         seconds < 1 ? new Rational(1, (uint)Math.Round(1 / seconds)) : new Rational((uint)Math.Round(seconds * 10), 10);
+}
+
+/// <summary>LibRaw's demosaicing algorithms (the values of its user_qual option).</summary>
+public enum RawDemosaic
+{
+    Linear = 0,
+    Vng = 1,
+    Ppg = 2,
+    Ahd = 3,
+    Dcb = 4,
+    Dht = 11,
+    Aahd = 12,
 }
