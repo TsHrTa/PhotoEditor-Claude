@@ -33,6 +33,27 @@ public sealed class ViewTransform
         ZoomToFit();
     }
 
+    /// <summary>
+    /// Swaps in an image of nearly the same size (a RAW's camera preview replaced by the decoded RAW): the zoom
+    /// stays and the same part of the photo stays in the centre.
+    /// </summary>
+    public void ReplaceImageSize(double width, double height)
+    {
+        if (IsFit || ImageWidth <= 0 || ImageHeight <= 0)
+        {
+            SetImageSize(width, height);
+            return;
+        }
+        var (cx, cy) = ViewToImage(ViewWidth / 2, ViewHeight / 2);
+        cx *= width / ImageWidth;
+        cy *= height / ImageHeight;
+        ImageWidth = width;
+        ImageHeight = height;
+        OffsetX = ViewWidth / 2 - cx * Scale;
+        OffsetY = ViewHeight / 2 - cy * Scale;
+        Clamp();
+    }
+
     public void SetViewSize(double width, double height)
     {
         // Keep the image point at the view centre in place when the view is resized.

@@ -23,6 +23,14 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
 
+  <!-- ONNX Runtime native libraries: DirectML (GPU) build on Windows, CPU build elsewhere. -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
+  </ItemGroup>
+  <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.4" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\PhotoEditor.Core\PhotoEditor.Core.csproj" />
   </ItemGroup>

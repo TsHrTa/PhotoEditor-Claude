@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using PhotoEditor.Core.Adjustments;
 using PhotoEditor.Core.Masks;
+using PhotoEditor.Core.Retouch;
 
 namespace PhotoEditor.Core.Editing;
 
@@ -14,10 +15,39 @@ public sealed record EditDocument
     public int Version { get; init; } = CurrentVersion;
     public AdjustmentSettings Adjustments { get; init; } = AdjustmentSettings.Default;
     public ImmutableList<Mask> Masks { get; init; } = [];
+    public ImmutableList<Spot> Spots { get; init; } = [];
+    public Crop Crop { get; init; } = Crop.None;
 
-    public static EditDocument From(EditState state) => new() { Adjustments = state.Adjustments, Masks = state.Masks };
+    /// <summary>Rotation / flip after the crop.</summary>
+    public PhotoOrientation Orientation { get; init; }
 
-    public EditState ToState() => new() { Adjustments = Adjustments, Masks = Masks };
+    /// <summary>Star rating and pick / reject flag (not part of the edit; null when never set).</summary>
+    public PhotoLabels? Labels { get; init; }
+
+    /// <summary>
+    /// True when the file holds an edit. Needed for RAWs: an edit that took their default sharpening and noise
+    /// reduction away looks like the all-zero settings of a file that only holds a rating. Null in older files.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Edited { get; init; }
+
+    public static EditDocument From(EditState state) =>
+        new() { Adjustments = state.Adjustments, Masks = state.Masks, Spots = state.Spots, Crop = state.Crop, Orientation = state.Orientation };
+
+    public EditState ToState() => new()
+    {
+        Adjustments = Adjustments, Masks = Masks, Spots = Spots, Crop = Crop, Orientation = new(Orientation.Turns, Orientation.Flip),
+    };
+
+    /// <summary>
+    /// True when the file holds an edit of a RAW (<paramref name="isRaw"/>) or other photo, not just a rating or
+    /// flag (then the photo shows as unedited, with its default settings).
+    /// </summary>
+    public bool IsEditFor(bool isRaw)
+    {
+        var state = ToState();
+        return !state.IsDefaultFor(isRaw) && (Edited == true || !state.IsDefault);
+    }
 
     public bool Equals(EditDocument? other) =>
         other is not null && Version == other.Version && ToState() == other.ToState();
@@ -57,7 +87,13 @@ public static class SidecarFile
                 Components = (m.Components ?? []).RemoveAll(c => c is null),
             })
             .ToImmutableList();
-        return doc with { Adjustments = Normalize(doc.Adjustments ?? AdjustmentSettings.Default), Masks = masks };
+        return doc with
+        {
+            Adjustments = Normalize(doc.Adjustments ?? AdjustmentSettings.Default),
+            Masks = masks,
+            Spots = (doc.Spots ?? []).Where(s => s is not null).Select(s => s.Normalized()).ToImmutableList(),
+            Crop = CropGeometry.Normalize(doc.Crop),
+        };
     }
 
     /// <summary>Writes the sidecar for <paramref name="imagePath"/> (atomically via a temp file).</summary>
@@ -88,6 +124,12 @@ public static class SidecarFile
         }
         foreach (var p in AdjustmentParameters.All)
             s = p.Set(s, p.Get(s));
-        return s;
+        return s with
+        {
+            Curve = (s.Curve ?? PointCurve.Linear).Normalized(),
+            CurveRed = (s.CurveRed ?? PointCurve.Linear).Normalized(),
+            CurveGreen = (s.CurveGreen ?? PointCurve.Linear).Normalized(),
+            CurveBlue = (s.CurveBlue ?? PointCurve.Linear).Normalized(),
+        };
     }
 }

@@ -5,9 +5,9 @@ namespace PhotoEditor.Core.Imaging;
 /// <summary>Decodes image files into upright RGBA bitmaps.</summary>
 public static class ImageLoader
 {
-    /// <summary>File extensions the loader can decode (via SkiaSharp).</summary>
+    /// <summary>File extensions the loader can decode: SkiaSharp formats plus camera RAW (via LibRaw).</summary>
     public static readonly string[] SupportedExtensions =
-        [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"];
+        [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", .. RawImageLoader.Extensions];
 
     public static bool IsSupported(string path) =>
         SupportedExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
@@ -15,6 +15,9 @@ public static class ImageLoader
     /// <summary>Loads an image and applies its EXIF orientation so the result is upright.</summary>
     public static SKBitmap Load(string path)
     {
+        if (RawImageLoader.IsRaw(path))
+            return RawImageLoader.Load(path);
+
         using var stream = File.OpenRead(path);
         using var codec = SKCodec.Create(stream)
             ?? throw new InvalidDataException($"Unsupported or corrupt image: {path}");
@@ -32,6 +35,15 @@ public static class ImageLoader
         if (!ReferenceEquals(upright, bitmap))
             bitmap.Dispose();
         return upright;
+    }
+
+    /// <summary>The file's EXIF orientation (TopLeft when unknown), without decoding the pixels.</summary>
+    public static SKEncodedOrigin ReadOrientation(string path)
+    {
+        if (RawImageLoader.IsRaw(path))
+            return RawImageLoader.ReadOrientation(path);
+        using var codec = SKCodec.Create(path);
+        return codec?.EncodedOrigin ?? SKEncodedOrigin.TopLeft;
     }
 
     /// <summary>Returns a bitmap rotated/flipped according to <paramref name="origin"/> (or the input if already upright).</summary>

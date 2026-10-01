@@ -8,7 +8,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.17.2" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.24.4" />
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
+    <!-- LibRaw itself (RAW decoding with highlight reconstruction; Magick.NET doesn't expose LibRaw's highlight mode). -->
+    <PackageReference Include="Sdcb.LibRaw" Version="0.21.1.7" />
+    <PackageReference Include="Sdcb.LibRaw.runtime.win64" Version="0.21.1" />
+    <PackageReference Include="Sdcb.LibRaw.runtime.linux64" Version="0.21.1" />
   </ItemGroup>
 
 </Project>

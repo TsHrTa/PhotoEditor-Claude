@@ -5,6 +5,9 @@ public static class ColorMath
 {
     private static readonly float[] SrgbToLinearTable = BuildSrgbTable();
 
+    /// <summary>Slope of the sRGB decode at each 8-bit value (per unit of the 0..1 value).</summary>
+    private static readonly float[] SrgbSlopeTable = BuildSlopeTable();
+
     public static float SrgbToLinear(float c) =>
         c <= 0.04045f ? c / 12.92f : MathF.Pow((c + 0.055f) / 1.055f, 2.4f);
 
@@ -14,7 +17,22 @@ public static class ColorMath
     /// <summary>Fast sRGB decode of an 8-bit channel value.</summary>
     public static float SrgbByteToLinear(byte b) => SrgbToLinearTable[b];
 
+    /// <summary>
+    /// sRGB decode of an 8-bit value plus a fraction of a step (<paramref name="offset"/>, at most ±0.5 / 255):
+    /// the table value moved along the curve's slope (error ≪ 1e-5).
+    /// </summary>
+    public static float SrgbByteToLinear(byte b, float offset) => SrgbToLinearTable[b] + SrgbSlopeTable[b] * offset;
+
     public static byte ToByte(float c) => (byte)Math.Clamp((int)MathF.Round(c * 255f), 0, 255);
+
+    private static float[] BuildSlopeTable()
+    {
+        var t = new float[256];
+        const float h = 0.25f / 255f;
+        for (int i = 0; i < 256; i++)
+            t[i] = (SrgbToLinear(i / 255f + h) - SrgbToLinear(Math.Max(i / 255f - h, 0f))) / (i == 0 ? h : 2 * h);
+        return t;
+    }
 
     private static float[] BuildSrgbTable()
     {

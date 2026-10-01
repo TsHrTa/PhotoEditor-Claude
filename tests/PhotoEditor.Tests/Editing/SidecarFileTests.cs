@@ -52,7 +52,7 @@ public sealed class SidecarFileTests : IDisposable
     public void OutOfRangeValues_AreClamped()
     {
         var doc = SidecarFile.Deserialize("""{ "adjustments": { "exposure": 99, "reds": { "saturation": -500 } } }""");
-        Assert.Equal(5, doc.Adjustments.Exposure);
+        Assert.Equal(10, doc.Adjustments.Exposure);
         Assert.Equal(-100, doc.Adjustments.Reds.Saturation);
     }
 

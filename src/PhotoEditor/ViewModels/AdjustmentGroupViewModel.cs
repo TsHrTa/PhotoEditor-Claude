@@ -10,6 +10,22 @@ public sealed partial class AdjustmentGroupViewModel(string title, IReadOnlyList
     [ObservableProperty]
     public partial bool IsExpanded { get; set; } = isExpanded;
 
+    /// <summary>False for whole-image-only groups (Detail) while a mask is selected.</summary>
+    [ObservableProperty]
+    public partial bool IsVisible { get; set; } = true;
+
+    /// <summary>The group only applies to the whole image, not inside masks.</summary>
+    public bool IsGlobalOnly { get; init; }
+
+    /// <summary>For the lens corrections group: the view model with the profile switches (null for other groups).</summary>
+    public MainViewModel? Lens { get; init; }
+
+    /// <summary>For the tone curve group: the view model with the point curve editor (null for other groups).</summary>
+    public MainViewModel? ToneCurve { get; init; }
+
+    /// <summary>For the transform group: the view model with the Upright buttons (null for other groups).</summary>
+    public MainViewModel? Upright { get; init; }
+
     public string Title { get; } = title;
     public IReadOnlyList<ParameterViewModel> Parameters { get; } = parameters;
 }

@@ -2,6 +2,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:PhotoEditor.ViewModels"
         xmlns:controls="using:PhotoEditor.Controls"
+        xmlns:presets="using:PhotoEditor.Core.Presets"
+        xmlns:conv="using:PhotoEditor.Converters"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
@@ -12,15 +14,28 @@
         Title="{Binding Title}"
         DragDrop.AllowDrop="True">
 
+    <Window.Styles>
+        <Style Selector="Button.star">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#F0C040" />
+            <Setter Property="Padding" Value="2,0" />
+            <Setter Property="FontSize" Value="16" />
+        </Style>
+    </Window.Styles>
+
     <Design.DataContext>
         <vm:MainViewModel />
     </Design.DataContext>
 
     <DockPanel>
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8">
-            <Button Content="Open…" Click="OnOpenClick" ToolTip.Tip="Open image (Ctrl+O)" />
+        <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" ItemSpacing="8" LineSpacing="6" Margin="8">
+            <Button Content="Open…" Click="OnOpenClick" ToolTip.Tip="Open image (Ctrl+O). Its folder is shown in the filmstrip." />
+            <Button Content="Open folder…" Click="OnOpenFolderClick"
+                    ToolTip.Tip="Show all photos of a folder in the filmstrip (Ctrl+Shift+O). ← / → move between them." />
             <Button Content="Export…" Click="OnExportClick" IsEnabled="{Binding CanExport}"
-                    ToolTip.Tip="Export full resolution JPEG or PNG (Ctrl+E)" />
+                    ToolTip.Tip="Export this photo at full resolution as JPEG or PNG (Ctrl+E)" />
+            <Button Content="Export photos…" Click="OnBatchExportClick" IsEnabled="{Binding CanBatchExport}"
+                    ToolTip.Tip="Export several photos of the folder (picked, shown in the filmstrip, all…) with their edits, in the background (Ctrl+Shift+E)" />
             <TextBlock Text="JPEG quality" VerticalAlignment="Center" Margin="4,0,0,0" />
             <NumericUpDown Value="{Binding JpegQuality}" Minimum="1" Maximum="100" Increment="5"
                            FormatString="0" Width="120" VerticalAlignment="Center" />
@@ -28,22 +43,284 @@
             <Button Content="Undo" Command="{Binding UndoCommand}" ToolTip.Tip="Undo (Ctrl+Z)" />
             <Button Content="Redo" Command="{Binding RedoCommand}" ToolTip.Tip="Redo (Ctrl+Y / Ctrl+Shift+Z)" />
             <Border Width="16" />
-            <Button Content="Fit" Click="OnFitClick" ToolTip.Tip="Fit to window (Ctrl+0)" IsEnabled="{Binding HasImage}" />
-            <Button Content="100%" Click="OnActualSizeClick" ToolTip.Tip="Actual pixels (Ctrl+1)" IsEnabled="{Binding HasImage}" />
+            <Button Content="Fit" Click="OnFitClick" ToolTip.Tip="Fit to window (Ctrl+0)" IsEnabled="{Binding HasPreview}" />
+            <Button Content="100%" Click="OnActualSizeClick" ToolTip.Tip="Actual pixels (Ctrl+1)" IsEnabled="{Binding HasPreview}" />
             <ToggleButton Content="Before" IsChecked="{Binding ShowOriginal}" IsEnabled="{Binding HasImage}"
                           ToolTip.Tip="Show the original image (\)" />
-            <Button Content="Reset all" Command="{Binding ResetAllCommand}"
+            <Button Content="Auto" Command="{Binding AutoCommand}" IsEnabled="{Binding HasImage}"
+                    ToolTip.Tip="Suggest exposure, contrast, highlights, shadows, whites, blacks, white balance and vibrance for this photo (Ctrl+U). Undo with Ctrl+Z." />
+            <Button Content="Reset all" Command="{Binding ResetAllCommand}" IsEnabled="{Binding HasImage}"
                     ToolTip.Tip="Reset all adjustments. Double-click a slider to reset just that one." />
-        </StackPanel>
+            <Border Width="16" />
+            <Button x:Name="CopyButton" Content="Copy…" IsEnabled="{Binding HasImage}"
+                    ToolTip.Tip="Choose which settings to copy from this photo (Ctrl+Shift+C)">
+                <Button.Flyout>
+                    <Flyout Placement="BottomEdgeAlignedLeft">
+                        <StackPanel Spacing="4" MinWidth="200">
+                            <TextBlock Text="Copy these settings:" FontWeight="SemiBold" />
+                            <CheckBox Content="Light (texture, clarity, dehaze)" IsChecked="{Binding CopyLight}" />
+                            <CheckBox Content="Color (white balance, vibrance, saturation)" IsChecked="{Binding CopyColor}" />
+                            <CheckBox Content="Tone curve" IsChecked="{Binding CopyToneCurve}" />
+                            <CheckBox Content="HSL" IsChecked="{Binding CopyHsl}" />
+                            <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />
+                            <CheckBox Content="Detail and lens corrections" IsChecked="{Binding CopyDetail}" />
+                            <CheckBox Content="Crop and straighten" IsChecked="{Binding CopyCrop}" />
+                            <CheckBox Content="Transform" IsChecked="{Binding CopyTransform}" />
+                            <CheckBox Content="Masks" IsChecked="{Binding CopyMasks}" />
+                            <CheckBox Content="Spot removal" IsChecked="{Binding CopySpots}" />
+                            <Button Content="Copy" HorizontalAlignment="Right" Click="OnCopySettingsClick" />
+                        </StackPanel>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
+            <Button Content="Paste" Command="{Binding PasteSettingsCommand}"
+                    ToolTip.Tip="Paste the copied settings onto this photo (Ctrl+Shift+V)" />
+            <Button Content="Paste to…" Click="OnPasteToPhotosClick" IsEnabled="{Binding HasCopiedSettings}"
+                    ToolTip.Tip="Paste the copied settings into one or more other photos. Only their edit files (.json / .xmp) are written; the photos are not changed." />
+        </WrapPanel>
 
-        <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto" Margin="8,4">
-            <TextBlock Text="{Binding Status}" />
-            <TextBlock Grid.Column="1" IsVisible="{Binding HasImage}"
+        <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="8,4">
+            <TextBlock Text="{Binding Status}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            <Button Grid.Column="1" Content="Cancel" Command="{Binding CancelRestoreCommand}"
+                    IsVisible="{Binding IsRestoring}" Margin="8,0" Padding="8,2"
+                    ToolTip.Tip="Stop this photo's AI denoise / deblur" />
+            <TextBlock Grid.Column="2" Text="{Binding JobSummary}" Foreground="Gray" MaxWidth="420"
+                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="8,0" />
+            <Button Grid.Column="3" Content="{Binding JobButtonText}" IsVisible="{Binding HasJobs}" Padding="8,2" Margin="0,0,8,0"
+                    ToolTip.Tip="Background jobs: AI denoise / deblur, presets on other photos, exports. They run one at a time and keep running when you move to another photo.">
+                <Button.Flyout>
+                    <Flyout Placement="TopEdgeAlignedRight">
+                        <StackPanel Width="400" Spacing="8">
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <TextBlock Text="Background jobs" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Cancel all" Command="{Binding CancelAllJobsCommand}" Margin="0,0,6,0" />
+                                <Button Grid.Column="2" Content="Clear finished" Command="{Binding ClearFinishedJobsCommand}" />
+                            </Grid>
+                            <ScrollViewer MaxHeight="380">
+                                <ItemsControl ItemsSource="{Binding JobList}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:JobViewModel">
+                                            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" Margin="0,0,0,8">
+                                                <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Row="1" Text="{Binding StateText}" Foreground="Gray" FontSize="11"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <ProgressBar Grid.Row="2" Value="{Binding Percent}" Maximum="100"
+                                                             IsIndeterminate="{Binding IsIndeterminate}" IsVisible="{Binding IsRunning}"
+                                                             Margin="0,3,0,0" />
+                                                <Button Grid.Column="1" Grid.RowSpan="3" Content="✕" Command="{Binding CancelCommand}"
+                                                        IsVisible="{Binding IsActive}" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                        ToolTip.Tip="Cancel this job" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </StackPanel>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
+            <TextBlock Grid.Column="4" IsVisible="{Binding HasPreview}" VerticalAlignment="Center"
                        Text="{Binding #Viewer.Zoom, StringFormat='{}{0:P0}'}" />
         </Grid>
 
+        <Border DockPanel.Dock="Bottom" IsVisible="{Binding HasFolder}" Background="#181818">
+          <DockPanel>
+            <!-- Drag the top edge to resize the thumbnails (down past the smallest size hides them); double-click hides / shows. -->
+            <Border x:Name="FilmstripGrip" DockPanel.Dock="Top" Height="6" Background="#2A2A2A" Cursor="SizeNorthSouth"
+                    PointerPressed="OnFilmstripGripPressed" PointerMoved="OnFilmstripGripMoved"
+                    PointerReleased="OnFilmstripGripReleased" DoubleTapped="OnFilmstripGripDoubleTapped"
+                    ToolTip.Tip="Drag to make the thumbnails larger or smaller (down to hide them); double-click to hide / show (F6)">
+                <Border Width="40" Height="2" CornerRadius="1" Background="#606060" />
+            </Border>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="8,4">
+                <Button Content="{Binding FilmstripToggleText}" Command="{Binding ToggleFilmstripCommand}" Padding="8,2"
+                        ToolTip.Tip="Hide the thumbnails to give the photo more room, or show them again (F6)" />
+                <TextBlock Text="Show" VerticalAlignment="Center" />
+                <ComboBox ItemsSource="{Binding FilterOptions}" SelectedItem="{Binding SelectedFilter}" Width="160"
+                          ToolTip.Tip="Which photos the filmstrip shows" />
+                <TextBlock Text="{Binding FolderCountText}" Foreground="Gray" VerticalAlignment="Center" Margin="4,0,16,0" />
+                <StackPanel Orientation="Horizontal" IsVisible="{Binding CurrentPhoto, Converter={x:Static ObjectConverters.IsNotNull}}">
+                    <Button Classes="star" Content="{Binding CurrentPhoto.Labels.Rating, Converter={x:Static conv:StarConverter.Instance}, ConverterParameter=1}"
+                            Click="OnStarClick" Tag="1" ToolTip.Tip="1 star (key 1; click the same star again or press 0 to clear)" />
+                    <Button Classes="star" Content="{Binding CurrentPhoto.Labels.Rating, Converter={x:Static conv:StarConverter.Instance}, ConverterParameter=2}"
+                            Click="OnStarClick" Tag="2" ToolTip.Tip="2 stars (key 2)" />
+                    <Button Classes="star" Content="{Binding CurrentPhoto.Labels.Rating, Converter={x:Static conv:StarConverter.Instance}, ConverterParameter=3}"
+                            Click="OnStarClick" Tag="3" ToolTip.Tip="3 stars (key 3)" />
+                    <Button Classes="star" Content="{Binding CurrentPhoto.Labels.Rating, Converter={x:Static conv:StarConverter.Instance}, ConverterParameter=4}"
+                            Click="OnStarClick" Tag="4" ToolTip.Tip="4 stars (key 4)" />
+                    <Button Classes="star" Content="{Binding CurrentPhoto.Labels.Rating, Converter={x:Static conv:StarConverter.Instance}, ConverterParameter=5}"
+                            Click="OnStarClick" Tag="5" ToolTip.Tip="5 stars (key 5)" />
+                    <ToggleButton Content="✓ Pick" IsChecked="{Binding CurrentPhoto.IsPicked, Mode=OneWay}" Click="OnPickClick"
+                                  Margin="12,0,0,0" Padding="8,2" ToolTip.Tip="Pick (P); U clears the flag" />
+                    <ToggleButton Content="✕ Reject" IsChecked="{Binding CurrentPhoto.IsRejected, Mode=OneWay}" Click="OnRejectClick"
+                                  Margin="6,0,0,0" Padding="8,2" ToolTip.Tip="Reject (X); U clears the flag. Stored for Lightroom as rating −1." />
+                </StackPanel>
+            </StackPanel>
+            <ListBox x:Name="Filmstrip" ItemsSource="{Binding Photos}" SelectedItem="{Binding CurrentPhoto}"
+                     Height="{Binding FilmstripHeight}" IsVisible="{Binding IsFilmstripVisible}" Background="Transparent"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:FilmstripItem">
+                        <Grid Width="{Binding $parent[ListBox].((vm:MainViewModel)DataContext).FilmstripItemWidth}"
+                              RowDefinitions="Auto,Auto" ToolTip.Tip="{Binding Path}">
+                          <Panel Height="{Binding $parent[ListBox].((vm:MainViewModel)DataContext).FilmstripThumbHeight}">
+                            <Image Source="{Binding Thumbnail}" Stretch="Uniform">
+                                <Image.Opacity>
+                                    <Binding Path="IsRejected" Converter="{x:Static conv:BoolToOpacity.Instance}" />
+                                </Image.Opacity>
+                            </Image>
+                            <TextBlock Text="{Binding Stars}" FontSize="11" Foreground="#F0C040" Margin="3,0,0,1"
+                                       HorizontalAlignment="Left" VerticalAlignment="Bottom" />
+                            <TextBlock Text="✓" IsVisible="{Binding IsPicked}" Foreground="#60D060" FontWeight="Bold"
+                                       HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3,0,0,0" ToolTip.Tip="Picked" />
+                            <TextBlock Text="✕" IsVisible="{Binding IsRejected}" Foreground="#E05050" FontWeight="Bold"
+                                       HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3,0,0,0" ToolTip.Tip="Rejected" />
+                            <Border Width="10" Height="10" CornerRadius="5" Background="#E0A030"
+                                    BorderBrush="#181818" BorderThickness="1"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,2,2,0"
+                                    IsVisible="{Binding HasEdits}" ToolTip.Tip="Edited" />
+                          </Panel>
+                            <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="11" Margin="0,3,0,0"
+                                       HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+          </DockPanel>
+        </Border>
+
         <ScrollViewer DockPanel.Dock="Right" Width="320" Padding="8,0,16,0" IsEnabled="{Binding HasImage}">
           <StackPanel Spacing="4">
+            <Expander Header="Presets" IsExpanded="True" HorizontalAlignment="Stretch">
+                <StackPanel Spacing="6">
+                    <ListBox ItemsSource="{Binding Presets}" SelectedItem="{Binding SelectedPreset}" MaxHeight="150">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="presets:Preset">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="{Binding Name}" />
+                                    <TextBlock Text="built-in" Foreground="Gray" IsVisible="{Binding IsBuiltIn}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <WrapPanel ItemSpacing="6" LineSpacing="6">
+                        <Button Content="Apply" Command="{Binding ApplyPresetCommand}"
+                                ToolTip.Tip="Run the selected preset on this photo (one undo step)" />
+                        <Button Content="Apply to…" Click="OnApplyPresetToPhotosClick" IsEnabled="{Binding HasSelectedPreset}"
+                                ToolTip.Tip="Run the selected preset on other photos. Only their edit files (.json / .xmp) are written." />
+                        <Button x:Name="SavePresetButton" Content="Save as…" IsEnabled="{Binding HasImage}"
+                                ToolTip.Tip="Save the current edit as a new preset">
+                            <Button.Flyout>
+                                <Flyout Placement="BottomEdgeAlignedLeft">
+                                    <StackPanel Spacing="4" MinWidth="220">
+                                        <TextBlock Text="Preset name:" FontWeight="SemiBold" />
+                                        <TextBox Text="{Binding NewPresetName}" />
+                                        <TextBlock Text="Include:" FontWeight="SemiBold" Margin="0,4,0,0" />
+                                        <CheckBox Content="Light (texture, clarity, dehaze)" IsChecked="{Binding CopyLight}" />
+                                        <CheckBox Content="Color" IsChecked="{Binding CopyColor}" />
+                                        <CheckBox Content="HSL" IsChecked="{Binding CopyHsl}" />
+                                        <CheckBox Content="Vignette" IsChecked="{Binding CopyVignette}" />
+                                        <CheckBox Content="Detail and lens corrections" IsChecked="{Binding CopyDetail}" />
+                                        <CheckBox Content="Masks (their shapes and sliders)" IsChecked="{Binding CopyMasks}" />
+                                        <Button Content="Save" HorizontalAlignment="Right" Click="OnSavePresetClick" />
+                                    </StackPanel>
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                        <Button Content="New…" Click="OnNewPresetClick" ToolTip.Tip="Create a preset step by step" />
+                        <Button Content="Edit…" Click="OnEditPresetClick" IsEnabled="{Binding HasSelectedPreset}"
+                                ToolTip.Tip="Edit the selected preset's steps (a built-in preset is edited as a copy)" />
+                        <Button Content="Delete" Command="{Binding DeletePresetCommand}"
+                                ToolTip.Tip="Delete the selected preset (built-in presets cannot be deleted)" />
+                    </WrapPanel>
+                    <TextBlock Text="{Binding PresetLog}" TextWrapping="Wrap" Foreground="Gray" FontSize="11"
+                               IsVisible="{Binding HasPresetLog}" />
+                </StackPanel>
+            </Expander>
+
+            <Expander Header="Crop" IsExpanded="True" HorizontalAlignment="Stretch">
+                <StackPanel Spacing="6">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <ToggleButton Content="Crop (C)" IsChecked="{Binding IsCropActive}"
+                                      ToolTip.Tip="Show the whole image and drag the crop frame (edges, corners, or inside to move). Enter or Esc when done." />
+                        <ComboBox ItemsSource="{Binding CropAspects}" SelectedItem="{Binding SelectedCropAspect}"
+                                  Width="100" ToolTip.Tip="Aspect ratio of the crop" />
+                        <Button Content="⤾" Command="{Binding SwapCropOrientationCommand}"
+                                ToolTip.Tip="Swap the crop between portrait and landscape (X while cropping)" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="Rotate" VerticalAlignment="Center" Width="52" />
+                        <Button Content="⟲" Command="{Binding RotateLeftCommand}" ToolTip.Tip="Rotate 90° left (Ctrl+[)" />
+                        <Button Content="⟳" Command="{Binding RotateRightCommand}" ToolTip.Tip="Rotate 90° right (Ctrl+])" />
+                        <Button Content="⇆" Command="{Binding FlipHorizontalCommand}" ToolTip.Tip="Flip left-right (mirror)" />
+                        <Button Content="⇅" Command="{Binding FlipVerticalCommand}" ToolTip.Tip="Flip upside down" />
+                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                        <TextBlock Text="Straighten" VerticalAlignment="Bottom" />
+                        <TextBlock Grid.Column="1" Text="{Binding CropAngle, StringFormat='{}{0:+0.0;-0.0;0.0}°'}" VerticalAlignment="Bottom" />
+                        <Slider Grid.Row="1" Grid.ColumnSpan="2" Minimum="-45" Maximum="45" Value="{Binding CropAngle}"
+                                SmallChange="0.1" LargeChange="1" />
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="{Binding CropSizeText, StringFormat='Output: {0} px'}" Foreground="Gray"
+                                   VerticalAlignment="Center" IsVisible="{Binding HasImage}" />
+                        <Button Grid.Column="1" Content="Reset crop" Command="{Binding ResetCropCommand}"
+                                IsEnabled="{Binding HasCrop}" ToolTip.Tip="Remove the crop, straighten and rotation" />
+                    </Grid>
+                </StackPanel>
+            </Expander>
+
+            <Expander Header="Retouch" IsExpanded="True" HorizontalAlignment="Stretch">
+                <StackPanel Spacing="6">
+                    <ToggleButton HorizontalAlignment="Left" Content="Spot removal (Q)" IsChecked="{Binding IsSpotActive}" IsEnabled="{Binding HasImage}"
+                                      ToolTip.Tip="Click a spot (dust, blemish, small object) to remove it, or drag along something long (a wire, a crack) to paint over it; a matching source beside it is picked automatically. Drag a spot to move it; drag the selected spot's source to pick another. Delete removes the selected spot. Remove (AI): paint over anything (several strokes, Alt + drag erases), then press Remove (Enter); AI fills it in. Hold Space to drag the photo." />
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <RadioButton Content="Heal" GroupName="SpotMode" IsChecked="{Binding SpotHeal}"
+                                     ToolTip.Tip="Texture from the source, colour and brightness fitted to the surroundings" />
+                        <RadioButton Content="Clone" GroupName="SpotMode" IsChecked="{Binding SpotClone}"
+                                     ToolTip.Tip="An exact copy of the source" />
+                        <RadioButton Content="Remove (AI)" GroupName="SpotMode" IsChecked="{Binding SpotRemove}"
+                                     ToolTip.Tip="Paint over an object, person, wire or blemish; an AI model (LaMa, 208 MB, downloaded the first time) fills it in with what fits the surroundings" />
+                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+                        <TextBlock Text="Size" VerticalAlignment="Bottom" />
+                        <TextBlock Grid.Column="1" Text="{Binding SpotSize, StringFormat='{}{0:0.0} %'}" VerticalAlignment="Bottom" />
+                        <Slider Grid.Row="1" Grid.ColumnSpan="2" Minimum="0.2" Maximum="10" Value="{Binding SpotSize}"
+                                SmallChange="0.1" LargeChange="0.5" ToolTip.Tip="Radius in % of the photo's longer side" />
+                        <TextBlock Grid.Row="2" Text="Feather" VerticalAlignment="Bottom" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SpotFeather, StringFormat='{}{0:0}'}" VerticalAlignment="Bottom" />
+                        <Slider Grid.Row="3" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding SpotFeather}" />
+                        <TextBlock Grid.Row="4" Text="Opacity" VerticalAlignment="Bottom" />
+                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SpotOpacity, StringFormat='{}{0:0}'}" VerticalAlignment="Bottom" />
+                        <Slider Grid.Row="5" Grid.ColumnSpan="2" Minimum="0" Maximum="100" Value="{Binding SpotOpacity}" />
+                    </Grid>
+                    <!-- AI Remove: paint a selection (several strokes, Alt erases), then fill it. -->
+                    <StackPanel Spacing="4" IsVisible="{Binding IsSpotPainting}">
+                        <TextBlock Text="Paint over what to remove (more strokes add, Alt + drag erases), then press Remove."
+                                   Foreground="Gray" TextWrapping="Wrap" />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                            <Button Content="Remove (Enter)" Classes="accent" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Command="{Binding ApplyRemoveCommand}"
+                                    ToolTip.Tip="Fill the red selection with the AI model" />
+                            <Button Grid.Column="1" Content="Clear (Esc)" Command="{Binding ClearRemoveSelectionCommand}"
+                                    ToolTip.Tip="Discard the selection" />
+                        </Grid>
+                    </StackPanel>
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                        <TextBlock Text="{Binding SpotCountText}" Foreground="Gray" VerticalAlignment="Center" />
+                        <Button Grid.Column="1" Content="Delete spot" Command="{Binding DeleteSpotCommand}"
+                                ToolTip.Tip="Remove the selected spot (Delete)" />
+                        <Button Grid.Column="2" Content="Remove all" Command="{Binding RemoveAllSpotsCommand}"
+                                IsEnabled="{Binding HasSpots}" />
+                    </Grid>
+                </StackPanel>
+            </Expander>
+
             <Expander Header="Masks" IsExpanded="True" HorizontalAlignment="Stretch">
                 <StackPanel Spacing="6">
                     <StackPanel Orientation="Horizontal" Spacing="6">
@@ -52,14 +329,22 @@
                         <Button Content="Whole image" Command="{Binding EditWholeImageCommand}"
                                 ToolTip.Tip="Deselect the mask; sliders edit the whole image" />
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="6">
+                    <WrapPanel ItemSpacing="6" LineSpacing="6">
                         <ToggleButton Content="Brush (B)" IsChecked="{Binding IsBrushActive}"
                                       ToolTip.Tip="Paint the selected mask (a new mask is created if none is selected). Alt = erase. Middle/right-drag pans." />
                         <ToggleButton Content="Linear (L)" IsChecked="{Binding IsLinearGradientActive}"
                                       ToolTip.Tip="Drag on the image to add a linear gradient to the selected mask (or a new one). Drag its handles to adjust." />
                         <ToggleButton Content="Radial (R)" IsChecked="{Binding IsRadialGradientActive}"
                                       ToolTip.Tip="Drag from the centre outwards to add a radial gradient to the selected mask (or a new one). Drag its handles to adjust." />
-                    </StackPanel>
+                        <ToggleButton Content="Select (S)" IsChecked="{Binding IsObjectSelectActive}"
+                                      ToolTip.Tip="AI: click on an object to select it (Alt+click removes parts, drag a box around it). Downloads the model (~155 MB) the first time." />
+                        <Button Content="Subject" Command="{Binding SelectSubjectCommand}"
+                                ToolTip.Tip="AI: select the main subject (people, animal, object in focus) into the selected mask or a new one. Downloads the model (~224 MB) the first time." />
+                        <Button Content="Sky" Command="{Binding SelectSkyCommand}"
+                                ToolTip.Tip="AI: select the sky into the selected mask or a new one. Downloads the model (~110 MB) the first time." />
+                        <Button Content="People" Command="{Binding SelectPeopleCommand}"
+                                ToolTip.Tip="AI: select all people into the selected mask or a new one. Uses the same model as Sky." />
+                    </WrapPanel>
                     <StackPanel Spacing="2" IsVisible="{Binding IsBrushActive}">
                         <Grid ColumnDefinitions="70,*,40">
                             <TextBlock Text="Size" VerticalAlignment="Center" />
@@ -124,8 +409,61 @@
             <ItemsControl ItemsSource="{Binding Groups}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:AdjustmentGroupViewModel">
-                        <Expander Header="{Binding Title}" IsExpanded="{Binding IsExpanded}"
+                        <Expander Header="{Binding Title}" IsExpanded="{Binding IsExpanded}" IsVisible="{Binding IsVisible}"
                                   HorizontalAlignment="Stretch" Margin="0,0,0,4">
+                          <StackPanel Spacing="4">
+                            <!-- Lens corrections: profile switches above the sliders -->
+                            <Border IsVisible="{Binding Lens, Converter={x:Static ObjectConverters.IsNotNull}}">
+                            <Panel DataContext="{Binding Lens}">
+                            <StackPanel Spacing="4" x:DataType="vm:MainViewModel">
+                                <CheckBox Content="Enable profile corrections" IsChecked="{Binding LensProfileEnabled}"
+                                          ToolTip.Tip="Remove the lens's distortion and vignetting using its lensfun profile (found from the camera and lens names in the photo)" />
+                                <CheckBox Content="Remove chromatic aberration" IsChecked="{Binding RemoveChromaticAberration}"
+                                          ToolTip.Tip="Line up the red and blue images with the green one (colour edges towards the corners): from the lens profile, or measured in the photo" />
+                                <TextBlock Text="{Binding LensProfileText}" Foreground="Gray" TextWrapping="Wrap" />
+                                <Button Content="Download lens profiles (5 MB)" Command="{Binding DownloadLensProfilesCommand}"
+                                        IsVisible="{Binding IsLensDatabaseMissing}"
+                                        ToolTip.Tip="The lensfun database (lensfun.github.io, CC BY-SA 3.0): about 1,500 lenses" />
+                            </StackPanel>
+                            </Panel>
+                            </Border>
+                            <!-- Transform: Upright buttons above the sliders -->
+                            <Border IsVisible="{Binding Upright, Converter={x:Static ObjectConverters.IsNotNull}}">
+                            <Panel DataContext="{Binding Upright}">
+                            <StackPanel Spacing="4" x:DataType="vm:MainViewModel">
+                                <TextBlock Text="Upright" />
+                                <WrapPanel>
+                                    <Button Content="Auto" Command="{Binding UprightCommand}" CommandParameter="Auto" Margin="0,0,4,4"
+                                            ToolTip.Tip="Level the photo and make converging verticals parallel; horizontal perspective only partly" />
+                                    <Button Content="Level" Command="{Binding UprightCommand}" CommandParameter="Level" Margin="0,0,4,4"
+                                            ToolTip.Tip="Rotate only, so horizontal and vertical lines are level / upright" />
+                                    <Button Content="Vertical" Command="{Binding UprightCommand}" CommandParameter="Vertical" Margin="0,0,4,4"
+                                            ToolTip.Tip="Level and make converging verticals parallel (buildings)" />
+                                    <Button Content="Full" Command="{Binding UprightCommand}" CommandParameter="Full" Margin="0,0,4,4"
+                                            ToolTip.Tip="Level, vertical and horizontal perspective" />
+                                    <Button Content="Off" Command="{Binding UprightCommand}" CommandParameter="Off" Margin="0,0,4,4"
+                                            ToolTip.Tip="Set vertical, horizontal and rotate back to 0" />
+                                </WrapPanel>
+                            </StackPanel>
+                            </Panel>
+                            </Border>
+                            <!-- Tone curve: the point curve editor above the region sliders -->
+                            <Border IsVisible="{Binding ToneCurve, Converter={x:Static ObjectConverters.IsNotNull}}">
+                            <Panel DataContext="{Binding ToneCurve}">
+                            <StackPanel Spacing="4" x:DataType="vm:MainViewModel">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <ComboBox ItemsSource="{Binding CurveChannels}" SelectedIndex="{Binding CurveChannelIndex}" MinWidth="90"
+                                              ToolTip.Tip="Point curve to edit: all channels, or red, green or blue alone" />
+                                    <Button Grid.Column="1" Content="Straighten" Command="{Binding ResetCurveCommand}"
+                                            ToolTip.Tip="Reset this channel's point curve to a straight line" />
+                                </Grid>
+                                <controls:CurveEditor Curve="{Binding SelectedCurve}" BaseCurve="{Binding CurveBase}"
+                                                      LineColor="{Binding CurveColor}" EditCommand="{Binding EditCurveCommand}" />
+                                <TextBlock Text="Click to add a point and drag it. Double-click, right-click or drag a point out of the box to remove it. The dashed line is the region sliders' curve."
+                                           Foreground="Gray" FontSize="11" TextWrapping="Wrap" />
+                            </StackPanel>
+                            </Panel>
+                            </Border>
                             <ItemsControl ItemsSource="{Binding Parameters}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:ParameterViewModel">
@@ -140,6 +478,7 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                          </StackPanel>
                         </Expander>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
@@ -153,11 +492,20 @@
                                   Tool="{Binding ActiveTool}"
                                   EditableComponent="{Binding EditableComponent}"
                                   BrushRadius="{Binding BrushRadius}"
-                                  BrushFeather="{Binding BrushFeatherFraction}" />
-            <TextBlock Text="Drop an image here"
+                                  BrushFeather="{Binding BrushFeatherFraction}"
+                                  SelectedSpot="{Binding SelectedSpotId}"
+                                  SpotRadius="{Binding SpotCursorRadius}"
+                                  SpotPainting="{Binding IsSpotPainting}"
+                                  PendingSpot="{Binding PendingRemove}" />
+            <TextBlock Text="Drop a photo or a folder here"
                        Foreground="Gray"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                       IsVisible="{Binding !HasImage}" />
+                       IsVisible="{Binding !HasPreview}" />
+            <Border IsVisible="{Binding IsShowingCameraPreview}" Background="#C0202020" CornerRadius="4"
+                    Padding="8,4" Margin="8" HorizontalAlignment="Left" VerticalAlignment="Top"
+                    ToolTip.Tip="The JPEG preview the camera stored in the RAW file. Editing starts when the RAW is decoded.">
+                <TextBlock Text="Camera preview · decoding RAW…" Foreground="#E0E0E0" FontSize="12" />
+            </Border>
         </Panel>
     </DockPanel>
 </Window>

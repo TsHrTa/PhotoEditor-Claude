@@ -103,6 +103,11 @@ public class MaskTests
                 ],
             } },
         { "disabled", new EditState { Masks = [MaskOf(new ValueComponent(1)) with { Enabled = false }] } },
+        { "soften in mask", new EditState
+            {
+                Adjustments = new AdjustmentSettings { SharpenAmount = 50 },
+                Masks = [MaskOf(new RectComponent(0.2f, 0.1f, 0.7f, 0.9f)) with { Adjustments = new AdjustmentSettings { Soften = 100, Exposure = 0.2 } }],
+            } },
     };
 
     [Theory]

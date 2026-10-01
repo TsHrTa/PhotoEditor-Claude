@@ -1,6 +1,6 @@
 namespace PhotoEditor.Core.Adjustments;
 
-/// <summary>Post-crop style vignette. Mirrored in <see cref="AdjustmentShader"/>.</summary>
+/// <summary>Post-crop vignette (relative to the crop frame). Mirrored in <see cref="AdjustmentShader"/>.</summary>
 public static class VignetteMath
 {
     /// <summary>
@@ -23,11 +23,25 @@ public static class VignetteMath
     public static float Weight(float u, float v, float width, float height, in PreparedAdjustments p) =>
         ToneCurve.SmoothStep(p.VignetteLow, p.VignetteHigh, Distance(u, v, width, height, p.VignetteRoundness));
 
-    /// <summary>Applies the vignette (as an exposure change) to linear RGB at pixel (<paramref name="x"/>, <paramref name="y"/>).</summary>
-    public static void Apply(ref float r, ref float g, ref float b, float x, float y, float width, float height, in PreparedAdjustments p)
+    /// <summary>
+    /// The rectangle the vignette follows (the crop frame) in pixels of the rendered image, with the
+    /// rotation precomputed. Mirrored by the shader's <c>vignetteCenter / vignetteHalf / vignetteRotation</c>.
+    /// </summary>
+    public readonly record struct Frame(float CenterX, float CenterY, float HalfWidth, float HalfHeight, float Cos, float Sin)
     {
-        float u = ((x + 0.5f) / width - 0.5f) * 2f, v = ((y + 0.5f) / height - 0.5f) * 2f;
-        float gain = MathF.Pow(2f, p.VignetteStops * Weight(u, v, width, height, p));
+        public static Frame Full(float width, float height) => new(width / 2, height / 2, width / 2, height / 2, 1, 0);
+
+        public static Frame From(Editing.CropFrame f) =>
+            new((float)f.CenterX, (float)f.CenterY, (float)f.HalfWidth, (float)f.HalfHeight, (float)f.Cos, (float)f.Sin);
+    }
+
+    /// <summary>Applies the vignette (as an exposure change) to linear RGB at pixel (<paramref name="x"/>, <paramref name="y"/>).</summary>
+    public static void Apply(ref float r, ref float g, ref float b, float x, float y, in Frame frame, in PreparedAdjustments p)
+    {
+        float dx = x + 0.5f - frame.CenterX, dy = y + 0.5f - frame.CenterY;
+        float u = (dx * frame.Cos + dy * frame.Sin) / frame.HalfWidth;
+        float v = (-dx * frame.Sin + dy * frame.Cos) / frame.HalfHeight;
+        float gain = MathF.Pow(2f, p.VignetteStops * Weight(u, v, frame.HalfWidth * 2, frame.HalfHeight * 2, p));
         r *= gain;
         g *= gain;
         b *= gain;

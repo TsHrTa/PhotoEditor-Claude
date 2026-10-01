@@ -21,25 +21,43 @@ public partial class MainViewModel : ViewModelBase
 {
     public MainViewModel()
     {
+        LoadFilmstripLayout();
         var parameters = AdjustmentParameters.All
-            .Select(p => new ParameterViewModel(p, () => CurrentAdjustments, s => ApplyEdit(WithCurrentAdjustments(s), p.ToString())))
+            .Select(p => new ParameterViewModel(p, () => CurrentAdjustments, s => ApplyEdit(WithCurrentAdjustments(s), p.ToString()),
+                () => CurrentDefaults))
             .ToList();
         Parameters = parameters;
         Groups = parameters
             .GroupBy(p => p.Parameter.Group)
             .Select(g => new AdjustmentGroupViewModel(g.Key, g.ToList(),
-                isExpanded: g.Key is AdjustmentParameters.Light or AdjustmentParameters.Color))
+                isExpanded: g.Key is AdjustmentParameters.Light or AdjustmentParameters.Color)
+            {
+                IsGlobalOnly = g.All(p => AdjustmentParameters.GlobalOnly.Contains(p.Parameter)),
+                Lens = g.Key == AdjustmentParameters.Lens ? this : null,
+                ToneCurve = g.Key == AdjustmentParameters.ToneCurve ? this : null,
+                Upright = g.Key == AdjustmentParameters.Transform ? this : null,
+            })
             .ToList();
+        LoadPresets();
+        SelectedFilter = FilterOptions[0];
     }
 
     /// <summary>Full-resolution decoded original (never modified).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasImage))]
     [NotifyPropertyChangedFor(nameof(CanExport))]
+    [NotifyPropertyChangedFor(nameof(CropSizeText))]
+    [NotifyCanExecuteChangedFor(nameof(PasteSettingsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyPresetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(UprightCommand))]
     public partial SKBitmap? Original { get; private set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPreview))]
     public partial PreviewImage? Preview { get; private set; }
+
+    /// <summary>Something is shown (maybe only the camera's preview of a RAW that is still decoding).</summary>
+    public bool HasPreview => Preview is not null;
 
     private readonly EditHistory<EditState> _history = new(EditState.Default);
 
@@ -62,6 +80,12 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>The adjustment set the sliders currently edit: the selected mask's, or the global one.</summary>
     public AdjustmentSettings CurrentAdjustments =>
         SelectedMask is { } item && State.FindMask(item.Id) is { } mask ? mask.Adjustments : State.Adjustments;
+
+    /// <summary>What the sliders reset to: the photo's defaults (RAWs start sharpened), or zero in a mask.</summary>
+    private AdjustmentSettings CurrentDefaults =>
+        SelectedMask is { } item && State.FindMask(item.Id) is not null
+            ? AdjustmentSettings.Default
+            : AdjustmentSettings.DefaultFor(_geometry.IsRaw);
 
     private EditState WithCurrentAdjustments(AdjustmentSettings settings) =>
         SelectedMask is { } item && State.FindMask(item.Id) is not null
@@ -90,6 +114,43 @@ public partial class MainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(OverlayMask))]
     public partial bool ShowMaskOverlay { get; set; } = true;
 
+    /// <summary>The overlay was switched on automatically (a mask was created or changed), so a slider may hide it.</summary>
+    private bool _overlayShownAutomatically;
+    private bool _settingOverlay;
+
+    partial void OnShowMaskOverlayChanged(bool value)
+    {
+        if (!_settingOverlay)
+            _overlayShownAutomatically = false; // the user chose: leave it as it is
+    }
+
+    private void SetOverlayAutomatically(bool show)
+    {
+        _settingOverlay = true;
+        ShowMaskOverlay = show;
+        _settingOverlay = false;
+        _overlayShownAutomatically = show;
+    }
+
+    /// <summary>
+    /// Shows the overlay when a mask gets a new or changed shape (new mask, brush stroke, gradient, AI selection)
+    /// and hides it again at the first slider change after that; a choice made with O / the checkbox is kept.
+    /// </summary>
+    private void UpdateOverlayForEdit(EditState before, EditState after, string? coalesceKey)
+    {
+        bool shapeChanged = after.Masks.Count > before.Masks.Count
+            || after.Masks.Any(m => before.FindMask(m.Id) is not { } old || !ReferenceEquals(old.Components, m.Components));
+        if (shapeChanged)
+        {
+            SetOverlayAutomatically(true);
+            return;
+        }
+        bool sliderMoved = coalesceKey is not null && AdjustmentParameters.All.Any(p => p.ToString() == coalesceKey)
+            && (before.Adjustments != after.Adjustments || after.Masks.Any(m => before.FindMask(m.Id)?.Adjustments != m.Adjustments));
+        if (sliderMoved && _overlayShownAutomatically && ShowMaskOverlay)
+            SetOverlayAutomatically(false);
+    }
+
     /// <summary>Mask the viewer tints red (the selected one, when the overlay is on).</summary>
     public Mask? OverlayMask =>
         ShowMaskOverlay && !ShowOriginal && (_strokeMaskId ?? SelectedMask?.Id) is { } id ? State.FindMask(id) : null;
@@ -98,6 +159,8 @@ public partial class MainViewModel : ViewModelBase
 
     partial void OnSelectedMaskChanged(MaskItemViewModel? value)
     {
+        foreach (var group in Groups.Where(g => g.IsGlobalOnly))
+            group.IsVisible = value is null;
         RefreshSliders();
         SelectedComponentIndex = -1;
         SelectedMaskComponents.Clear();
@@ -133,6 +196,9 @@ public partial class MainViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsBrushActive))]
     [NotifyPropertyChangedFor(nameof(IsLinearGradientActive))]
     [NotifyPropertyChangedFor(nameof(IsRadialGradientActive))]
+    [NotifyPropertyChangedFor(nameof(IsCropActive))]
+    [NotifyPropertyChangedFor(nameof(IsObjectSelectActive))]
+    [NotifyPropertyChangedFor(nameof(IsSpotActive))]
     public partial EditTool ActiveTool { get; set; }
 
     /// <summary>When on, left-dragging on the image paints into the selected mask.</summary>
@@ -156,12 +222,140 @@ public partial class MainViewModel : ViewModelBase
         set => SetTool(EditTool.RadialGradient, value);
     }
 
+    /// <summary>When on, the viewer shows the whole image and the crop frame can be dragged.</summary>
+    public bool IsCropActive
+    {
+        get => ActiveTool == EditTool.Crop;
+        set => SetTool(EditTool.Crop, value);
+    }
+
     private void SetTool(EditTool tool, bool on)
     {
         if (on)
             ActiveTool = tool;
         else if (ActiveTool == tool)
             ActiveTool = EditTool.None;
+    }
+
+    // ---- Crop ----
+
+    /// <summary>Aspect ratio choices for the crop (Ratio = width / height; null = free, 0 = original photo).</summary>
+    public sealed record CropAspect(string Name, double? Ratio)
+    {
+        public override string ToString() => Name;
+    }
+
+    public IReadOnlyList<CropAspect> CropAspects { get; } =
+    [
+        new("Free", null), new("Original", 0), new("1 : 1", 1), new("3 : 2", 1.5), new("4 : 3", 4.0 / 3),
+        new("5 : 4", 1.25), new("7 : 5", 1.4), new("16 : 9", 16.0 / 9),
+    ];
+
+    [ObservableProperty]
+    public partial CropAspect SelectedCropAspect { get; set; } = new("Free", null);
+
+    /// <summary>The locked width / height of the crop in pixels (portrait crops use the inverse ratio), or null.</summary>
+    private double? LockedAspect
+    {
+        get
+        {
+            if (SelectedCropAspect.Ratio is not { } ratio || Original is not { } image)
+                return null;
+            if (ratio == 0)
+                ratio = (double)image.Width / image.Height;
+            var (w, h) = State.Crop.OutputSize(image.Width, image.Height);
+            bool portrait = h > w;
+            return (portrait ? ratio < 1 : ratio >= 1) ? ratio : 1 / ratio;
+        }
+    }
+
+    partial void OnSelectedCropAspectChanged(CropAspect value)
+    {
+        if (LockedAspect is { } aspect && Original is { } image)
+            ApplyEdit(State with { Crop = CropGeometry.WithAspect(State.Crop, aspect, image.Width, image.Height) });
+    }
+
+    /// <summary>Straighten angle in degrees (the crop shrinks so it stays inside the image).</summary>
+    public double CropAngle
+    {
+        get => State.Crop.Angle;
+        set
+        {
+            if (Original is not { } image || Math.Abs(value - State.Crop.Angle) < 1e-9)
+                return;
+            // Rotate the crop as it was when straightening started, so turning back restores its size.
+            _cropAngleBase ??= State.Crop;
+            _settingCropAngle = true;
+            ApplyEdit(State with { Crop = CropGeometry.WithAngle(_cropAngleBase, Math.Round(value, 1), image.Width, image.Height) }, "crop-angle");
+            _settingCropAngle = false;
+        }
+    }
+
+    private Crop? _cropAngleBase;
+    private bool _settingCropAngle;
+
+    /// <summary>"6000 × 4000" (pixels of the export).</summary>
+    public string CropSizeText
+    {
+        get
+        {
+            if (Original is not { } image)
+                return "";
+            var (w, h) = State.Crop.OutputSize(image.Width, image.Height);
+            (w, h) = State.Orientation.OutputSize(w, h);
+            return $"{w} × {h}";
+        }
+    }
+
+    public bool HasCrop => !State.Crop.IsDefault || !State.Orientation.IsNone;
+
+    /// <summary>Removes the crop, straighten angle and rotation / flip.</summary>
+    [RelayCommand]
+    private void ResetCrop() => ApplyEdit(State with { Crop = Crop.None, Orientation = PhotoOrientation.None });
+
+    [RelayCommand]
+    private void RotateLeft() => ApplyEdit(State with { Orientation = State.Orientation.RotatedCounterClockwise() });
+
+    [RelayCommand]
+    private void RotateRight() => ApplyEdit(State with { Orientation = State.Orientation.RotatedClockwise() });
+
+    [RelayCommand]
+    private void FlipHorizontal() => ApplyEdit(State with { Orientation = State.Orientation.FlippedHorizontally() });
+
+    [RelayCommand]
+    private void FlipVertical() => ApplyEdit(State with { Orientation = State.Orientation.FlippedVertically() });
+
+    /// <summary>Swaps the crop between landscape and portrait.</summary>
+    [RelayCommand]
+    private void SwapCropOrientation()
+    {
+        if (Original is not { } image)
+            return;
+        var crop = State.Crop;
+        if (crop.IsDefault && LockedAspect is null)
+            crop = CropGeometry.WithAspect(crop, (double)image.Height / image.Width, image.Width, image.Height);
+        else
+            crop = CropGeometry.SwapOrientation(crop, image.Width, image.Height);
+        ApplyEdit(State with { Crop = crop });
+    }
+
+    private Crop _cropDragStart = Crop.None;
+    private string? _cropDragKey;
+
+    /// <summary>Handles crop frame drags from the viewer (normalised coordinates).</summary>
+    public void EditCrop(CropHandle handle, (double X, double Y) from, (double X, double Y) to, bool begin)
+    {
+        if (Original is not { } image)
+            return;
+        if (begin)
+        {
+            _cropDragStart = State.Crop;
+            _cropDragKey = $"crop:{Guid.NewGuid()}";
+            return;
+        }
+        var crop = CropGeometry.Drag(_cropDragStart, handle, from, to, LockedAspect, image.Width, image.Height);
+        if (crop != State.Crop)
+            ApplyEdit(State with { Crop = crop }, _cropDragKey);
     }
 
     // ---- Gradients (created by dragging, edited with on-canvas handles) ----
@@ -175,7 +369,7 @@ public partial class MainViewModel : ViewModelBase
     public MaskComponent? EditableComponent =>
         !ShowOriginal && SelectedMask is { } item && State.FindMask(item.Id) is { } mask
         && SelectedComponentIndex >= 0 && SelectedComponentIndex < mask.Components.Count
-        && mask.Components[SelectedComponentIndex] is (LinearGradientComponent or RadialGradientComponent) and var component
+        && mask.Components[SelectedComponentIndex] is (LinearGradientComponent or RadialGradientComponent or RasterMaskComponent) and var component
             ? component
             : null;
 
@@ -416,14 +610,43 @@ public partial class MainViewModel : ViewModelBase
 
     public string Title => FilePath is null ? "PhotoEditor" : $"{Path.GetFileName(FilePath)} – PhotoEditor";
 
-    partial void OnFilePathChanged(string? value) => OnPropertyChanged(nameof(Title));
+    partial void OnFilePathChanged(string? value)
+    {
+        OnPropertyChanged(nameof(Title));
+        OnPropertyChanged(nameof(CanBatchExport));
+        ClearRemoveSelection(); // painted on the previous photo
+    }
 
     private AdjustmentSettings? _shownAdjustments;
 
-    partial void OnStateChanged(EditState value)
+    partial void OnStateChanged(EditState oldValue, EditState newValue)
     {
         SyncMasks();
         RefreshSliders();
+        if (oldValue.Adjustments.DenoiseAmount != newValue.Adjustments.DenoiseAmount
+            || oldValue.Adjustments.DeblurAmount != newValue.Adjustments.DeblurAmount)
+            ScheduleRestoreUpdate();
+        if (!ReferenceEquals(oldValue.Spots, newValue.Spots))
+            OnSpotsChanged();
+        var (a, b) = (oldValue.Adjustments, newValue.Adjustments);
+        RefreshToneCurve(a, b);
+        if (a.LensProfile != b.LensProfile || a.RemoveChromaticAberration != b.RemoveChromaticAberration || a.LensDistortion != b.LensDistortion
+            || a.TransformVertical != b.TransformVertical || a.TransformHorizontal != b.TransformHorizontal || a.TransformRotate != b.TransformRotate
+            || a.TransformAspect != b.TransformAspect || a.TransformScale != b.TransformScale || a.TransformOffsetX != b.TransformOffsetX
+            || a.TransformOffsetY != b.TransformOffsetY)
+        {
+            RefreshLens();
+            UpdateLensPreview();
+        }
+        if (oldValue.Crop != newValue.Crop || oldValue.Orientation != newValue.Orientation)
+        {
+            if (!_settingCropAngle)
+                _cropAngleBase = null;
+            OnPropertyChanged(nameof(CropAngle));
+            OnPropertyChanged(nameof(CropSizeText));
+            OnPropertyChanged(nameof(HasCrop));
+            ResetCropCommand.NotifyCanExecuteChanged();
+        }
     }
 
     /// <summary>Updates the sliders if the edited adjustment set changed (not on every brush point).</summary>
@@ -444,9 +667,14 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     public void ApplyEdit(EditState state, string? coalesceKey = null)
     {
+        if (Original is null)
+            return; // nothing open, or only the camera preview of a RAW that is still decoding
         _history.Record(state, coalesceKey);
+        var before = State;
         State = state;
+        UpdateOverlayForEdit(before, state, coalesceKey);
         UpdateHistoryCommands();
+        _hasUnsavedEdits = true;
         ScheduleSave();
     }
 
@@ -476,17 +704,34 @@ public partial class MainViewModel : ViewModelBase
         SaveEdits();
     }
 
-    /// <summary>Writes the sidecar now (cancels a pending auto-save). No file is created for an unedited image.</summary>
+    /// <summary>True when the edit changed since it was loaded or last saved.</summary>
+    private bool _hasUnsavedEdits;
+
+    /// <summary>Upright size and EXIF orientation of the open image (for Lightroom's sensor-oriented coordinates).</summary>
+    private ImageGeometry _geometry;
+
+    /// <summary>What the last Lightroom XMP write could not include (reported when it changes).</summary>
+    private string _lastXmpSkipped = "";
+
+    /// <summary>
+    /// Writes the sidecars now if anything changed (cancels a pending auto-save): the app's JSON and a
+    /// Lightroom-compatible XMP. No file is created for an unedited image; the photo itself is never changed.
+    /// </summary>
     [RelayCommand]
     public void SaveEdits()
     {
         _pendingSave?.Cancel();
         _pendingSave = null;
-        if (FilePath is not { } path || (State.IsDefault && !SidecarFile.Exists(path)))
+        if (FilePath is not { } path || !_hasUnsavedEdits)
             return;
         try
         {
-            SidecarFile.Save(path, EditDocument.From(State));
+            var skipped = string.Join("; ", EditStore.Save(path, State, _geometry));
+            if (skipped != _lastXmpSkipped && skipped.Length > 0)
+                Status = $"{Status} — not in the Lightroom XMP: {skipped}";
+            _lastXmpSkipped = skipped;
+            _hasUnsavedEdits = false;
+            OnEditsSaved(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -499,6 +744,7 @@ public partial class MainViewModel : ViewModelBase
     {
         State = _history.Undo();
         UpdateHistoryCommands();
+        _hasUnsavedEdits = true;
         ScheduleSave();
     }
 
@@ -509,6 +755,7 @@ public partial class MainViewModel : ViewModelBase
     {
         State = _history.Redo();
         UpdateHistoryCommands();
+        _hasUnsavedEdits = true;
         ScheduleSave();
     }
 
@@ -518,15 +765,118 @@ public partial class MainViewModel : ViewModelBase
     {
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
+        // "Reset all" also depends on the photo (a RAW's defaults), which may change without the edit changing.
+        ResetAllCommand.NotifyCanExecuteChanged();
     }
 
     [RelayCommand]
     private void ToggleBeforeAfter() => ShowOriginal = !ShowOriginal;
 
     [RelayCommand(CanExecute = nameof(CanResetAll))]
-    private void ResetAll() => ApplyEdit(EditState.Default);
+    private void ResetAll() => ApplyEdit(EditState.DefaultFor(_geometry.IsRaw));
 
-    private bool CanResetAll() => !State.IsDefault;
+    // ---- Copy / paste settings ----
+
+    [ObservableProperty] public partial bool CopyLight { get; set; } = true;
+    [ObservableProperty] public partial bool CopyColor { get; set; } = true;
+    [ObservableProperty] public partial bool CopyToneCurve { get; set; } = true;
+    [ObservableProperty] public partial bool CopyHsl { get; set; } = true;
+    [ObservableProperty] public partial bool CopyVignette { get; set; } = true;
+    [ObservableProperty] public partial bool CopyDetail { get; set; } = true;
+    [ObservableProperty] public partial bool CopyCrop { get; set; }
+    [ObservableProperty] public partial bool CopyTransform { get; set; }
+    [ObservableProperty] public partial bool CopyMasks { get; set; }
+    [ObservableProperty] public partial bool CopySpots { get; set; }
+
+    private SettingsGroups SelectedCopyGroups =>
+        (CopyLight ? SettingsGroups.Light : 0) | (CopyColor ? SettingsGroups.Color : 0) | (CopyToneCurve ? SettingsGroups.ToneCurve : 0) | (CopyHsl ? SettingsGroups.Hsl : 0)
+        | (CopyVignette ? SettingsGroups.Vignette : 0) | (CopyDetail ? SettingsGroups.Detail : 0)
+        | (CopyCrop ? SettingsGroups.Crop : 0) | (CopyTransform ? SettingsGroups.Transform : 0) | (CopyMasks ? SettingsGroups.Masks : 0) | (CopySpots ? SettingsGroups.Spots : 0);
+
+    private EditState? _copiedState;
+    private SettingsGroups _copiedGroups;
+
+    /// <summary>True once settings were copied (they stay available when another photo is opened).</summary>
+    public bool HasCopiedSettings => _copiedState is not null;
+
+    /// <summary>Remembers the chosen parts of this photo's edit for pasting.</summary>
+    [RelayCommand]
+    private void CopySettings()
+    {
+        if (!HasImage)
+            return;
+        _copiedState = State;
+        _copiedGroups = SelectedCopyGroups;
+        OnPropertyChanged(nameof(HasCopiedSettings));
+        PasteSettingsCommand.NotifyCanExecuteChanged();
+        Status = _copiedGroups == SettingsGroups.None ? "Nothing selected to copy." : $"Copied: {Describe(_copiedGroups)}";
+    }
+
+    /// <summary>Pastes the copied settings onto the open photo (one undo step).</summary>
+    [RelayCommand(CanExecute = nameof(CanPaste))]
+    private void PasteSettings()
+    {
+        if (_copiedState is not { } copied || Original is not { } image)
+            return;
+        if (_copiedGroups.HasFlag(SettingsGroups.Masks))
+            SelectedMask = null;
+        ApplyEdit(SettingsTransfer.Apply(State, copied, _copiedGroups, image.Width, image.Height));
+        Status = $"Pasted: {Describe(_copiedGroups)}";
+    }
+
+    private bool CanPaste() => HasCopiedSettings && HasImage;
+
+    /// <summary>"Light, Color, HSL" for the status bar.</summary>
+    private static string Describe(SettingsGroups groups) => string.Join(", ",
+        new (SettingsGroups Flag, string Name)[]
+        {
+            (SettingsGroups.Light, "Light"), (SettingsGroups.Color, "Color"), (SettingsGroups.ToneCurve, "Tone curve"), (SettingsGroups.Hsl, "HSL"),
+            (SettingsGroups.Vignette, "Vignette"), (SettingsGroups.Detail, "Detail"), (SettingsGroups.Crop, "Crop"), (SettingsGroups.Transform, "Transform"),
+            (SettingsGroups.Masks, "Masks"), (SettingsGroups.Spots, "Spot removal"),
+        }.Where(g => groups.HasFlag(g.Flag)).Select(g => g.Name));
+
+    /// <summary>
+    /// Pastes the copied settings into other photos without opening them: their JSON and Lightroom XMP
+    /// sidecars are updated; the photos themselves are not changed. The open photo is updated in place.
+    /// </summary>
+    public async Task PasteToFilesAsync(IReadOnlyList<string> paths)
+    {
+        if (_copiedState is not { } copied || paths.Count == 0)
+            return;
+        var groups = _copiedGroups;
+        var others = paths.Where(p => !ImageExporter.IsSameFile(p, FilePath)).ToList();
+        if (others.Count < paths.Count)
+            PasteSettings();
+
+        var failed = new List<string>();
+        for (int i = 0; i < others.Count; i++)
+        {
+            Status = $"Pasting settings… {i + 1} / {others.Count}";
+            var result = await Task.Run(() => SettingsTransfer.PasteToFile(others[i], copied, groups));
+            if (result.Error is not null)
+                failed.Add($"{Path.GetFileName(result.ImagePath)} ({result.Error})");
+        }
+        int done = paths.Count - failed.Count;
+        Status = failed.Count == 0
+            ? $"Pasted settings into {done} photo{(done == 1 ? "" : "s")}."
+            : $"Pasted into {done} of {paths.Count}; failed: {string.Join(", ", failed)}";
+    }
+
+    /// <summary>Sets the global Light sliders, white balance and vibrance from the photo's statistics (one undo step).</summary>
+    [RelayCommand]
+    private void Auto()
+    {
+        if (Original is not { } image)
+            return;
+        var suggested = AutoAdjust.Suggest(image, State.Crop, State.Adjustments);
+        SelectedMask = null; // show the global sliders that changed
+        ApplyEdit(State with { Adjustments = suggested });
+        var a = suggested;
+        Status = FormattableString.Invariant(
+            $"Auto: exposure {a.Exposure:+0.00;-0.00;0}, contrast {a.Contrast:+0;-0;0}, highlights {a.Highlights:+0;-0;0}, shadows {a.Shadows:+0;-0;0}, whites {a.Whites:+0;-0;0}, blacks {a.Blacks:+0;-0;0}, temp {a.Temperature:+0;-0;0}, tint {a.Tint:+0;-0;0}, vibrance {a.Vibrance:+0;-0;0}");
+    }
+
+    private bool CanResetAll() => !State.IsDefaultFor(_geometry.IsRaw);
 
     /// <summary>Suggested export file name, e.g. "IMG_0001-edited.jpg".</summary>
     public string SuggestedExportName =>
@@ -545,7 +895,13 @@ public partial class MainViewModel : ViewModelBase
         try
         {
             var watch = Stopwatch.StartNew();
-            await Task.Run(() => ImageExporter.Export(original, state, source, path, options));
+            if (await ExportSourceAsync(original, (state.Adjustments.DenoiseAmount / 100, state.Adjustments.DeblurAmount / 100)) is not { } exportSource)
+            {
+                Status = "Export stopped: the AI denoise / deblur did not finish.";
+                return;
+            }
+            Status = $"Exporting {Path.GetFileName(path)}…";
+            await Task.Run(() => ImageExporter.Export(exportSource, state, source, path, options));
             Status = $"Exported {Path.GetFileName(path)} ({watch.Elapsed.TotalSeconds:0.0} s)";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -558,44 +914,22 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    private static (EditState State, string Note) LoadSidecar(string imagePath)
+    /// <summary>The app's own sidecar if there is one, otherwise Lightroom / Camera Raw edits from an XMP sidecar.</summary>
+    private static (EditState State, string Note) LoadSidecar(string imagePath, ImageGeometry geometry)
     {
         try
         {
-            return SidecarFile.Load(imagePath) is { } doc
-                ? (doc.ToState(), " – edits loaded")
-                : (EditState.Default, "");
+            var (state, source) = EditStore.Load(imagePath, geometry);
+            return (state, source switch
+            {
+                EditSource.Json => " – edits loaded",
+                EditSource.Xmp => " – edits imported from Lightroom (.xmp)",
+                _ => "",
+            });
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or FormatException)
         {
-            return (EditState.Default, $" – could not read saved edits: {ex.Message}");
-        }
-    }
-
-    /// <summary>Loads the image at <paramref name="path"/>; reports failures in <see cref="Status"/>.</summary>
-    public bool OpenFile(string path)
-    {
-        try
-        {
-            var bitmap = ImageLoader.Load(path);
-            var preview = PreviewImage.Create(bitmap);
-            SaveEdits(); // flush edits of the previous image
-            var (state, sidecarNote) = LoadSidecar(path);
-            Original = bitmap;
-            Preview = preview;
-            SelectedMask = null;
-            _history.Reset(state);
-            State = state;
-            UpdateHistoryCommands();
-            ShowOriginal = false;
-            FilePath = path;
-            Status = $"{bitmap.Width} × {bitmap.Height}{sidecarNote}";
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
-        {
-            Status = $"Could not open {Path.GetFileName(path)}: {ex.Message}";
-            return false;
+            return (EditState.DefaultFor(geometry.IsRaw), $" – could not read saved edits: {ex.Message}");
         }
     }
 }

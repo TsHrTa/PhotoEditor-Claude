@@ -11,6 +11,16 @@ public sealed record AdjustmentSettings
 {
     public static readonly AdjustmentSettings Default = new();
 
+    /// <summary>
+    /// Where a RAW photo starts, like Lightroom's defaults for RAWs: sharpening 40 (radius 1, masking 0) and colour
+    /// noise reduction 25, because a RAW has had neither in the camera. JPEGs and other finished images start at
+    /// <see cref="Default"/>.
+    /// </summary>
+    public static readonly AdjustmentSettings RawDefault = new() { SharpenAmount = 40, NoiseColor = 25 };
+
+    /// <summary>The settings a photo starts with: <see cref="RawDefault"/> for RAWs, else <see cref="Default"/>.</summary>
+    public static AdjustmentSettings DefaultFor(bool isRaw) => isRaw ? RawDefault : Default;
+
     /// <summary>Exposure in stops (EV), -5..+5.</summary>
     public double Exposure { get; init; }
 
@@ -44,6 +54,123 @@ public sealed record AdjustmentSettings
 
     /// <summary>0..100: width of the transition.</summary>
     public double VignetteFeather { get; init; } = 50;
+
+    /// <summary>Sharpening (unsharp mask on luminance): 0..150.</summary>
+    public double SharpenAmount { get; init; }
+
+    /// <summary>Blur radius of the unsharp mask in full-resolution pixels, 0.5..3.</summary>
+    public double SharpenRadius { get; init; } = 1;
+
+    /// <summary>0..100: higher values limit sharpening to edges (keeps smooth areas and noise unsharpened).</summary>
+    public double SharpenMasking { get; init; }
+
+    /// <summary>
+    /// AI noise reduction 0..100: blend between the original and the AI-denoised photo (computed once per photo).
+    /// Applied to the source pixels before everything else; whole image only.
+    /// </summary>
+    public double DenoiseAmount { get; init; }
+
+    /// <summary>
+    /// AI deblur / sharpen 0..100: blend towards the AI-deblurred photo (computed once per photo, from the denoised
+    /// photo when Denoise is on). Whole image only.
+    /// </summary>
+    public double DeblurAmount { get; init; }
+
+    /// <summary>
+    /// Soften 0..100: removes fine detail and texture (skin, noise) with an edge-preserving blur of the original
+    /// photo; strong edges stay. Also works in masks.
+    /// </summary>
+    public double Soften { get; init; }
+
+    /// <summary>Luminance noise reduction 0..100 (edge-preserving smoothing of brightness only). Whole image only.</summary>
+    public double NoiseLuminance { get; init; }
+
+    /// <summary>Colour noise reduction 0..100 (smooths colour blotches, keeps brightness detail). Whole image only.</summary>
+    public double NoiseColor { get; init; }
+
+    /// <summary>Removes purple fringes at high-contrast edges, 0..100. Whole image only.</summary>
+    public double DefringePurple { get; init; }
+
+    /// <summary>Removes green fringes at high-contrast edges, 0..100. Whole image only.</summary>
+    public double DefringeGreen { get; init; }
+
+    /// <summary>Purple defringe hue range in Lightroom's units 0..100 (0 = 240° blue-violet, 100 = 350° magenta-red).</summary>
+    public double DefringePurpleHueLow { get; init; } = 30;
+    public double DefringePurpleHueHigh { get; init; } = 70;
+
+    /// <summary>Green defringe hue range in Lightroom's units 0..100 (0 = 40° orange-yellow, 100 = 190° cyan).</summary>
+    public double DefringeGreenHueLow { get; init; } = 40;
+    public double DefringeGreenHueHigh { get; init; } = 60;
+
+    /// <summary>
+    /// Lens profile corrections (lensfun): the lens's distortion and vignetting are removed when the camera and lens
+    /// are found in the profile database. Whole image only.
+    /// </summary>
+    public bool LensProfile { get; init; }
+
+    /// <summary>
+    /// Removes lateral chromatic aberration (colour edges towards the corners): from the lens profile if it has the
+    /// data, otherwise measured in the photo. Whole image only.
+    /// </summary>
+    public bool RemoveChromaticAberration { get; init; }
+
+    /// <summary>Manual distortion −100..100 (positive straightens barrel distortion, negative pincushion). Whole image only.</summary>
+    public double LensDistortion { get; init; }
+
+    /// <summary>Manual lens vignetting −100..100 (positive brightens the corners). Whole image only.</summary>
+    public double LensVignetting { get; init; }
+
+    /// <summary>
+    /// Transform (Lightroom's manual Transform panel), whole image only: perspective −100..100 (Vertical &lt; 0 widens
+    /// the top, straightening a building that leans back; Horizontal &gt; 0 enlarges the right side), rotation −10..10°
+    /// (clockwise), aspect −100..100 (positive stretches the width), scale 50..150 % and offset −100..100 (right / down).
+    /// The result is enlarged to fill the frame; a scale below 100 shows white borders.
+    /// </summary>
+    public double TransformVertical { get; init; }
+    public double TransformHorizontal { get; init; }
+    public double TransformRotate { get; init; }
+    public double TransformAspect { get; init; }
+    public double TransformScale { get; init; } = 100;
+    public double TransformOffsetX { get; init; }
+    public double TransformOffsetY { get; init; }
+
+    /// <summary>Dehaze −100..100: removes (positive) or adds (negative) haze, based on the photo's haze map. Also in masks.</summary>
+    public double Dehaze { get; init; }
+
+    /// <summary>
+    /// Texture −100..200: strengthens (positive) or smooths (negative) medium-size detail such as skin, bark or
+    /// fabric, without boosting pixel-level noise or strong edges. Also in masks.
+    /// </summary>
+    public double Texture { get; init; }
+
+    /// <summary>
+    /// Clarity −100..200: local contrast of areas against their surroundings (mostly midtones), edge-aware so it
+    /// makes no halos; negative gives a soft, flat look. Also in masks.
+    /// </summary>
+    public double Clarity { get; init; }
+
+    /// <summary>
+    /// Tone curve, parametric part (Lightroom's region sliders), −100..100 each: moves the curve in the brightest
+    /// quarter (Highlights), the upper middle (Lights), the lower middle (Darks) and the darkest quarter (Shadows).
+    /// Whole image only.
+    /// </summary>
+    public double CurveHighlights { get; init; }
+    public double CurveLights { get; init; }
+    public double CurveDarks { get; init; }
+    public double CurveShadows { get; init; }
+
+    /// <summary>Where the tone curve's regions meet, 0..100 (Lightroom's split points; kept in order when used).</summary>
+    public double CurveShadowSplit { get; init; } = 25;
+    public double CurveMidtoneSplit { get; init; } = 50;
+    public double CurveHighlightSplit { get; init; } = 75;
+
+    /// <summary>Point curve on all three channels (applied after the parametric curve). Whole image only.</summary>
+    public PointCurve Curve { get; init; } = PointCurve.Linear;
+
+    /// <summary>Point curves of the single channels (applied after <see cref="Curve"/>). Whole image only.</summary>
+    public PointCurve CurveRed { get; init; } = PointCurve.Linear;
+    public PointCurve CurveGreen { get; init; } = PointCurve.Linear;
+    public PointCurve CurveBlue { get; init; } = PointCurve.Linear;
 
     // HSL panel, one entry per colour band (see HslBands).
     public HslBand Reds { get; init; } = HslBand.Zero;

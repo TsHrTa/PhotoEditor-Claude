@@ -9,12 +9,15 @@ public partial class ParameterViewModel : ViewModelBase
 {
     private readonly Func<AdjustmentSettings> _getSettings;
     private readonly Action<AdjustmentSettings> _setSettings;
+    private readonly Func<AdjustmentSettings>? _getDefaults;
 
-    public ParameterViewModel(AdjustmentParameter parameter, Func<AdjustmentSettings> getSettings, Action<AdjustmentSettings> setSettings)
+    public ParameterViewModel(AdjustmentParameter parameter, Func<AdjustmentSettings> getSettings, Action<AdjustmentSettings> setSettings,
+        Func<AdjustmentSettings>? getDefaults = null)
     {
         Parameter = parameter;
         _getSettings = getSettings;
         _setSettings = setSettings;
+        _getDefaults = getDefaults;
     }
 
     public AdjustmentParameter Parameter { get; }
@@ -35,7 +38,8 @@ public partial class ParameterViewModel : ViewModelBase
 
     public string DisplayValue => Value.ToString(Parameter.Format);
 
-    public void Reset() => Value = Parameter.DefaultValue;
+    /// <summary>Back to where the photo started (e.g. sharpening 40 on a RAW).</summary>
+    public void Reset() => Value = _getDefaults is { } defaults ? Parameter.Get(defaults()) : Parameter.DefaultValue;
 
     /// <summary>Called when the settings changed from anywhere (slider, reset, undo…).</summary>
     public void Refresh()

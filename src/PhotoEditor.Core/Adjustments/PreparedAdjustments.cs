@@ -8,6 +8,10 @@ public readonly record struct PreparedAdjustments(
     float ShadowsAmount,
     float WhitesAmount,
     float BlacksAmount,
+    float HighlightsAmount2,
+    float ShadowsAmount2,
+    float WhitesAmount2,
+    float BlacksAmount2,
     float WhiteBalanceR,
     float WhiteBalanceG,
     float WhiteBalanceB,
@@ -18,28 +22,142 @@ public readonly record struct PreparedAdjustments(
     float VignetteStops,
     float VignetteLow,
     float VignetteHigh,
-    float VignetteRoundness)
+    float VignetteRoundness,
+    float SharpenAmount,
+    float SharpenRadius,
+    float SharpenMasking,
+    float SoftenAmount,
+    float DehazeAmount,
+    float NoiseLuminanceAmount,
+    float NoiseColorAmount,
+    float DefringePurpleAmount,
+    float DefringeGreenAmount,
+    float PurpleHueFrom,
+    float PurpleHueTo,
+    float GreenHueFrom,
+    float GreenHueTo,
+    float TextureAmount,
+    float ClarityAmount,
+    float LensVignettingAmount,
+    float[]? CurveTable)
 {
+    /// <summary>
+    /// Exposure acts before the RAW base curve (<see cref="RawBaseCurve.ApplyExposure"/>) instead of as a plain gain;
+    /// set by the renderers for photos that carry that curve.
+    /// </summary>
+    public bool SceneExposure { get; init; }
+
+    /// <summary>
+    /// Hue (degrees) of Lightroom's purple / green defringe range ends 0 and 100. The purple defaults (30–70) cover
+    /// blue-violet to mauve fringes (254–326°, fading out by 229° / 351°) but not a blue sky (≈ 200–225°).
+    /// </summary>
+    public const float PurpleHue0 = 200f, PurpleHue100 = 380f, GreenHue0 = 40f, GreenHue100 = 190f;
+
+    /// <summary>Fade (degrees) outside a defringe hue range. Mirrored in the shader.</summary>
+    public const float DefringeHueFade = 25f;
+
+    /// <summary>
+    /// Defringe amount × this = how much of a fringe pixel's colour is removed (clamped to all of it): a third of the
+    /// slider (Lightroom ≈ 7 of 20) already removes a fringe at a clear edge completely. Mirrored in the shader.
+    /// </summary>
+    public const float DefringeStrength = 3f;
+
+    /// <summary>Brightness difference (sRGB luminance) to a nearby pixel at which defringe starts / is at full strength.</summary>
+    public const float FringeEdgeLow = 0.04f, FringeEdgeHigh = 0.15f;
+
+    /// <summary>A hue range in Lightroom's units as degrees, ends in order.</summary>
+    private static (float From, float To) HueRange(double low, double high, float hue0, float hue100)
+    {
+        double lo = Math.Clamp(Math.Min(low, high), 0, 100), hi = Math.Clamp(Math.Max(low, high), 0, 100);
+        return ((float)(hue0 + (hue100 - hue0) * lo / 100), (float)(hue0 + (hue100 - hue0) * hi / 100));
+    }
+
+    /// <summary>
+    /// Weight 0..1 of hue <paramref name="h"/> (degrees) in the range [from, to] with soft edges; handles the
+    /// wrap at 360°. Mirrored in the shader.
+    /// </summary>
+    public static float HueRangeWeight(float h, float from, float to)
+    {
+        float Band(float x) => ToneCurve.SmoothStep(from - DefringeHueFade, from, x) * (1f - ToneCurve.SmoothStep(to, to + DefringeHueFade, x));
+        return MathF.Max(Band(h), MathF.Max(Band(h + 360f), Band(h - 360f)));
+    }
+
+    /// <summary>Highlights or shadows are set (applied locally on the base brightness).</summary>
+    public bool HasLocalTone => HighlightsAmount != 0f || ShadowsAmount != 0f;
+
+    public bool HasClarity => ClarityAmount != 0f;
+
+    /// <summary>The pass needs the photo's base brightness (<see cref="ToneBaseMap"/>).</summary>
+    public bool NeedsToneBase => HasLocalTone || HasClarity;
+
+    public bool HasTexture => TextureAmount != 0f;
+
+    /// <summary>The tone curve panel changes something (<see cref="CurveTable"/>; whole image only).</summary>
+    public bool HasCurve => CurveTable is not null;
+
+    /// <summary>Texture: medium-size detail added (× this) at slider 100.</summary>
+    public const float TextureStrengthAt100 = 1f;
+
+    /// <summary>Clarity: extra local contrast (in stops, × this) at slider 100, at full midtone weight.</summary>
+    public const float ClarityStrengthAt100 = 0.6f;
+
+    /// <summary>Largest brightening / darkening (factor) clarity may apply to a pixel.</summary>
+    public const float MaxClarityGain = 4f;
+
+    public bool HasNoiseReduction => NoiseLuminanceAmount > 0f || NoiseColorAmount > 0f;
+    public bool HasDefringe => DefringePurpleAmount > 0f || DefringeGreenAmount > 0f;
+
+    /// <summary>Tap spacing (full-resolution pixels) of the luminance noise filter, the colour noise blur and the fringe edge test.</summary>
+    public const int LumaNoiseStep = 1, ColorNoiseStep = 2, FringeStep = 2;
+
+    public bool HasDehaze => DehazeAmount != 0f;
+
+    /// <summary>
+    /// Tap spacing of the soften blur in pixels of an image with this long side: 6 px at 6000 px (the blur
+    /// reaches ±3 taps with sigma 1.5 taps, i.e. ±18 px), at least 1. A whole number, so the CPU taps hit pixel centres.
+    /// </summary>
+    public static int SoftenStepFor(int longSide) => Math.Max(1, (int)Math.Round(longSide / 1000.0));
+
+    /// <summary>Range sigma of the edge-preserving soften blur, on sRGB luminance (0..1).</summary>
+    public const float SoftenRangeSigma = 0.1f;
+
+    public bool HasSoften => SoftenAmount > 0f;
+
+    /// <summary>Unsharp-mask strength at slider 100 (detail added = strength × (pixel − blurred)).</summary>
+    public const float SharpenStrengthAt100 = 2f;
+
+    public bool HasSharpening => SharpenAmount > 0f;
+
     /// <summary>Exposure change (stops) at full vignette weight for amount ±100.</summary>
     public const float MaxVignetteStops = 2f;
 
     public bool HasVignette => VignetteStops != 0f;
 
-    /// <summary>Largest shift (in perceptual units) the highlights slider applies at ±100.</summary>
-    public const float MaxHighlightsShift = 0.3f;
+    /// <summary>Largest shift (in perceptual units, at white) the highlights slider applies at ±100.</summary>
+    public const float MaxHighlightsShift = 0.25f;
 
     public static PreparedAdjustments From(AdjustmentSettings s)
     {
         var (wbR, wbG, wbB) = WhiteBalanceGains(s.Temperature, s.Tint);
         var (vLow, vHigh) = VignetteBand(s);
+        // Each of these steps stays monotonic up to ±100; beyond that (the sliders go to ±200) the same step is
+        // applied a second time with the rest, and a monotonic step applied twice is still monotonic.
+        var (h1, h2) = Passes(s.Highlights, _ => MaxHighlightsShift);
+        // Lifting shadows may be strong; darkening is limited so each step stays monotonic.
+        var (sh1, sh2) = Passes(s.Shadows, v => v >= 0 ? 0.25f : 0.14f);
+        var (w1, w2) = Passes(s.Whites, _ => 0.15f);
+        var (b1, b2) = Passes(s.Blacks, _ => 0.15f);
         return new(
             ExposureGain: MathF.Pow(2f, (float)s.Exposure),
             ContrastGamma: MathF.Exp((float)s.Contrast / 100f * 0.9f),
-            HighlightsAmount: (float)s.Highlights / 100f * MaxHighlightsShift,
-            // Lifting shadows may be strong; darkening is limited so the curve stays monotonic.
-            ShadowsAmount: (float)s.Shadows / 100f * (s.Shadows >= 0 ? 0.25f : 0.14f),
-            WhitesAmount: (float)s.Whites / 100f * 0.15f,
-            BlacksAmount: (float)s.Blacks / 100f * 0.15f,
+            HighlightsAmount: h1,
+            ShadowsAmount: sh1,
+            WhitesAmount: w1,
+            BlacksAmount: b1,
+            HighlightsAmount2: h2,
+            ShadowsAmount2: sh2,
+            WhitesAmount2: w2,
+            BlacksAmount2: b2,
             WhiteBalanceR: wbR,
             WhiteBalanceG: wbG,
             WhiteBalanceB: wbB,
@@ -50,7 +168,35 @@ public readonly record struct PreparedAdjustments(
             VignetteStops: (float)s.VignetteAmount / 100f * MaxVignetteStops,
             VignetteLow: vLow,
             VignetteHigh: vHigh,
-            VignetteRoundness: (float)s.VignetteRoundness / 100f);
+            VignetteRoundness: (float)s.VignetteRoundness / 100f,
+            SharpenAmount: (float)s.SharpenAmount / 100f * SharpenStrengthAt100,
+            SharpenRadius: (float)s.SharpenRadius,
+            SharpenMasking: (float)s.SharpenMasking / 100f,
+            SoftenAmount: (float)Math.Clamp(s.Soften, 0, 100) / 100f,
+            DehazeAmount: (float)Math.Clamp(s.Dehaze, -100, 100) / 100f,
+            NoiseLuminanceAmount: (float)Math.Clamp(s.NoiseLuminance, 0, 100) / 100f,
+            NoiseColorAmount: (float)Math.Clamp(s.NoiseColor, 0, 100) / 100f,
+            DefringePurpleAmount: (float)Math.Clamp(s.DefringePurple, 0, 100) / 100f,
+            DefringeGreenAmount: (float)Math.Clamp(s.DefringeGreen, 0, 100) / 100f,
+            PurpleHueFrom: HueRange(s.DefringePurpleHueLow, s.DefringePurpleHueHigh, PurpleHue0, PurpleHue100).From,
+            PurpleHueTo: HueRange(s.DefringePurpleHueLow, s.DefringePurpleHueHigh, PurpleHue0, PurpleHue100).To,
+            GreenHueFrom: HueRange(s.DefringeGreenHueLow, s.DefringeGreenHueHigh, GreenHue0, GreenHue100).From,
+            GreenHueTo: HueRange(s.DefringeGreenHueLow, s.DefringeGreenHueHigh, GreenHue0, GreenHue100).To,
+            TextureAmount: (float)Math.Clamp(s.Texture, -100, 200) / 100f * TextureStrengthAt100,
+            ClarityAmount: (float)Math.Clamp(s.Clarity, -100, 200) / 100f * ClarityStrengthAt100,
+            LensVignettingAmount: (float)Math.Clamp(s.LensVignetting, -100, 100) / 100f,
+            CurveTable: ToneCurveTable.For(s));
+    }
+
+    /// <summary>
+    /// Splits a slider value (±200) into two passes of at most ±100 each, scaled by the step's strength at 100.
+    /// </summary>
+    private static (float First, float Second) Passes(double value, Func<double, float> strengthAt100)
+    {
+        double first = Math.Clamp(value, -100, 100);
+        double second = value - first;
+        float k = strengthAt100(value);
+        return ((float)first / 100f * k, (float)second / 100f * k);
     }
 
     /// <summary>Transition band of the vignette weight (distance 0 = centre, 1 = corner).</summary>

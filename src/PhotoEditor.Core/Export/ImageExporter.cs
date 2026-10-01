@@ -11,7 +11,8 @@ public enum ExportFormat
     Png,
 }
 
-public sealed record ExportOptions(ExportFormat Format = ExportFormat.Jpeg, int JpegQuality = 90)
+/// <param name="LongEdge">Downscale so the long side is at most this many pixels (null = full size).</param>
+public sealed record ExportOptions(ExportFormat Format = ExportFormat.Jpeg, int JpegQuality = 90, int? LongEdge = null)
 {
     /// <summary>Picks the format from the file extension (.png → PNG, otherwise JPEG).</summary>
     public static ExportFormat FormatFromPath(string path) =>
@@ -26,8 +27,26 @@ public static class ImageExporter
 
     public static void Export(SKBitmap original, EditState state, string? sourcePath, string destinationPath, ExportOptions options)
     {
-        using var rendered = CpuAdjustmentRenderer.Render(original, state);
-        var bytes = Encode(rendered, options);
+        if (IsSameFile(sourcePath, destinationPath))
+            throw new InvalidOperationException("The export would overwrite the original photo; choose another file name.");
+        using var rendered = CpuAdjustmentRenderer.Render(original, state, Lens.PhotoLens.Of(sourcePath));
+        var cropped = CpuAdjustmentRenderer.ApplyCrop(rendered, state.Crop);
+        var oriented = state.Orientation.Apply(cropped);
+        var sized = options.LongEdge is { } edge ? Resize(oriented, edge) : oriented;
+        byte[] bytes;
+        try
+        {
+            bytes = Encode(sized, options);
+        }
+        finally
+        {
+            if (!ReferenceEquals(sized, oriented))
+                sized.Dispose();
+            if (!ReferenceEquals(oriented, cropped))
+                oriented.Dispose();
+            if (!ReferenceEquals(cropped, rendered))
+                cropped.Dispose();
+        }
 
         var exif = sourcePath is null ? null : ExifMetadata.Read(sourcePath);
         if (exif is not null)
@@ -45,6 +64,17 @@ public static class ImageExporter
         File.Move(temp, destinationPath, overwrite: true);
     }
 
+    /// <summary>Downscales (high quality) so the long side is at most <paramref name="longEdge"/>; returns the input if it fits.</summary>
+    public static SKBitmap Resize(SKBitmap source, int longEdge)
+    {
+        var (w, h) = PreviewImage.PreviewSize(source.Width, source.Height, Math.Max(1, longEdge));
+        if (w == source.Width && h == source.Height)
+            return source;
+        return source.Resize(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul),
+                   new SKSamplingOptions(new SKCubicResampler(1f / 3, 1f / 3)))
+               ?? throw new InvalidOperationException("Could not resize the image.");
+    }
+
     public static byte[] Encode(SKBitmap bitmap, ExportOptions options)
     {
         using var pixmap = bitmap.PeekPixels();
@@ -58,4 +88,9 @@ public static class ImageExporter
         } ?? throw new InvalidOperationException($"Could not encode image as {options.Format}.");
         return data.ToArray();
     }
+
+    /// <summary>True when both paths name the same file (case-insensitive, as on Windows).</summary>
+    public static bool IsSameFile(string? a, string? b) =>
+        a is not null && b is not null
+        && string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
 }

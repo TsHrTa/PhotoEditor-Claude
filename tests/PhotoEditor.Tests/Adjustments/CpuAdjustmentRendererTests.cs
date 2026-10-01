@@ -46,8 +46,8 @@ public class CpuAdjustmentRendererTests
     public void Parameter_SetClampsToRange()
     {
         var s = AdjustmentParameters.Exposure.Set(AdjustmentSettings.Default, 99);
-        Assert.Equal(5, s.Exposure);
-        Assert.Equal(5, AdjustmentParameters.Exposure.Get(s));
+        Assert.Equal(10, s.Exposure);
+        Assert.Equal(10, AdjustmentParameters.Exposure.Get(s));
     }
 
     [Fact]

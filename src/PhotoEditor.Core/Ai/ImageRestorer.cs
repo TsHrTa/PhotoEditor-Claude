@@ -1,0 +1,277 @@
+using System.Security.Cryptography;
+using System.Text;
+using SkiaSharp;
+
+namespace PhotoEditor.Core.Ai;
+
+/// <summary>Progress of a tiled AI operation.</summary>
+
+/// <summary>Window sizes a model accepts: a multiple of <paramref name="Multiple"/> and at least <paramref name="Minimum"/> (full <see cref="ImageRestorer.Window"/>-sized windows must satisfy both).</summary>
+public readonly record struct WindowShape(int Multiple, int Minimum);
+
+public readonly record struct TileProgress(int Done, int Total)
+{
+    public double Fraction => Total == 0 ? 1 : (double)Done / Total;
+}
+
+/// <summary>What an <see cref="ImageRestorer"/> does.</summary>
+public enum RestoreKind
+{
+    /// <summary>Noise reduction (SCUNet, real-photo variant).</summary>
+    Denoise,
+
+    /// <summary>Deblur / sharpen (NAFNet, trained on motion blur).</summary>
+    Deblur,
+}
+
+/// <summary>
+/// AI photo restoration: noise reduction with SCUNet or deblurring with NAFNet. Full photos do not fit the models, so they run on
+/// overlapping 512 × 512 windows; neighbouring results are cross-faded over the overlap (each window's output
+/// drifts slightly in brightness, which a hard cut shows as bands in flat dark areas). Rows of windows are
+/// accumulated in a band buffer, so memory stays small even for 24 MP photos.
+/// Input / output are RGB 0..1, sizes divisible by 8.
+/// </summary>
+public sealed class ImageRestorer : IDisposable
+{
+    /// <summary>Model input window (divisible by 8).</summary>
+    public const int Window = 512;
+
+    /// <summary>Overlap between neighbouring windows (cross-faded).</summary>
+    public const int Overlap = 96;
+
+    private readonly OnnxModel _model;
+
+    private ImageRestorer(OnnxModel model, RestoreKind kind)
+    {
+        _model = model;
+        Kind = kind;
+    }
+
+    public RestoreKind Kind { get; }
+
+    public InferenceDevice Device => _model.Device;
+    public string? FallbackReason => _model.FallbackReason;
+
+    /// <summary>The model files for <paramref name="kind"/> (the first one is the graph to load).</summary>
+    public static IReadOnlyList<ModelInfo> ModelFiles(RestoreKind kind) =>
+        kind == RestoreKind.Denoise ? ModelCatalog.Denoise : ModelCatalog.Deblur;
+
+    public static ImageRestorer Load(ModelStore store, RestoreKind kind, InferenceDevice preferred = InferenceDevice.DirectML) =>
+        new(OnnxModel.Load(store.PathOf(ModelFiles(kind)[0]), preferred), kind);
+
+    /// <summary>Returns the restored photo (same size, RGBA8888 premultiplied, alpha kept).</summary>
+    public SKBitmap Restore(SKBitmap image, IProgress<TileProgress>? progress = null, CancellationToken cancel = default) =>
+        ProcessTiles(image, input => _model.Run(new Dictionary<string, Tensor> { [_model.InputNames[0]] = input })[_model.OutputNames[0]],
+            progress, cancel, ShapeFor(Kind));
+
+    /// <summary>
+    /// Window sizes the model accepts (small photos and thin strips are mirror-padded up to them): SCUNet's
+    /// attention windows need a multiple of 64; NAFNet's channel attention pools over a fixed area, so ≥ 384 px.
+    /// </summary>
+    private static WindowShape ShapeFor(RestoreKind kind) =>
+        kind == RestoreKind.Deblur ? new(Multiple: 16, Minimum: 384) : new(Multiple: 64, Minimum: 64);
+
+    /// <summary>
+    /// Runs <paramref name="run"/> (1 × 3 × H × W RGB 0..1 → same shape) over the image in overlapping windows
+    /// and assembles the cross-faded result. Windows larger than a small image are mirror-padded to the model's <paramref name="shape"/>.
+    /// </summary>
+    public static SKBitmap ProcessTiles(SKBitmap image, Func<Tensor, Tensor> run, IProgress<TileProgress>? progress = null,
+        CancellationToken cancel = default, WindowShape? shape = null)
+    {
+        using var converted = image.ColorType == SKColorType.Rgba8888 && image.AlphaType == SKAlphaType.Premul
+            ? null
+            : image.Copy(SKColorType.Rgba8888);
+        var source = converted ?? image;
+        int width = source.Width, height = source.Height;
+        var src = source.GetPixelSpan().ToArray();
+        int srcRow = source.RowBytes;
+        var dst = new byte[width * 4 * height];
+
+        var (multiple, minimum) = shape ?? new WindowShape(8, 8);
+        int winW = Math.Max(minimum, Math.Min(Window, RoundUp(width, multiple)));
+        int winH = Math.Max(minimum, Math.Min(Window, RoundUp(height, multiple)));
+        var xs = Starts(width, winW);
+        var ys = Starts(height, winH);
+        int total = xs.Length * ys.Length, done = 0;
+        int plane = winW * winH;
+        var input = new float[3 * plane];
+
+        // Band of rows [bandTop, bandTop + winH) with weighted sums (r, g, b, weight).
+        var band = new float[winH * width * 4];
+        int bandTop = ys[0];
+        for (int r = 0; r < ys.Length; r++)
+        {
+            int wy = ys[r];
+            if (wy != bandTop)
+            {
+                // Rows above wy are final: write them out and move the rest of the band up.
+                int shift = wy - bandTop;
+                WriteRows(band, width, bandTop, Math.Min(shift, height - bandTop), src, srcRow, dst);
+                Array.Copy(band, shift * width * 4, band, 0, (winH - shift) * width * 4);
+                Array.Clear(band, (winH - shift) * width * 4, shift * width * 4);
+                bandTop = wy;
+            }
+            for (int c = 0; c < xs.Length; c++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                int wx = xs[c];
+                for (int y = 0; y < winH; y++)
+                {
+                    int sy = Mirror(wy + y, height);
+                    for (int x = 0; x < winW; x++)
+                    {
+                        int sx = Mirror(wx + x, width);
+                        int o = sy * srcRow + sx * 4, i = y * winW + x;
+                        float a = src[o + 3];
+                        float inv = a > 0 ? 1f / a : 0;
+                        input[i] = src[o] * inv;
+                        input[plane + i] = src[o + 1] * inv;
+                        input[2 * plane + i] = src[o + 2] * inv;
+                    }
+                }
+                var output = run(new Tensor(input, [1, 3, winH, winW])).Data;
+                bool left = c > 0, right = c < xs.Length - 1, top = r > 0, bottom = r < ys.Length - 1;
+                for (int y = 0; y < winH && wy + y < height; y++)
+                {
+                    float fy = Fade(y, winH, top, bottom);
+                    for (int x = 0; x < winW && wx + x < width; x++)
+                    {
+                        float w = fy * Fade(x, winW, left, right);
+                        int i = y * winW + x, b = (y * width + wx + x) * 4;
+                        band[b] += w * output[i];
+                        band[b + 1] += w * output[plane + i];
+                        band[b + 2] += w * output[2 * plane + i];
+                        band[b + 3] += w;
+                    }
+                }
+                progress?.Report(new TileProgress(++done, total));
+            }
+        }
+        WriteRows(band, width, bandTop, Math.Min(winH, height - bandTop), src, srcRow, dst);
+
+        var result = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        System.Runtime.InteropServices.Marshal.Copy(dst, 0, result.GetPixels(), dst.Length);
+        return result;
+    }
+
+    /// <summary>Window start positions covering 0..size with at least <see cref="Overlap"/> between neighbours.</summary>
+    private static int[] Starts(int size, int window)
+    {
+        if (size <= window)
+            return [0];
+        int stride = window - Overlap;
+        int count = (size - window + stride - 1) / stride + 1;
+        // Spread the windows evenly so the last one ends exactly at the image edge.
+        return Enumerable.Range(0, count).Select(i => (int)Math.Round((double)i * (size - window) / (count - 1))).ToArray();
+    }
+
+    /// <summary>Cross-fade weight along one axis: ramps up over the overlap where a neighbour exists.</summary>
+    private static float Fade(int position, int window, bool before, bool after)
+    {
+        float w = 1f;
+        if (before && position < Overlap)
+            w = Math.Min(w, (position + 0.5f) / Overlap);
+        if (after && position >= window - Overlap)
+            w = Math.Min(w, (window - position - 0.5f) / Overlap);
+        return w;
+    }
+
+    private static void WriteRows(float[] band, int width, int top, int rows, byte[] src, int srcRow, byte[] dst)
+    {
+        for (int y = 0; y < rows; y++)
+        for (int x = 0; x < width; x++)
+        {
+            int b = (y * width + x) * 4, o = (top + y) * srcRow + x * 4, d = ((top + y) * width + x) * 4;
+            float wsum = band[b + 3];
+            float a = src[o + 3] / 255f;
+            if (wsum <= 0)
+            {
+                dst[d] = src[o]; dst[d + 1] = src[o + 1]; dst[d + 2] = src[o + 2];
+            }
+            else
+            {
+                dst[d] = ToByte(band[b] / wsum * a);
+                dst[d + 1] = ToByte(band[b + 1] / wsum * a);
+                dst[d + 2] = ToByte(band[b + 2] / wsum * a);
+            }
+            dst[d + 3] = src[o + 3];
+        }
+    }
+
+    private static byte ToByte(float v) => (byte)Math.Clamp((int)(v * 255f + 0.5f), 0, 255);
+
+    private static int RoundUp(int v, int multiple) => (v + multiple - 1) / multiple * multiple;
+
+    /// <summary>Mirror-pads coordinates outside 0..size-1.</summary>
+    private static int Mirror(int v, int size)
+    {
+        if (size == 1)
+            return 0;
+        int period = 2 * (size - 1);
+        v = ((v % period) + period) % period;
+        return v < size ? v : period - v;
+    }
+
+    /// <summary>Linear blend of two same-size RGBA8888 bitmaps: a + (b − a) × <paramref name="t"/>.</summary>
+    public static SKBitmap Blend(SKBitmap a, SKBitmap b, double t)
+    {
+        if (a.Width != b.Width || a.Height != b.Height)
+            throw new ArgumentException("Images must have the same size.");
+        var result = new SKBitmap(new SKImageInfo(a.Width, a.Height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var pa = a.GetPixelSpan();
+        var pb = b.GetPixelSpan();
+        var pr = result.GetPixelSpan();
+        int w = (int)Math.Round(Math.Clamp(t, 0, 1) * 256);
+        for (int i = 0; i < pr.Length; i++)
+            pr[i] = (byte)((pa[i] * (256 - w) + pb[i] * w + 128) >> 8);
+        return result;
+    }
+
+    public void Dispose() => _model.Dispose();
+}
+
+/// <summary>
+/// Keeps AI-restored photos on disk (<c>%LOCALAPPDATA%\PhotoEditor\cache\restore</c>), keyed by the photo's path,
+/// size and modification time plus a variant (e.g. "denoise", "deblur-of-denoised"), so the slow AI steps run once per photo.
+/// </summary>
+public sealed class RestoreCache(string directory)
+{
+    public static string DefaultDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PhotoEditor", "cache", "restore");
+
+    public string Directory { get; } = directory;
+
+    /// <summary>Bump when the denoise processing changes, so old results are recomputed.</summary>
+    public const int Version = 2;
+
+    /// <summary>Cache file for the photo at <paramref name="imagePath"/> (changes when the photo file changes).</summary>
+    public string PathFor(string imagePath, string variant)
+    {
+        var info = new FileInfo(imagePath);
+        var key = $"{Path.GetFullPath(imagePath).ToLowerInvariant()}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{variant}|v{Version}";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..32];
+        return Path.Combine(Directory, hash + ".png");
+    }
+
+    public SKBitmap? Load(string imagePath, string variant, int width, int height)
+    {
+        var path = PathFor(imagePath, variant);
+        if (!File.Exists(path))
+            return null;
+        using var decoded = SKBitmap.Decode(path);
+        if (decoded is null || decoded.Width != width || decoded.Height != height)
+            return null;
+        return decoded.Copy(SKColorType.Rgba8888);
+    }
+
+    public void Save(string imagePath, string variant, SKBitmap denoised)
+    {
+        System.IO.Directory.CreateDirectory(Directory);
+        var path = PathFor(imagePath, variant);
+        var temp = path + ".tmp";
+        using (var data = denoised.Encode(SKEncodedImageFormat.Png, 1) ?? throw new InvalidOperationException("Could not encode."))
+        using (var file = File.Create(temp))
+            data.SaveTo(file);
+        File.Move(temp, path, overwrite: true);
+    }
+}
