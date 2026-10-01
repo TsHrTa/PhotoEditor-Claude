@@ -477,10 +477,7 @@ public static class CpuAdjustmentRenderer
         float min = MathF.Min(r, MathF.Min(g, b));
         float sat = max > 1e-6f ? (max - min) / max : 0f;
         float factor = (1f + p.VibranceAmount * (1f - sat)) * p.SaturationFactor;
-        y = ToneCurve.Luminance(r, g, b);
-        r = MathF.Max(y + (r - y) * factor, 0f);
-        g = MathF.Max(y + (g - y) * factor, 0f);
-        b = MathF.Max(y + (b - y) * factor, 0f);
+        SaturationMath.Apply(ref r, ref g, ref b, factor);
 
         if (p.HasHsl)
             HslMath.Apply(ref r, ref g, ref b, p.Hsl);

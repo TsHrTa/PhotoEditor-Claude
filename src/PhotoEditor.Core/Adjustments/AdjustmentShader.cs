@@ -191,6 +191,16 @@ public static class AdjustmentShader
             return max(x, 0.0);
         }
 
+        // Saturation boost limited softly so the smallest channel does not go below 0 (see SaturationMath.LimitFactor).
+        float limitSaturation(float factor, float luminance, float minChannel) {
+            if (factor <= 1.0 || minChannel >= luminance || luminance <= 0.0) return factor;
+            float mx = max(luminance / (luminance - minChannel), 1.0);
+            float knee = max(0.8 * mx, 1.0);
+            if (factor <= knee) return factor;
+            if (mx - knee < 1e-4) return min(factor, mx);
+            return knee + (mx - knee) * (1.0 - exp(-(factor - knee) / (mx - knee)));
+        }
+
         float3 rgbToHsv(float3 c) {
             float mx = max(c.r, max(c.g, c.b));
             float mn = min(c.r, min(c.g, c.b));
@@ -501,6 +511,7 @@ public static class AdjustmentShader
             float sat = mx > 1e-6 ? (mx - mn) / mx : 0.0;
             float factor = (1.0 + vibranceAmount * (1.0 - sat)) * saturationFactor;
             y = dot(c, float3(0.2126, 0.7152, 0.0722));
+            factor = limitSaturation(factor, y, mn);
             c = max(y + (c - y) * factor, 0.0);
 
             c = applyHsl(c);
