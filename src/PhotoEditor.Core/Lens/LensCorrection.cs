@@ -366,22 +366,37 @@ public sealed class LensCorrection
         });
     }
 
-    /// <summary>The 4 bilinear taps around a position (pixel centres at +0.5), clamped at the border.</summary>
+    /// <summary>
+    /// The 4 x 4 taps of a Catmull-Rom (bicubic) interpolation around a position (pixel centres at +0.5), clamped at the
+    /// border. Bilinear sampling softens every corrected pixel (distortion, chromatic aberration and the Transform each
+    /// resample the whole photo); Catmull-Rom keeps the detail at the price of 16 reads instead of 4.
+    /// </summary>
     private readonly struct Taps
     {
-        public readonly int X0, X1, Y0, Y1;
-        public readonly float Fx, Fy;
+        public readonly int X0, X1, X2, X3, Y0, Y1, Y2, Y3;
+        public readonly float Wx0, Wx1, Wx2, Wx3, Wy0, Wy1, Wy2, Wy3;
 
         public Taps(float sx, float sy, int w, int h)
         {
             float u = sx - 0.5f, v = sy - 0.5f;
             int x0 = (int)MathF.Floor(u), y0 = (int)MathF.Floor(v);
-            Fx = u - x0;
-            Fy = v - y0;
-            X0 = Math.Clamp(x0, 0, w - 1);
-            X1 = Math.Clamp(x0 + 1, 0, w - 1);
-            Y0 = Math.Clamp(y0, 0, h - 1);
-            Y1 = Math.Clamp(y0 + 1, 0, h - 1);
+            float fx = u - x0, fy = v - y0;
+            X0 = Math.Clamp(x0 - 1, 0, w - 1);
+            X1 = Math.Clamp(x0, 0, w - 1);
+            X2 = Math.Clamp(x0 + 1, 0, w - 1);
+            X3 = Math.Clamp(x0 + 2, 0, w - 1);
+            Y0 = Math.Clamp(y0 - 1, 0, h - 1);
+            Y1 = Math.Clamp(y0, 0, h - 1);
+            Y2 = Math.Clamp(y0 + 1, 0, h - 1);
+            Y3 = Math.Clamp(y0 + 2, 0, h - 1);
+            (Wx0, Wx1, Wx2, Wx3) = CatmullRom(fx);
+            (Wy0, Wy1, Wy2, Wy3) = CatmullRom(fy);
+        }
+
+        private static (float, float, float, float) CatmullRom(float t)
+        {
+            float t2 = t * t, t3 = t2 * t;
+            return (-0.5f * t3 + t2 - 0.5f * t, 1.5f * t3 - 2.5f * t2 + 1f, -1.5f * t3 + 2f * t2 + 0.5f * t, 0.5f * t3 - 0.5f * t2);
         }
     }
 
@@ -395,13 +410,18 @@ public sealed class LensCorrection
 
         public byte* At(int x, int y) => _pixels + (long)y * _rowBytes + x * 4;
 
+        /// <summary>The interpolated channel value, kept within 0..255 (the cubic overshoots at edges).</summary>
         public float Sample(in Taps t, int ch)
         {
-            byte* r0 = _pixels + (long)t.Y0 * _rowBytes, r1 = _pixels + (long)t.Y1 * _rowBytes;
-            float top = r0[t.X0 * 4 + ch] + (r0[t.X1 * 4 + ch] - r0[t.X0 * 4 + ch]) * t.Fx;
-            float bottom = r1[t.X0 * 4 + ch] + (r1[t.X1 * 4 + ch] - r1[t.X0 * 4 + ch]) * t.Fx;
-            return top + (bottom - top) * t.Fy;
+            float row0 = Row(_pixels + (long)t.Y0 * _rowBytes, t, ch);
+            float row1 = Row(_pixels + (long)t.Y1 * _rowBytes, t, ch);
+            float row2 = Row(_pixels + (long)t.Y2 * _rowBytes, t, ch);
+            float row3 = Row(_pixels + (long)t.Y3 * _rowBytes, t, ch);
+            return Math.Clamp(t.Wy0 * row0 + t.Wy1 * row1 + t.Wy2 * row2 + t.Wy3 * row3, 0f, 255f);
         }
+
+        private static float Row(byte* row, in Taps t, int ch) =>
+            t.Wx0 * row[t.X0 * 4 + ch] + t.Wx1 * row[t.X1 * 4 + ch] + t.Wx2 * row[t.X2 * 4 + ch] + t.Wx3 * row[t.X3 * 4 + ch];
     }
 
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;

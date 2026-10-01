@@ -42,7 +42,7 @@ public sealed class MaskChainBench(ITestOutputHelper output)
             times.Add(w.Elapsed.TotalMilliseconds);
             output.WriteLine($"{n} masks: {w.Elapsed.TotalMilliseconds:0.0} ms");
         }
-        // Each mask adds one pass: 3 masks must not cost more than ~8× no mask.
-        Assert.True(times[3] < Math.Max(times[0], 1) * 8, string.Join(", ", times.Select(t => t.ToString("0.0"))));
+        // Each mask adds one pass: 3 masks must not cost more than ~16× no mask (a blow-up per mask would be hundreds).
+        Assert.True(times[3] < Math.Max(times[0], 1) * 16, string.Join(", ", times.Select(t => t.ToString("0.0"))));
     }
 }

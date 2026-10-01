@@ -49,6 +49,31 @@ public static class ColorMath
         return EncodeTable[i] + (EncodeTable[i + 1] - EncodeTable[i]) * (at - i);
     }
 
+    private static readonly float[] DecodeTable = BuildDecodeTable();
+
+    private static float[] BuildDecodeTable()
+    {
+        var table = new float[EncodeSteps + 2];
+        for (int i = 0; i < table.Length; i++)
+            table[i] = SrgbToLinear((float)i / EncodeSteps);
+        return table;
+    }
+
+    /// <summary>
+    /// <see cref="SrgbToLinear"/> interpolated from a table on 0..1 (error &lt; 1e-6 of white); exact above 1 (the curve
+    /// continues) and 0 below 0. For per-sample work on whole images.
+    /// </summary>
+    public static float SrgbToLinearFast(float encoded)
+    {
+        if (encoded >= 1f)
+            return SrgbToLinear(encoded);
+        if (encoded <= 0f)
+            return 0f;
+        float at = encoded * EncodeSteps;
+        int i = (int)at;
+        return DecodeTable[i] + (DecodeTable[i + 1] - DecodeTable[i]) * (at - i);
+    }
+
     public static byte ToByte(float c) => (byte)Math.Clamp((int)MathF.Round(c * 255f), 0, 255);
 
     private static float[] BuildSlopeTable()

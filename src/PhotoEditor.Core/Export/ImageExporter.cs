@@ -81,6 +81,9 @@ public static class ImageExporter
         var (w, h) = PreviewImage.PreviewSize(source.Width, source.Height, Math.Max(1, longEdge));
         if (w == source.Width && h == source.Height)
             return source;
+        // A float render is reduced in linear light with a Lanczos-3 (see FloatResampler).
+        if (FloatResampler.TryResize(source, w, h) is { } reduced)
+            return reduced;
         return source.Resize(new SKImageInfo(w, h, source.ColorType, SKAlphaType.Premul),
                    new SKSamplingOptions(new SKCubicResampler(1f / 3, 1f / 3)))
                ?? throw new InvalidOperationException("Could not resize the image.");

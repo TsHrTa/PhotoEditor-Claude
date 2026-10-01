@@ -500,7 +500,18 @@ public static class CpuAdjustmentRenderer
             return source;
         var f = crop.Frame(source.Width, source.Height);
         var (w, h) = crop.OutputSize(source.Width, source.Height);
-        var result = new SKBitmap(new SKImageInfo(w, h, source.ColorType == SKColorType.RgbaF16 ? SKColorType.RgbaF16 : SKColorType.Rgba8888, SKAlphaType.Premul));
+        var resultInfo = new SKImageInfo(w, h, source.ColorType == SKColorType.RgbaF16 ? SKColorType.RgbaF16 : SKColorType.Rgba8888, SKAlphaType.Premul);
+        // Without straightening the crop is whole pixels: copy them exactly (a fractional offset through the sampler
+        // would blur the picture by up to half a pixel).
+        if (Math.Abs(f.Angle) < 1e-9 && resultInfo.ColorType == source.ColorType)
+        {
+            int x0 = Math.Clamp((int)Math.Round(f.CenterX - w / 2.0), 0, Math.Max(0, source.Width - w));
+            int y0 = Math.Clamp((int)Math.Round(f.CenterY - h / 2.0), 0, Math.Max(0, source.Height - h));
+            using var subset = new SKBitmap();
+            if (source.ExtractSubset(subset, new SKRectI(x0, y0, x0 + w, y0 + h)))
+                return subset.Copy();
+        }
+        var result = new SKBitmap(resultInfo);
         using var canvas = new SKCanvas(result);
         using var image = SKImage.FromBitmap(source);
         canvas.Clear(SKColors.Transparent);
@@ -509,7 +520,7 @@ public static class CpuAdjustmentRenderer
         canvas.Translate((float)-f.CenterX, (float)-f.CenterY);
         // Clamp at the image border so edge pixels are not blended with transparency.
         using var shader = image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
-            new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
+            new SKSamplingOptions(new SKCubicResampler(0f, 0.5f))); // Catmull-Rom: sharper than bilinear for the rotation
         using var paint = new SKPaint { Shader = shader, BlendMode = SKBlendMode.Src };
         canvas.DrawRect(-source.Width, -source.Height, 3f * source.Width, 3f * source.Height, paint);
         return result;

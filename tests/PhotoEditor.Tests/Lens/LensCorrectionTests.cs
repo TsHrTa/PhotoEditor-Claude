@@ -204,4 +204,31 @@ public sealed class LensCorrectionTests
             Assert.True(Math.Abs(value - expected) < 0.02, $"x {x}: {value:F3} vs {expected:F3}");
         }
     }
-}
+
+    [Fact]
+    public void ResamplingKeepsFineDetail_ItIsNotBilinearSoft()
+    {
+        // A pattern with a 4-pixel period (one of the finest a sensor records), warped by a distortion that shifts
+        // the samples by fractions of a pixel: bilinear sampling would keep about 84 % of its contrast on average,
+        // the Catmull-Rom taps keep about 95 %.
+        using var photo = new SKBitmap(new SKImageInfo(300, 200, SKColorType.Rgba8888, SKAlphaType.Premul));
+        for (int y = 0; y < 200; y++)
+            for (int x = 0; x < 300; x++)
+            {
+                byte v = (byte)Math.Round(128 + 100 * Math.Sin(2 * Math.PI * (x + 0.5) / 4));
+                photo.SetPixel(x, y, new SKColor(v, v, v));
+            }
+        var correction = new LensCorrection(300, 200, null, 1, manualDistortion: 0.6);
+        using var corrected = correction.Apply(photo);
+        double sum = 0;
+        int n = 0;
+        for (int y = 90; y < 110; y++)
+            for (int x = 60; x < 240; x++)
+            {
+                double d = corrected.GetPixel(x, y).Red - 128;
+                sum += d * d;
+                n++;
+            }
+        double rms = Math.Sqrt(sum / n), rmsIn = 100 / Math.Sqrt(2);
+        Assert.True(rms / rmsIn > 0.9, $"contrast kept {rms / rmsIn:P0}");
+    }}

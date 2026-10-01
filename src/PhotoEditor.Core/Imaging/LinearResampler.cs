@@ -153,7 +153,7 @@ public static class LinearResampler
     }
 
     /// <summary>Lanczos-3 weights of every output position along one axis (normalised, edges clamped).</summary>
-    private sealed class Kernel
+    internal sealed class Kernel
     {
         public int[] Start = [];
         public int[] Count = [];
