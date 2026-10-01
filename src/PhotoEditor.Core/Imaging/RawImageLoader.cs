@@ -75,6 +75,25 @@ public static class RawImageLoader
     /// </summary>
     public static SKBitmap Load(string path) => Load(path, DefaultDemosaic);
 
+    /// <summary>
+    /// A half-size (a quarter of the pixels) render of the RAW through the same development as <see cref="Load(string)"/>
+    /// (same highlight rebuild, base curve, colour matrix, headroom), several times faster because nothing is demosaiced.
+    /// It is what the editor shows while the full decode runs, so the picture does not change tone when the full-size
+    /// photo replaces it (the camera's embedded JPEG has the camera's own tone curve). Null when LibRaw cannot read the
+    /// file (the full decode then falls back to ImageMagick).
+    /// </summary>
+    public static SKBitmap? LoadQuick(string path)
+    {
+        try
+        {
+            return LoadWithLibRaw(path, DefaultDemosaic, halfSize: true);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>As <see cref="Load(string)"/> with the given demosaicing algorithm.</summary>
     public static SKBitmap Load(string path, RawDemosaic demosaic)
     {
@@ -96,7 +115,7 @@ public static class RawImageLoader
     /// and applies a fixed base rendering (<see cref="Adjustments.RawBaseCurve"/>) instead of LibRaw's per-photo
     /// auto-brightening.
     /// </summary>
-    private static SKBitmap LoadWithLibRaw(string path, RawDemosaic demosaic)
+    private static SKBitmap LoadWithLibRaw(string path, RawDemosaic demosaic, bool halfSize = false)
     {
         using var context = Sdcb.LibRaw.RawContext.OpenFile(path);
         context.Unpack();
@@ -109,6 +128,7 @@ public static class RawImageLoader
             o.NoAutoBright = true;
             o.OutputBps = 16;
             o.UserQual = (Sdcb.LibRaw.DemosaicAlgorithm)(int)demosaic;
+            o.HalfSize = halfSize; // one output pixel per 2 x 2 sensor cells: no demosaicing at all
         });
         var multipliers = context.PreMultipler.Take(3).ToArray();
         if (multipliers.Length != 3 || multipliers.Any(m => !(m > 0)))

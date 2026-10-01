@@ -19,6 +19,12 @@ public sealed class PreviewImage
     public SKImage Full { get; }
     public SKImage Preview { get; }
 
+    /// <summary>
+    /// This image stands in for the photo while it decodes (the half-size quick render of a RAW, or the camera's JPEG):
+    /// the viewer keeps what it shows when the full photo replaces it, even at another resolution.
+    /// </summary>
+    public bool IsStandIn { get; init; }
+
     public int Width => Full.Width;
     public int Height => Full.Height;
 
@@ -26,7 +32,7 @@ public sealed class PreviewImage
     public double PreviewScale => (double)Preview.Width / Full.Width;
 
     /// <summary>Wraps <paramref name="original"/> (made immutable, pixels shared) and builds the preview.</summary>
-    public static PreviewImage Create(SKBitmap original, int maxPreviewSize = DefaultMaxPreviewSize)
+    public static PreviewImage Create(SKBitmap original, int maxPreviewSize = DefaultMaxPreviewSize, bool standIn = false)
     {
         original.SetImmutable();
         var full = SKImage.FromBitmap(original);
@@ -36,7 +42,7 @@ public sealed class PreviewImage
         Lens.LensVignetting.Attach(full, vignetting);
         var (w, h) = PreviewSize(original.Width, original.Height, maxPreviewSize);
         if (w == original.Width && h == original.Height)
-            return new PreviewImage(full, full);
+            return new PreviewImage(full, full) { IsStandIn = standIn };
 
         // Linear-light Lanczos (see LinearResampler); the layers of a RAW are filtered with the photo.
         SKBitmap small;
@@ -52,7 +58,7 @@ public sealed class PreviewImage
         var preview = SKImage.FromBitmap(small);
         Headroom.Attach(preview, smallHeadroom);
         Lens.LensVignetting.Attach(preview, vignetting);
-        return new PreviewImage(full, preview);
+        return new PreviewImage(full, preview) { IsStandIn = standIn };
     }
 
     /// <summary>A preview image made of existing images (the preview may be the full image itself).</summary>

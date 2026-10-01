@@ -13,8 +13,10 @@ using SkiaSharp;
 namespace PhotoEditor.ViewModels;
 
 /// <summary>
-/// Opening photos. A RAW first shows the camera's embedded JPEG preview (a fraction of a second) while the RAW
-/// decodes in the background; editing starts once the decoded photo replaces it. The neighbours in the filmstrip
+/// Opening photos. A RAW first shows a half-size render of itself (about half a second; the same development as the
+/// full decode, so the tone does not change when the full photo replaces it; the camera's embedded JPEG, which has the
+/// camera's own tone curve, is only the fallback) while the RAW decodes in the background; editing starts once the
+/// decoded photo replaces it. The neighbours in the filmstrip
 /// are decoded ahead, and the last few decoded photos are kept, so moving through a folder is quick.
 /// </summary>
 public partial class MainViewModel
@@ -65,7 +67,7 @@ public partial class MainViewModel
                 if (quick is not null)
                 {
                     ShowCameraPreview(path, quick.Value.Preview, quick.Value.Geometry);
-                    Timings.Log($"camera preview of {Path.GetFileName(path)} shown after {watch.Elapsed.TotalSeconds:0.00} s");
+                    Timings.Log($"quick preview of {Path.GetFileName(path)} shown after {watch.Elapsed.TotalSeconds:0.00} s");
                 }
             }
 
@@ -104,12 +106,13 @@ public partial class MainViewModel
     }
 
     /// <summary>
-    /// The RAW's embedded preview (a few pixels smaller than the decoded RAW; the viewer keeps its zoom when the
-    /// decoded photo replaces it) and the RAW's geometry; null if the RAW has no usable preview.
+    /// A quick preview of the RAW (<see cref="RawImageLoader.LoadQuick"/>: half size, the same rendering as the full
+    /// decode; or, if LibRaw cannot read it, the camera's embedded JPEG) and the RAW's geometry in the preview's pixels;
+    /// null if there is nothing usable. The viewer keeps its zoom when the decoded photo replaces it.
     /// </summary>
     private static (PreviewImage Preview, ImageGeometry Geometry)? CameraPreview(string path)
     {
-        var bitmap = EmbeddedPreview.Load(path);
+        var bitmap = RawImageLoader.LoadQuick(path) ?? EmbeddedPreview.Load(path);
         if (bitmap is null)
             return null;
         ImageGeometry geometry;
@@ -122,10 +125,10 @@ public partial class MainViewModel
             bitmap.Dispose();
             return null; // the decode will report the problem
         }
-        return (PreviewImage.Create(bitmap), geometry with { Width = bitmap.Width, Height = bitmap.Height });
+        return (PreviewImage.Create(bitmap, standIn: true), geometry with { Width = bitmap.Width, Height = bitmap.Height });
     }
 
-    /// <summary>Shows the camera preview with the saved edit; the editing panels stay disabled until the RAW is decoded.</summary>
+    /// <summary>Shows the quick preview with the saved edit; the editing panels stay disabled until the RAW is decoded.</summary>
     private void ShowCameraPreview(string path, PreviewImage preview, ImageGeometry geometry)
     {
         SaveEdits();
@@ -141,7 +144,7 @@ public partial class MainViewModel
         FilePath = path;
         ResetRestore(preview);
         IsShowingCameraPreview = true;
-        Status = $"{Path.GetFileName(path)}: camera preview — decoding the RAW for editing…";
+        Status = $"{Path.GetFileName(path)}: preview — decoding the RAW for editing…";
     }
 
     /// <summary>Shows the decoded photo and makes it editable.</summary>

@@ -257,12 +257,16 @@ public class ImageViewer : Control
             bool nearlySame = previous is not null && next is not null
                 && Math.Abs(previous.Width - next.Width) <= previous.Width / 100
                 && Math.Abs(previous.Height - next.Height) <= previous.Height / 100;
+            // A stand-in (the half-size quick render of a RAW) replaced by the full photo: the same picture at another
+            // resolution, so the view keeps showing the same part at the same size.
+            bool standInSwap = previous is { IsStandIn: true } && next is { IsStandIn: false }
+                && Math.Abs((double)previous.Width / previous.Height - (double)next.Width / next.Height) < 0.005;
             if (sameSize)
                 InvalidateVisual();
-            else if (nearlySame && next is not null)
+            else if ((nearlySame || standInSwap) && next is not null)
             {
                 SetDisplayFrame(Tool == EditTool.Crop ? Crop.None : State.Crop, State.Orientation, next);
-                Update(() => _view.ReplaceImageSize(_displayFrame.HalfWidth * 2, _displayFrame.HalfHeight * 2));
+                Update(() => _view.ReplaceImageSize(_displayFrame.HalfWidth * 2, _displayFrame.HalfHeight * 2, keepVisualSize: standInSwap));
             }
             else
                 UpdateDisplayCrop(force: true);

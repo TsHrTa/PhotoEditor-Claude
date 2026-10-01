@@ -26,6 +26,9 @@ public sealed class ViewTransform
             ? 1
             : Math.Min(ViewWidth / ImageWidth, ViewHeight / ImageHeight);
 
+    private double FitScaleFor(double width, double height) =>
+        width <= 0 || height <= 0 || ViewWidth <= 0 || ViewHeight <= 0 ? 1 : Math.Min(ViewWidth / width, ViewHeight / height);
+
     public void SetImageSize(double width, double height)
     {
         ImageWidth = width;
@@ -37,7 +40,12 @@ public sealed class ViewTransform
     /// Swaps in an image of nearly the same size (a RAW's camera preview replaced by the decoded RAW): the zoom
     /// stays and the same part of the photo stays in the centre.
     /// </summary>
-    public void ReplaceImageSize(double width, double height)
+    /// <param name="keepVisualSize">
+    /// The new image shows the same picture at another resolution (a half-size stand-in replaced by the full photo):
+    /// the scale follows the size ratio, so the same part of the picture stays visible and as large on the screen.
+    /// Without it the scale stays (images of nearly the same size).
+    /// </param>
+    public void ReplaceImageSize(double width, double height, bool keepVisualSize = false)
     {
         if (IsFit || ImageWidth <= 0 || ImageHeight <= 0)
         {
@@ -47,6 +55,8 @@ public sealed class ViewTransform
         var (cx, cy) = ViewToImage(ViewWidth / 2, ViewHeight / 2);
         cx *= width / ImageWidth;
         cy *= height / ImageHeight;
+        if (keepVisualSize)
+            Scale = Math.Clamp(Scale * ImageWidth / width, Math.Min(MinScale, FitScaleFor(width, height)), MaxScale);
         ImageWidth = width;
         ImageHeight = height;
         OffsetX = ViewWidth / 2 - cx * Scale;

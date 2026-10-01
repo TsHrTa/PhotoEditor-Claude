@@ -104,4 +104,26 @@ public class ViewTransformTests
         Assert.True(view.IsFit);
         Assert.Equal(view.FitScale, view.Scale, 6);
     }
-}
+
+    [Fact]
+    public void ReplaceImageSize_OfAHalfSizeStandIn_KeepsTheSamePartAtTheSameSizeOnScreen()
+    {
+        var view = new ViewTransform();
+        view.SetViewSize(800, 600);
+        view.SetImageSize(2000, 3000);        // the half-size quick render
+        view.ZoomTo(1, 400, 300);             // 100 % of the stand-in
+        view.Pan(-300, -200);
+        var (cx, cy) = view.ViewToImage(400, 300);   // the picture point at the centre, as a fraction of the picture
+        double fx = cx / 2000, fy = cy / 3000, shown = 800 / view.Scale / 2000;
+        view.ReplaceImageSize(4000, 6000, keepVisualSize: true);
+        Assert.Equal(0.5, view.Scale, 6);     // twice the pixels: half the scale
+        var (nx, ny) = view.ViewToImage(400, 300);
+        Assert.Equal(fx, nx / 4000, 4);
+        Assert.Equal(fy, ny / 6000, 4);
+        Assert.Equal(shown, 800 / view.Scale / 4000, 6); // the same share of the picture fits across the view
+
+        // Fit stays fit.
+        view.ZoomToFit();
+        view.ReplaceImageSize(2000, 3000, keepVisualSize: true);
+        Assert.True(view.IsFit);
+    }}

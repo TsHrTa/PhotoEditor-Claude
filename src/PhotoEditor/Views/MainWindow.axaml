@@ -503,8 +503,8 @@
                        IsVisible="{Binding !HasPreview}" />
             <Border IsVisible="{Binding IsShowingCameraPreview}" Background="#C0202020" CornerRadius="4"
                     Padding="8,4" Margin="8" HorizontalAlignment="Left" VerticalAlignment="Top"
-                    ToolTip.Tip="The JPEG preview the camera stored in the RAW file. Editing starts when the RAW is decoded.">
-                <TextBlock Text="Camera preview · decoding RAW…" Foreground="#E0E0E0" FontSize="12" />
+                    ToolTip.Tip="A quick half-size render of the RAW. Editing starts when the full RAW is decoded.">
+                <TextBlock Text="Preview · decoding RAW…" Foreground="#E0E0E0" FontSize="12" />
             </Border>
         </Panel>
     </DockPanel>
