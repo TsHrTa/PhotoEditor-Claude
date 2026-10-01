@@ -138,16 +138,23 @@ public static class AdjustmentShader
             float z = 2.0 * u / (1.0 - u + sqrt((1.0 - u) * (1.0 - u) + 4.0 * u / (4.3 * 4.3)));
             return z / 4.3;
         }
-        float3 rawExposure(float3 c, float gain) {
+        // Per-channel gains (white balance x exposure) on the scene values before the base curve (RawBaseCurve.ApplyScene).
+        float3 rawScene(float3 c, float3 gains) {
             float hi = max(c.r, max(c.g, c.b));
             float lo = max(min(c.r, min(c.g, c.b)), 0.0);
             if (hi <= 0.0) return c;
-            float h = rawCurve(rawCurveInverse(hi) * gain);
-            float l = rawCurve(rawCurveInverse(lo) * gain);
-            if (hi - lo < 1e-7) return float3(h);
-            return l + (max(c, 0.0) - lo) * ((h - l) / (hi - lo));
-        }
-        float highlightsStep(float x, float a) {
+            float hs = rawCurveInverse(hi);
+            float ls = rawCurveInverse(lo);
+            float3 s = float3(hs);
+            if (hi - lo >= 1e-7) s = ls + (max(c, 0.0) - lo) * ((hs - ls) / (hi - lo));
+            s *= gains;
+            float hi2 = max(s.r, max(s.g, s.b));
+            float lo2 = min(s.r, min(s.g, s.b));
+            float h = rawCurve(hi2);
+            float l = rawCurve(lo2);
+            if (hi2 - lo2 < 1e-9) return float3(h);
+            return l + (s - lo2) * ((h - l) / (hi2 - lo2));
+        }        float highlightsStep(float x, float a) {
             if (x <= 0.4 || (a > 0.0 && x >= 1.0)) return x;
             if (x < 1.0) {
                 float t = (x - 0.4) / 0.6;
@@ -536,8 +543,12 @@ public static class AdjustmentShader
                 c *= gain;
             }
             if (dehazeAmount != 0.0) c = dehaze(c, coord);
-            c *= whiteBalance * (sceneExposure > 0.0 ? 1.0 : exposureGain);
-            if (sceneExposure > 0.0 && exposureGain != 1.0) c = rawExposure(c, exposureGain);
+            if (sceneExposure > 0.0) {
+                float3 gains = whiteBalance * exposureGain;
+                if (gains.r != 1.0 || gains.g != 1.0 || gains.b != 1.0) c = rawScene(c, gains);
+            } else {
+                c *= whiteBalance * exposureGain;
+            }
 
             // Local highlights / shadows, then the tone curve on perceptual luminance, applied as a ratio
             float y = dot(c, float3(0.2126, 0.7152, 0.0722));

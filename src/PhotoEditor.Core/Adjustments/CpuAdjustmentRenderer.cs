@@ -421,12 +421,19 @@ public static class CpuAdjustmentRenderer
     /// </param>
     public static void ApplyLinear(ref float r, ref float g, ref float b, in PreparedAdjustments p, float baseRatio = 1f)
     {
-        float exposure = p.SceneExposure ? 1f : p.ExposureGain;
-        r *= p.WhiteBalanceR * exposure;
-        g *= p.WhiteBalanceG * exposure;
-        b *= p.WhiteBalanceB * exposure;
-        if (p.SceneExposure && p.ExposureGain != 1f)
-            RawBaseCurve.ApplyExposure(ref r, ref g, ref b, p.ExposureGain);
+        if (p.SceneExposure)
+        {
+            // RAW base curve: white balance and exposure act on the scene values before it (see RawBaseCurve.ApplyScene).
+            float gr = p.WhiteBalanceR * p.ExposureGain, gg = p.WhiteBalanceG * p.ExposureGain, gb = p.WhiteBalanceB * p.ExposureGain;
+            if (gr != 1f || gg != 1f || gb != 1f)
+                RawBaseCurve.ApplyScene(ref r, ref g, ref b, gr, gg, gb);
+        }
+        else
+        {
+            r *= p.WhiteBalanceR * p.ExposureGain;
+            g *= p.WhiteBalanceG * p.ExposureGain;
+            b *= p.WhiteBalanceB * p.ExposureGain;
+        }
 
         // Highlights / shadows: local, a factor from the curve on the base brightness (keeps local detail).
         float y = ToneCurve.Luminance(r, g, b);

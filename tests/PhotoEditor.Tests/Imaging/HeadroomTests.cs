@@ -135,6 +135,11 @@ public sealed class HeadroomTests
     {
         { "exposure", new EditState { Adjustments = new AdjustmentSettings { Exposure = -1.2, Contrast = 20 } } },
         { "highlights", new EditState { Adjustments = new AdjustmentSettings { Highlights = -100, Shadows = 30 } } },
+        { "white balance", new EditState { Adjustments = new AdjustmentSettings { Temperature = 70, Tint = -40, Exposure = 0.4 } } },
+        { "white balance in a mask", new EditState
+            {
+                Masks = [MaskOf(new AdjustmentSettings { Temperature = -80, Tint = 50 }, new RectComponent(0.2f, 0, 0.8f, 1))],
+            } },
         { "filters", new EditState { Adjustments = new AdjustmentSettings { Exposure = -1, SharpenAmount = 80, NoiseLuminance = 40, Soften = 30 } } },
         { "in a mask", new EditState
             {
@@ -194,6 +199,38 @@ public sealed class HeadroomTests
         Assert.Equal(0.5f, (cg - cb) / (cr - cb), 4);
     }
 
+    [Fact]
+    public void ApplyScene_WithEqualGains_IsTheExposure()
+    {
+        float r = 0.6f, g = 0.4f, b = 0.2f, r2 = r, g2 = g, b2 = b;
+        RawBaseCurve.ApplyScene(ref r, ref g, ref b, 1.7f, 1.7f, 1.7f);
+        RawBaseCurve.ApplyExposure(ref r2, ref g2, ref b2, 1.7f);
+        Assert.Equal((r2, g2, b2), (r, g, b));
+    }
+
+    [Fact]
+    public void WhiteBalanceOnARawActsOnTheSceneValues_SoHighlightsRollOffInsteadOfTurningColoured()
+    {
+        // Warm white balance gains (what Temperature +60 gives): on display values a bright grey cloud is multiplied
+        // outright (a strong orange cast, one channel far above white); on scene values the shoulder compresses it.
+        var (gr, gg, gb) = PreparedAdjustments.WhiteBalanceGains(60, 0);
+        float v = 0.9f;
+        float r = v, g = v, b = v;
+        RawBaseCurve.ApplyScene(ref r, ref g, ref b, gr, gg, gb);
+        float naiveSpread = (v * gr - v * gb) / (v * gr + v * gb);
+        float sceneSpread = (r - b) / (r + b);
+        Assert.True(sceneSpread > 0 && sceneSpread < naiveSpread * 0.7f, $"scene {sceneSpread:0.000} vs display {naiveSpread:0.000}");
+        // Midtones are balanced about the same either way (the curve is nearly a power law there).
+        float mr = 0.1f, mg = 0.1f, mb = 0.1f;
+        RawBaseCurve.ApplyScene(ref mr, ref mg, ref mb, gr, gg, gb);
+        float midNaive = (0.1f * gr - 0.1f * gb) / (0.1f * gr + 0.1f * gb);
+        Assert.InRange((mr - mb) / (mr + mb), midNaive * 0.6f, midNaive * 1.3f);
+        // Neutral gains leave everything alone, and a grey stays grey under equal gains.
+        float nr = 0.35f, ng = 0.35f, nb = 0.35f;
+        RawBaseCurve.ApplyScene(ref nr, ref ng, ref nb, 1f, 1f, 1f);
+        Assert.Equal(0.35f, nr, 5);
+        Assert.Equal(nr, nb, 6);
+    }
     [Fact]
     public void RawPhoto_ExposureDoesNotBlowTheSky()
     {

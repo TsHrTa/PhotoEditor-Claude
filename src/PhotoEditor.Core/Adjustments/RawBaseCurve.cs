@@ -40,24 +40,49 @@ public static class RawBaseCurve
     }
 
     /// <summary>
-    /// Exposure (×<paramref name="gain"/>) on a display-linear pixel of a photo rendered with this curve, as if it
-    /// were applied before the curve. Hue-preserving like the rendering: the brightest and darkest channels go
-    /// through the curve, the other keeps its place between them.
+    /// Exposure (x<paramref name="gain"/>) on a display-linear pixel of a photo rendered with this curve, as if it
+    /// were applied before the curve (see <see cref="ApplyScene"/>).
     /// </summary>
-    public static void ApplyExposure(ref float r, ref float g, ref float b, float gain)
+    public static void ApplyExposure(ref float r, ref float g, ref float b, float gain) =>
+        ApplyScene(ref r, ref g, ref b, gain, gain, gain);
+
+    /// <summary>
+    /// Per-channel gains (white balance, exposure) on a display-linear pixel of a photo rendered with this curve, applied
+    /// where they belong, on the scene-linear values before the curve: the rendering is undone (the brightest and darkest
+    /// channels through <see cref="Invert"/>, the other one keeps its place between them), the gains are applied, and the
+    /// rendering is done again with the same hue-preserving rule. A white balance then moves the highlights along the
+    /// shoulder (they roll off towards white) instead of tinting what is already near white, as it would on
+    /// display values.
+    /// </summary>
+    public static void ApplyScene(ref float r, ref float g, ref float b, float gainR, float gainG, float gainB)
     {
         float hi = MathF.Max(r, MathF.Max(g, b)), lo = MathF.Max(MathF.Min(r, MathF.Min(g, b)), 0);
         if (hi <= 0)
             return;
-        float h = Apply(Invert(hi) * gain), l = Apply(Invert(lo) * gain);
+        float hs = Invert(hi), ls = Invert(lo);
+        float sr, sg, sb;
         if (hi - lo < 1e-7f)
+            sr = sg = sb = hs;
+        else
+        {
+            float k = (hs - ls) / (hi - lo);
+            sr = ls + (MathF.Max(r, 0) - lo) * k;
+            sg = ls + (MathF.Max(g, 0) - lo) * k;
+            sb = ls + (MathF.Max(b, 0) - lo) * k;
+        }
+        sr *= gainR;
+        sg *= gainG;
+        sb *= gainB;
+        float hi2 = MathF.Max(sr, MathF.Max(sg, sb)), lo2 = MathF.Min(sr, MathF.Min(sg, sb));
+        float h = Apply(hi2), l = Apply(lo2);
+        if (hi2 - lo2 < 1e-9f)
         {
             r = g = b = h;
             return;
         }
-        float k = (h - l) / (hi - lo);
-        r = l + (MathF.Max(r, 0) - lo) * k;
-        g = l + (MathF.Max(g, 0) - lo) * k;
-        b = l + (MathF.Max(b, 0) - lo) * k;
+        float m = (h - l) / (hi2 - lo2);
+        r = l + (sr - lo2) * m;
+        g = l + (sg - lo2) * m;
+        b = l + (sb - lo2) * m;
     }
 }
