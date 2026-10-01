@@ -356,6 +356,8 @@ public static class EmbeddedPreview
         var (w, h) = PreviewImage.PreviewSize(source.Width, source.Height, longSide);
         if (w == source.Width && h == source.Height)
             return source;
+        if (LinearResampler.TryResize(source, null, w, h) is { } resized)
+            return resized.Photo;
         return source.Resize(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul),
                    new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear))
                ?? throw new InvalidOperationException("Could not resize the preview.");

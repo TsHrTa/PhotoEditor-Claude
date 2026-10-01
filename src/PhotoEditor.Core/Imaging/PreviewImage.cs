@@ -38,10 +38,19 @@ public sealed class PreviewImage
         if (w == original.Width && h == original.Height)
             return new PreviewImage(full, full);
 
-        var small = Downscale(original, w, h);
+        // Linear-light Lanczos (see LinearResampler); the layers of a RAW are filtered with the photo.
+        SKBitmap small;
+        Headroom? smallHeadroom;
+        if (LinearResampler.TryResize(original, headroom, w, h) is { } resized)
+            (small, smallHeadroom) = resized;
+        else
+        {
+            small = Downscale(original, w, h);
+            smallHeadroom = headroom?.Resized(w, h);
+        }
         small.SetImmutable();
         var preview = SKImage.FromBitmap(small);
-        Headroom.Attach(preview, headroom?.Resized(w, h));
+        Headroom.Attach(preview, smallHeadroom);
         Lens.LensVignetting.Attach(preview, vignetting);
         return new PreviewImage(full, preview);
     }
