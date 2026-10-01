@@ -112,6 +112,33 @@ Each item is meant to be one small, self-contained step.
 - [x] AI Remove: build a selection from several strokes (Alt erases), then Remove (Enter) / Clear (Esc)
 - [x] Filmstrip: hide the thumbnails (button, F6, double-click the top edge) or resize them by dragging the top edge; remembered
 
+### Phase 11 – Image quality (user request: a lighter app, but very high quality in what it does)
+Not goals: exact Lightroom copy, Colour Grading, camera profiles / Calibration, Color / Luminance Range masks, HDR / panorama.
+Order: sharpness ceiling first (demosaic, downscale), then the float / wide-gamut foundation, then colour and RAW fixes, then detail filters, resampling, AI and cleanups.
+- [ ] Better demosaicing: AHD (or DCB) as the default for editing and export instead of PPG (sharper fine detail, fewer maze / false-colour artefacts); PPG only for the instant preview if speed needs it; measure decode time
+- [ ] Better downscaling: build the preview (and thumbnails) once from the full image in linear light with a Lanczos / box filter, not repeated bilinear halving on gamma-encoded 8-bit
+- [ ] Float working image: RGBA F16 / F32 pipeline for display and export instead of 8-bit; the RAW Headroom and Fine layers become unnecessary and are removed once it works; no banding when a JPEG / RAW is pushed hard
+- [ ] Colour management: read the embedded ICC profile (JPEG / PNG / TIFF), wide-gamut working space (linear, ProPhoto- or Rec.2020-like) so saturated colours do not clip between passes, RAW decoded to it from LibRaw's camera matrix
+- [ ] Colour management: display conversion to the monitor profile, export in sRGB or Display P3 with the profile embedded
+- [ ] 16-bit TIFF input and output (needed to carry the extra precision)
+- [ ] RAW shadows without clipping at black: LibRaw's 16-bit output is unsigned, so sensor noise below the black level is clipped before demosaicing and `DevelopSensor` clamps negatives again after the colour matrix; this biases deep shadows (lifted noise floor, colour-cast speckle when shadows are raised). Subtract black ourselves from the raw buffer and demosaic in float so negative noise survives until after tone mapping
+- [ ] White balance in the right space: Temperature / Tint are RGB gains in linear sRGB after the camera matrix; apply them to the camera RGB before the matrix (and, ideally, switch the matrix with the illuminant) so shifting white balance does not shift hues and saturation
+- [ ] Gamut handling: Saturation / Vibrance / HSL clamp channels at 0 in sRGB primaries (`max(…, 0)`), which flattens saturated areas (red flowers, blue sky, sunsets); work in the wide-gamut space and map out-of-gamut colours softly (chroma compression) only at output
+- [ ] HSL in a better space: HSV on gamma 2.2 changes brightness when the hue moves (blue → cyan) and has no luminance compensation; use a perceptual space (OKLab / OKLCh) for hue, saturation and luminance per band, and for Vibrance's weighting
+- [ ] RAW exposure baseline: the base curve anchors white to the sensor's clip level; use the camera's baseline exposure (DNG BaselineExposure / per-model value, ISO) so the same scene renders with consistent brightness across cameras
+- [ ] Preview-to-full swap without a jump: the instant embedded preview and the full decode render with the same tone / colour, so nothing shifts when the decode finishes
+- [ ] Detail filters in the right domain: sharpening, Texture, Clarity, Soften, noise reduction and defringe now work on gamma-encoded 8-bit values with sparse 5 × 5 / 7 × 7 taps (spacing = radius, so large radii alias); run them in linear or perceptual float with real separable Gaussians / a pyramid; apply sharpening after tone mapping (it is before it now, so Contrast / Clarity amplify its halos) or with the output size in mind
+- [ ] Better noise reduction: wavelet or non-local-means denoise in linear light before tone mapping, replacing the 5 × 5 bilateral; luminance / colour sliders keep working
+- [ ] Noise reduction that knows the noise: the range sigma is fixed in gamma space, so it denoises highlights as strongly as shadows; use a noise model (per ISO / measured from the photo) so strength follows the signal, and denoise before Exposure / Shadows lift the shadows (and amplify the noise)
+- [ ] Better sharpening: edge-masked, a Detail slider, applied in linear light; Grain not planned
+- [ ] One resampling from the source: lens distortion / CA, Transform / Upright, straighten and crop are each a bilinear resampling of an already rendered 8-bit image (up to three softening steps, the last on the tone-mapped result); compose them into a single map and resample once from the float source with Lanczos / bicubic
+- [ ] Export downscale and output sharpening: `ImageExporter.Resize` uses Mitchell on gamma-encoded 8-bit and no output sharpening; resize in linear light with Lanczos, optional sharpening for the target size, and dither the final float → 8-bit conversion so smooth gradients do not band
+- [ ] RAW-level AI denoise: run the model on the demosaiced linear image (before the base curve) instead of the developed 8-bit one
+- [ ] AI steps in the float pipeline: SCUNet / NAFNet run on the 8-bit developed image and their result drops the fine layer; feed them the linear image (see RAW-level AI denoise), keep the highlights above white, and blend in the linear domain
+- [ ] Mask and map resolution: the tone-base map (≤ 512 px), the haze map (256 px, 8-bit) and preview masks (≤ 1600 px) are coarse; check edge halos of Highlights / Shadows / Dehaze on thin structures, make Dehaze's transmission limit (min 0.1, ×10 noise gain) noise-aware, and rasterise the export masks and maps from the same source as the preview
+- [ ] Capping / clipping review: replace hard caps that flatten strong edits (local gain 1/8…8, clarity 1/4…4, shadows / highlights second pass) with soft shoulders, and add a test that each slider's response is monotonic and has no flat or steep plateaus
+- [ ] Mask performance: merge the per-mask shader passes (one pass evaluating all masks from a cached mask atlas / texture array) so many masks no longer multiply shader cost
+
 ## Where I left off
 - 2026-09-29: Open image done. New `PhotoEditor.Core` library (UI-free: `ImageLoader` decodes via SkiaSharp and applies EXIF orientation) + `tests/PhotoEditor.Tests` (xUnit). `ImageViewer` control draws an SKImage through Avalonia's Skia lease (custom draw op), fit-to-window. Open via button / Ctrl+O / drag & drop / command-line arg. Dark theme. Screenshots under Xvfb on Linux work (apt `xvfb x11-apps imagemagick`). Next: zoom & pan.
 
