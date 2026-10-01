@@ -7,7 +7,7 @@ public static class ImageLoader
 {
     /// <summary>File extensions the loader can decode: SkiaSharp formats plus camera RAW (via LibRaw).</summary>
     public static readonly string[] SupportedExtensions =
-        [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", .. RawImageLoader.Extensions];
+        [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", .. TiffImageLoader.Extensions, .. RawImageLoader.Extensions];
 
     public static bool IsSupported(string path) =>
         SupportedExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
@@ -17,6 +17,8 @@ public static class ImageLoader
     {
         if (RawImageLoader.IsRaw(path))
             return RawImageLoader.Load(path);
+        if (TiffImageLoader.IsTiff(path))
+            return TiffImageLoader.Load(path);
 
         using var stream = File.OpenRead(path);
         using var codec = SKCodec.Create(stream)
@@ -44,6 +46,8 @@ public static class ImageLoader
     {
         if (RawImageLoader.IsRaw(path))
             return RawImageLoader.ReadOrientation(path);
+        if (TiffImageLoader.IsTiff(path))
+            return TiffImageLoader.ReadGeometry(path).Origin;
         using var codec = SKCodec.Create(path);
         return codec?.EncodedOrigin ?? SKEncodedOrigin.TopLeft;
     }

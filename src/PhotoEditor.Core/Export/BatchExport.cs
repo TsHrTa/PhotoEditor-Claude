@@ -33,7 +33,7 @@ public static class BatchExport
         var comparer = StringComparer.OrdinalIgnoreCase;
         var sources = photos.Select(p => Path.GetFullPath(p)).ToHashSet(comparer);
         var taken = new HashSet<string>(comparer);
-        string extension = options.Format.Format == ExportFormat.Png ? ".png" : ".jpg";
+        string extension = options.Format.Format switch { ExportFormat.Png => ".png", ExportFormat.Tiff => ".tif", _ => ".jpg" };
         var plan = new List<(string, string?)>();
         foreach (var photo in photos)
         {

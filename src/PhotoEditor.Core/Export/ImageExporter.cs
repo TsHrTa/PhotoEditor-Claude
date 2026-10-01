@@ -9,14 +9,21 @@ public enum ExportFormat
 {
     Jpeg,
     Png,
+
+    /// <summary>16-bit TIFF (LZW) with an sRGB profile, straight from the float render: no rounding to 8 bits.</summary>
+    Tiff,
 }
 
 /// <param name="LongEdge">Downscale so the long side is at most this many pixels (null = full size).</param>
 public sealed record ExportOptions(ExportFormat Format = ExportFormat.Jpeg, int JpegQuality = 90, int? LongEdge = null)
 {
-    /// <summary>Picks the format from the file extension (.png → PNG, otherwise JPEG).</summary>
-    public static ExportFormat FormatFromPath(string path) =>
-        Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase) ? ExportFormat.Png : ExportFormat.Jpeg;
+    /// <summary>Picks the format from the file extension (.png → PNG, .tif / .tiff → TIFF, otherwise JPEG).</summary>
+    public static ExportFormat FormatFromPath(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".png" => ExportFormat.Png,
+        ".tif" or ".tiff" => ExportFormat.Tiff,
+        _ => ExportFormat.Jpeg,
+    };
 }
 
 /// <summary>Renders the full-resolution image with the CPU pipeline and writes it, keeping the source's EXIF.</summary>
@@ -38,7 +45,9 @@ public static class ImageExporter
         byte[] bytes;
         try
         {
-            bytes = Encode(sized, options);
+            bytes = options.Format == ExportFormat.Tiff
+                ? TiffImageWriter.Encode(sized)
+                : Encode(sized, options);
         }
         finally
         {
@@ -51,7 +60,7 @@ public static class ImageExporter
         }
 
         var exif = sourcePath is null ? null : ExifMetadata.Read(sourcePath);
-        if (exif is not null)
+        if (exif is not null && options.Format != ExportFormat.Tiff) // no EXIF in the TIFF (see TiffImageWriter)
         {
             // Pixels are already upright (ImageLoader applied the orientation).
             exif = ExifMetadata.WithNormalOrientation(exif);

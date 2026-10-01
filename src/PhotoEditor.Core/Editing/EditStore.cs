@@ -126,6 +126,10 @@ public static class EditStore
                 throw new InvalidDataException($"Unsupported or corrupt RAW file ({ex.Message})", ex);
             }
         }
+        else if (TiffImageLoader.IsTiff(imagePath))
+        {
+            (width, height, _) = TiffImageLoader.ReadGeometry(imagePath);
+        }
         else
         {
             using var codec = SKCodec.Create(imagePath) ?? throw new InvalidDataException($"Unsupported or corrupt image: {imagePath}");

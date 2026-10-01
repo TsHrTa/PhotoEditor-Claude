@@ -281,6 +281,7 @@ public partial class MainWindow : Window
             [
                 new FilePickerFileType("JPEG") { Patterns = ["*.jpg", "*.jpeg"] },
                 new FilePickerFileType("PNG") { Patterns = ["*.png"] },
+                new FilePickerFileType("TIFF (16-bit)") { Patterns = ["*.tif", "*.tiff"] },
             ],
         });
         if (file?.TryGetLocalPath() is { } path)
