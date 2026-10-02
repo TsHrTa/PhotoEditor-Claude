@@ -15,7 +15,16 @@ public static class RawBaseCurve
     /// Lightroom's "Camera Standard" profile imitates: 4 stops under the sensor's white becomes ≈ 20 % grey
     /// (sRGB ≈ 124).
     /// </summary>
-    public const float Exposure = 4.3f;
+    public const float Exposure = 4.4f;
+
+    /// <summary>
+    /// The scene value (1 = where a neutral clips on the sensor) at which the highlight shoulder reaches display white.
+    /// Above 1 so that what the highlight rebuild reconstructs beyond the sensor's clip (bright clouds) still has
+    /// gradation under white instead of being clipped flat at once: with the shoulder ending exactly at 1, half of the
+    /// bright cloud pixels of a typical sky were already above white straight out of the decode, and became one flat
+    /// white area with a hard edge.
+    /// </summary>
+    public const float WhiteScene = 1.6f;
 
     /// <summary>
     /// The toe: the deepest shadows are darkened (≈ −0.5 stop at 2 % grey, −1.5 at 0.5 %), as the camera's and
@@ -23,10 +32,12 @@ public static class RawBaseCurve
     /// </summary>
     public const float Toe = 0.012f;
 
+    private const float WhiteZ = Exposure * WhiteScene;
+
     public static float Apply(float x)
     {
         float z = MathF.Max(x, 0) * Exposure;
-        float y = z * (1 + z / (Exposure * Exposure)) / (1 + z);
+        float y = z * (1 + z / (WhiteZ * WhiteZ)) / (1 + z);
         return y * y * (1 + Toe) / (y + Toe);
     }
 
@@ -35,7 +46,7 @@ public static class RawBaseCurve
     {
         y = MathF.Max(y, 0);
         float u = (y + MathF.Sqrt(y * y + 4 * (1 + Toe) * Toe * y)) / (2 * (1 + Toe));
-        float z = 2 * u / (1 - u + MathF.Sqrt((1 - u) * (1 - u) + 4 * u / (Exposure * Exposure)));
+        float z = 2 * u / (1 - u + MathF.Sqrt((1 - u) * (1 - u) + 4 * u / (WhiteZ * WhiteZ)));
         return z / Exposure;
     }
 

@@ -19,6 +19,62 @@ public sealed class PreviewImage
     public SKImage Full { get; }
     public SKImage Preview { get; }
 
+    // What the smaller levels are made from (null: this image has no pyramid, see ImageFor).
+    private SKBitmap? _previewBitmap;
+    private Headroom? _previewHeadroom;
+    private Lens.LensShading? _vignetting;
+    private readonly Dictionary<int, SKImage> _levels = [];
+    private readonly object _levelLock = new();
+
+    /// <summary>Smallest width of a pyramid level.</summary>
+    private const int MinLevelWidth = 360;
+
+    /// <summary>
+    /// The image to draw when the view shows the photo at <paramref name="viewScale"/> (screen pixels per full-resolution
+    /// pixel): the full image when zoomed in past the preview, otherwise the smallest pyramid level that is not smaller
+    /// than the screen size (levels step by 1/sqrt 2 from the preview, each made with the Lanczos in linear light). Drawn
+    /// by the GPU at 1 to 1.4 times the screen size it needs no mipmaps, which blur fine detail (leaves, hair); drawing the
+    /// 2560 px preview into a 1000 px window through trilinear mipmaps did.
+    /// </summary>
+    public SKImage ImageFor(double viewScale)
+    {
+        if (viewScale > PreviewScale * 1.01)
+            return Full;
+        if (_previewBitmap is null)
+            return Preview;
+        int level = 0;
+        while (level < 6 && Preview.Width * Math.Pow(0.5, (level + 1) / 2.0) / Full.Width >= viewScale
+            && Preview.Width * Math.Pow(0.5, (level + 1) / 2.0) >= MinLevelWidth)
+            level++;
+        return level == 0 ? Preview : Level(level);
+    }
+
+    private SKImage Level(int level)
+    {
+        lock (_levelLock)
+        {
+            if (_levels.TryGetValue(level, out var cached))
+                return cached;
+            int width = Math.Max(1, (int)Math.Round(Preview.Width * Math.Pow(0.5, level / 2.0)));
+            int height = Math.Max(1, (int)Math.Round((double)Preview.Height * width / Preview.Width));
+            SKBitmap small;
+            Headroom? headroom;
+            if (LinearResampler.TryResize(_previewBitmap!, _previewHeadroom, width, height) is { } resized)
+                (small, headroom) = resized;
+            else
+            {
+                small = Downscale(_previewBitmap!, width, height);
+                headroom = _previewHeadroom?.Resized(width, height);
+            }
+            small.SetImmutable();
+            var image = SKImage.FromBitmap(small);
+            Headroom.Attach(image, headroom);
+            Lens.LensVignetting.Attach(image, _vignetting);
+            _levels[level] = image;
+            return image;
+        }
+    }
+
     /// <summary>
     /// This image stands in for the photo while it decodes (the half-size quick render of a RAW, or the camera's JPEG):
     /// the viewer keeps what it shows when the full photo replaces it, even at another resolution.
@@ -58,7 +114,7 @@ public sealed class PreviewImage
         var preview = SKImage.FromBitmap(small);
         Headroom.Attach(preview, smallHeadroom);
         Lens.LensVignetting.Attach(preview, vignetting);
-        return new PreviewImage(full, preview) { IsStandIn = standIn };
+        return new PreviewImage(full, preview) { IsStandIn = standIn, _previewBitmap = small, _previewHeadroom = smallHeadroom, _vignetting = vignetting };
     }
 
     /// <summary>A preview image made of existing images (the preview may be the full image itself).</summary>

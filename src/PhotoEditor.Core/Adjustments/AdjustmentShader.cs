@@ -128,15 +128,15 @@ public static class AdjustmentShader
 
         // RawBaseCurve (constants: RawBaseCurve.Exposure / Toe) and Exposure applied before it.
         float rawCurve(float x) {
-            float z = max(x, 0.0) * 4.3;
-            float y = z * (1.0 + z / (4.3 * 4.3)) / (1.0 + z);
+            float z = max(x, 0.0) * 4.4;
+            float y = z * (1.0 + z / (7.04 * 7.04)) / (1.0 + z);
             return y * y * (1.0 + 0.012) / (y + 0.012);
         }
         float rawCurveInverse(float y) {
             y = max(y, 0.0);
             float u = (y + sqrt(y * y + 4.0 * (1.0 + 0.012) * 0.012 * y)) / (2.0 * (1.0 + 0.012));
-            float z = 2.0 * u / (1.0 - u + sqrt((1.0 - u) * (1.0 - u) + 4.0 * u / (4.3 * 4.3)));
-            return z / 4.3;
+            float z = 2.0 * u / (1.0 - u + sqrt((1.0 - u) * (1.0 - u) + 4.0 * u / (7.04 * 7.04)));
+            return z / 4.4;
         }
         // Per-channel gains (white balance x exposure) on the scene values before the base curve (RawBaseCurve.ApplyScene).
         float3 rawScene(float3 c, float3 gains) {
@@ -776,7 +776,9 @@ public static class AdjustmentShader
             ["vignetteHalf"] = new[] { frame.HalfWidth, frame.HalfHeight },
             ["vignetteRotation"] = new[] { frame.Cos, frame.Sin },
             ["sharpenAmount"] = sharpen ? p.SharpenAmount : 0f,
-            ["sharpenStep"] = p.SharpenRadius * pixelScale,
+            // On a reduced preview the radius shrinks with it, until the blur would be finer than the preview's own pixels and the
+            // sharpening vanishes: keep at least half a preview pixel, so a photo shown small stays crisp (Lightroom sharpens at full size and then reduces).
+            ["sharpenStep"] = pixelScale < 1 ? MathF.Max(p.SharpenRadius * pixelScale, 0.5f) : p.SharpenRadius * pixelScale,
             ["sharpenMasking"] = p.SharpenMasking,
             ["softenAmount"] = p.SoftenAmount,
             ["useToneBase"] = tone.Bound ? 1f : 0f,

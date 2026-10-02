@@ -404,12 +404,14 @@ public sealed class HeadroomTests
     }
 
     [Fact]
-    public void BaseCurve_BrightensMidtones_AndRollsOffToWhiteAtTheSensorsWhite()
+    public void BaseCurve_BrightensMidtones_AndRollsOffToWhiteAboveTheSensorsWhite()
     {
         Assert.Equal(0, RawImageLoader.BaseCurve(0));
-        Assert.Equal(1, RawImageLoader.BaseCurve(1), 5);
+        // White is reached above the sensor's clip, so what the highlight rebuild reconstructs keeps its gradation.
+        Assert.Equal(1, RawImageLoader.BaseCurve(RawBaseCurve.WhiteScene), 5);
+        Assert.InRange(RawImageLoader.BaseCurve(1), 0.8f, 0.95f);
         Assert.InRange(RawImageLoader.BaseCurve(1 / 16f), 0.18f, 0.23f); // 4 stops down: about as bright as the camera's JPEG
-        Assert.True(RawImageLoader.BaseCurve(2) > 1.2f);
+        Assert.True(RawImageLoader.BaseCurve(2) > 1.02f);
         float prev = -1;
         for (float x = 0.01f; x <= 4; x += 0.01f)
         {
@@ -432,14 +434,18 @@ public sealed class HeadroomTests
             30000, 30000, 30000,  // a neutral that just clips (the lowest clip level)
             45000, 30000, 45000,  // brighter: green clipped, red / blue 1.5 × — a white cloud's core
             15000, 15000, 15000,  // one stop down: grey
+            65000, 65000, 65000,  // far above the clip level (2.2 x): beyond even the shoulder
         ];
-        using var photo = RawImageLoader.DevelopSensor(rgb, 3, 1, clip, identity);
+        using var photo = RawImageLoader.DevelopSensor(rgb, 4, 1, clip, identity);
         var headroom = Headroom.Of(photo)!;
         var white = photo.GetPixel(0, 0);
-        Assert.True(white.Red >= 254 && white.Green >= 254 && white.Blue >= 254, white.ToString());
+        // A neutral that just clips is a very bright grey, still under white (the shoulder ends above the clip).
+        Assert.True(white.Red >= 225 && white.Red == white.Green && white.Green == white.Blue, white.ToString());
         var core = photo.GetPixel(1, 0);
-        Assert.Equal((255, 255, 255), (core.Red, core.Green, core.Blue));
-        var extra = headroom.Bitmap.GetPixel(1, 0);
+        Assert.True(core.Red >= 245 && core.Red == core.Green && core.Green == core.Blue, core.ToString()); // not pink
+        var beyond = photo.GetPixel(3, 0);
+        Assert.Equal((255, 255, 255), (beyond.Red, beyond.Green, beyond.Blue));
+        var extra = headroom.Bitmap.GetPixel(3, 0);
         Assert.True(extra.Red > 0 && extra.Red == extra.Green && extra.Green == extra.Blue, extra.ToString());
         var grey = photo.GetPixel(2, 0);
         Assert.Equal(grey.Red, grey.Green);

@@ -1029,7 +1029,8 @@ public class ImageViewer : Control
         var (x1, y1) = _view.ImageToView(_view.ImageWidth, _view.ImageHeight);
         var clip = new SKRect((float)x0, (float)y0, (float)x1, (float)y1);
         // Use the full-resolution image only when the preview would be magnified.
-        var image = _view.Scale > source.PreviewScale * 1.01 ? source.Full : source.Preview;
+        // (and otherwise the pyramid level closest above the screen size, see PreviewImage.ImageFor).
+        var image = source.ImageFor(_view.Scale);
         // Drawn image pixel → view: scale to full resolution, into the crop frame, then the view transform.
         var f = _displayFrame;
         var toView = SKMatrix.CreateTranslation((float)_view.OffsetX, (float)_view.OffsetY)
@@ -1171,10 +1172,13 @@ public class ImageViewer : Control
             if (leaseFeature is null)
                 return;
             using var lease = leaseFeature.Lease();
-            // Smooth when shrinking, crisp pixels when zoomed in far.
+            // Crisp pixels when zoomed in far; plain bilinear when the image is at most 1.5x the screen size (the preview
+            // pyramid makes that the usual case; mipmaps would blur fine detail); mipmaps for a bigger reduction.
             var sampling = scale >= 2
                 ? new SKSamplingOptions(SKFilterMode.Nearest)
-                : new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear);
+                : pixelScale / scale < 1.5
+                    ? new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None)
+                    : new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear);
             var canvas = lease.SkCanvas;
             using var shader = AdjustmentShader.CreateShader(image, state, sampling, m => maskImages.GetValueOrDefault(m.Id), pixelScale);
             using var paint = new SKPaint { Shader = shader };

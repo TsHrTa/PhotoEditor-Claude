@@ -106,3 +106,47 @@ public sealed class LinearResamplerTests
         Assert.Null(LinearResampler.TryResize(opaque, null, 16, 16));
     }
 }
+
+public sealed class PreviewPyramidTests
+{
+    private static PreviewImage Make()
+    {
+        var bitmap = new SKBitmap(new SKImageInfo(4000, 2000, SKColorType.Rgba8888, SKAlphaType.Premul));
+        bitmap.Erase(new SKColor(120, 130, 140));
+        return PreviewImage.Create(bitmap);
+    }
+
+    [Fact]
+    public void TheViewGetsTheSmallestLevelThatIsNotSmallerThanTheScreenSize()
+    {
+        var preview = Make(); // 4000 px wide, preview 2560
+        Assert.Same(preview.Full, preview.ImageFor(1.0));                  // zoomed past the preview: full
+        Assert.Same(preview.Preview, preview.ImageFor(0.64));              // about the preview's own scale
+        foreach (double scale in new[] { 0.5, 0.3, 0.2, 0.12 })
+        {
+            var image = preview.ImageFor(scale);
+            double levelScale = (double)image.Width / preview.Width;
+            Assert.True(levelScale >= scale - 1e-9, $"scale {scale}: level {levelScale:0.000} would be magnified");
+            Assert.True(levelScale < scale * 1.5 || image.Width <= 400, $"scale {scale}: level {levelScale:0.000} is far above the screen size");
+        }
+        Assert.Same(preview.ImageFor(0.3), preview.ImageFor(0.3)); // made once
+        Assert.True(preview.ImageFor(0.2).Width < preview.ImageFor(0.5).Width);
+    }
+
+    [Fact]
+    public void ALevelOfARawKeepsItsLayers()
+    {
+        var bitmap = new SKBitmap(new SKImageInfo(3000, 2000, SKColorType.Rgba8888, SKAlphaType.Premul));
+        bitmap.Erase(new SKColor(255, 255, 255));
+        var extra = new SKBitmap(new SKImageInfo(3000, 2000, SKColorType.Rgba8888, SKAlphaType.Opaque));
+        extra.Erase(new SKColor(100, 100, 100));
+        Headroom.Attach(bitmap, new Headroom(extra, 0.5f) { BaseCurve = true });
+        var preview = PreviewImage.Create(bitmap);
+        var level = preview.ImageFor(0.2);
+        Assert.NotSame(preview.Preview, level);
+        var layers = Headroom.Of(level);
+        Assert.NotNull(layers);
+        Assert.True(layers!.BaseCurve);
+        Assert.Equal(level.Width, layers.Width);
+    }
+}
