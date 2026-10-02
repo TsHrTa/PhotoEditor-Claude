@@ -380,18 +380,35 @@ public static class AdjustmentShader
             return t.a > 0.0 ? float3(t.rgb) / t.a : fallback;
         }
 
-        // Luminance noise at coord: brightness minus its edge-preserving 5 × 5 average (spatial sigma 1 tap,
-        // range sigma 0.05), the same for all channels so colours are kept.
+        // Luminance noise at coord: brightness minus its non-local-means estimate: the weighted mean of the 5 x 5
+        // neighbours, each weighted by how well its 3 x 3 brightness patch matches the centre's patch (the mean
+        // squared difference minus the part noise alone explains, range h^2 = 0.004), with a mild spatial falloff.
+        // The same change is subtracted from all channels so colours are kept.
         float lumaNoise(float2 coord, float3 c0) {
-            float y0 = lum(c0);
-            float sum = 0.0;
-            float wsum = 0.0;
+            float cp[9];
+            for (int pj = 0; pj < 3; pj++) {
+                for (int pi = 0; pi < 3; pi++) {
+                    cp[pj * 3 + pi] = lum(sourceAt(coord + float2(float(pi - 1), float(pj - 1)) * lumaNoiseStep, c0));
+                }
+            }
+            float y0 = cp[4];
+            float sum = y0;
+            float wsum = 1.0;
             for (int j = -2; j <= 2; j++) {
                 for (int i = -2; i <= 2; i++) {
-                    float y = lum(sourceAt(coord + float2(float(i), float(j)) * lumaNoiseStep, c0));
-                    float d = y - y0;
-                    float w = exp(-float(i * i + j * j) / 2.0) * exp(-d * d / 0.005);
-                    sum += w * y;
+                    if (i == 0 && j == 0) continue;
+                    float dist = 0.0;
+                    float yc = 0.0;
+                    for (int pj = 0; pj < 3; pj++) {
+                        for (int pi = 0; pi < 3; pi++) {
+                            float yy = lum(sourceAt(coord + float2(float(i + pi - 1), float(j + pj - 1)) * lumaNoiseStep, c0));
+                            float d = yy - cp[pj * 3 + pi];
+                            dist += d * d;
+                            if (pi == 1 && pj == 1) yc = yy;
+                        }
+                    }
+                    float w = exp(-max(dist / 9.0 - 0.0006, 0.0) / 0.004) * exp(-float(i * i + j * j) / 8.0);
+                    sum += w * yc;
                     wsum += w;
                 }
             }

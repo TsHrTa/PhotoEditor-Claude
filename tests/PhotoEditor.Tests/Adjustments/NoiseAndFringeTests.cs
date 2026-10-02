@@ -36,6 +36,27 @@ public sealed class NoiseAndFringeTests
     }
 
     [Fact]
+    public void LuminanceNoise_KeepsThinLines_WhileSmoothingFlats()
+    {
+        // Grey 100 with ±6 noise and a 1-px bright vertical line (180) every 10 px: patches along the line match each
+        // other, so non-local means averages along it and keeps most of its contrast.
+        var rnd = new Random(3);
+        using var src = new SKBitmap(new SKImageInfo(60, 40, SKColorType.Rgba8888, SKAlphaType.Premul));
+        for (int y = 0; y < 40; y++)
+            for (int x = 0; x < 60; x++)
+            {
+                byte v = (byte)((x % 10 == 5 ? 180 : 100) + rnd.Next(-6, 7));
+                src.SetPixel(x, y, new SKColor(v, v, v));
+            }
+        using var result = CpuAdjustmentRenderer.Render(src, new AdjustmentSettings { NoiseLuminance = 100 });
+        double line = Enumerable.Range(4, 32).Average(y => result.GetPixel(25, y).Red);
+        double flat = Enumerable.Range(4, 32).Average(y => result.GetPixel(22, y).Red);
+        Assert.True(line - flat > 55, $"line contrast {line - flat:F1}");
+        double flatStd = Math.Sqrt(Enumerable.Range(4, 32).Average(y => Math.Pow(result.GetPixel(22, y).Red - flat, 2)));
+        Assert.True(flatStd < 3.5, $"flat std {flatStd:F1}");
+    }
+
+    [Fact]
     public void ColorNoise_IsSmoothed_BrightnessDetailKept()
     {
         // Grey with random colour speckles of equal brightness, plus a 1-px brightness stripe every 6 px.

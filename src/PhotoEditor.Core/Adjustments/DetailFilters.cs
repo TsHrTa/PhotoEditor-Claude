@@ -39,18 +39,36 @@ public readonly unsafe struct DetailFilters
     public void Centre(int x, int y, float fr, float fg, float fb, out float r, out float g, out float b) =>
         At(x, y, fr, fg, fb, out r, out g, out b);
 
-    /// <summary>Brightness minus its edge-preserving 5 × 5 average (spatial sigma 1 tap, range sigma 0.05).</summary>
+    /// <summary>
+    /// Brightness minus its non-local-means estimate: the weighted mean of the 5 × 5 neighbours, each weighted by how
+    /// well its 3 × 3 brightness patch matches the centre's patch (see <c>NlmWeight</c> in the shader).
+    /// </summary>
     public float LumaNoise(int x, int y, float cr, float cg, float cb)
     {
         const int step = PreparedAdjustments.LumaNoiseStep;
-        float y0 = Lum(cr, cg, cb), sum = 0, wsum = 0;
+        Span<float> centre = stackalloc float[9];
+        for (int pj = -1; pj <= 1; pj++)
+            for (int pi = -1; pi <= 1; pi++)
+            {
+                At(x + pi * step, y + pj * step, cr, cg, cb, out float r, out float g, out float b);
+                centre[(pj + 1) * 3 + pi + 1] = Lum(r, g, b);
+            }
+        float y0 = centre[4], sum = y0, wsum = 1;
         for (int j = -2; j <= 2; j++)
             for (int i = -2; i <= 2; i++)
             {
-                At(x + i * step, y + j * step, cr, cg, cb, out float r, out float g, out float b);
-                float yy = Lum(r, g, b), d = yy - y0;
-                float w = MathF.Exp(-(i * i + j * j) / 2f) * MathF.Exp(-d * d / 0.005f);
-                sum += w * yy;
+                if (i == 0 && j == 0) continue;
+                float dist = 0, yc = 0;
+                for (int pj = -1; pj <= 1; pj++)
+                    for (int pi = -1; pi <= 1; pi++)
+                    {
+                        At(x + (i + pi) * step, y + (j + pj) * step, cr, cg, cb, out float r, out float g, out float b);
+                        float yy = Lum(r, g, b), d = yy - centre[(pj + 1) * 3 + pi + 1];
+                        dist += d * d;
+                        if (pi == 0 && pj == 0) yc = yy;
+                    }
+                float w = MathF.Exp(-MathF.Max(dist / 9f - 0.0006f, 0f) / 0.004f) * MathF.Exp(-(i * i + j * j) / 8f);
+                sum += w * yc;
                 wsum += w;
             }
         return y0 - sum / wsum;
