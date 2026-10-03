@@ -118,6 +118,7 @@ public static class RawImageLoader
     private static SKBitmap LoadWithLibRaw(string path, RawDemosaic demosaic, bool halfSize = false)
     {
         using var context = Sdcb.LibRaw.RawContext.OpenFile(path);
+        UseCameraCrop(context);
         context.Unpack();
         context.DcrawProcess(o =>
         {
@@ -144,6 +145,30 @@ public static class RawImageLoader
         float max = multipliers.Max();
         var clip = multipliers.Select(m => 65535f * m / max).ToArray();
         return DevelopSensor(rgb, image.Width, image.Height, clip, matrix);
+    }
+
+    /// <summary>
+    /// LibRaw sizes the Canon R8 image 5999 × 3999 although the camera's own crop (and Lightroom's output) is
+    /// 6000 × 4000, the sensor has the extra column and row. When the file's inset crop starts at the active area and is
+    /// at most 2 pixels away from LibRaw's size, use the camera's size (set before Unpack, which allocates by it).
+    /// </summary>
+    private static void UseCameraCrop(Sdcb.LibRaw.RawContext context)
+    {
+        var handle = context.UnsafeGetHandle();
+        var data = Marshal.PtrToStructure<Sdcb.LibRaw.Natives.LibRawData>(handle);
+        var sizes = data.ImageSizes;
+        var crop = sizes.RawInsetCrops[0];
+        if (crop.CWidth == 0 || crop.CHeight == 0 || crop.CLeft != sizes.LeftMargin || crop.CTop != sizes.TopMargin
+            || Math.Abs(crop.CWidth - sizes.Width) > 2 || Math.Abs(crop.CHeight - sizes.Height) > 2
+            || crop.CLeft + crop.CWidth > sizes.RawWidth || crop.CTop + crop.CHeight > sizes.RawHeight
+            || sizes.Width != sizes.IWidth || sizes.Height != sizes.IHeight)
+            return;
+        int offset = (int)Marshal.OffsetOf<Sdcb.LibRaw.Natives.LibRawData>(nameof(data.ImageSizes));
+        int At(string field) => offset + (int)Marshal.OffsetOf<Sdcb.LibRaw.Natives.LibRawImageSizes>(field);
+        Marshal.WriteInt16(handle, At(nameof(sizes.Width)), (short)crop.CWidth);
+        Marshal.WriteInt16(handle, At(nameof(sizes.IWidth)), (short)crop.CWidth);
+        Marshal.WriteInt16(handle, At(nameof(sizes.Height)), (short)crop.CHeight);
+        Marshal.WriteInt16(handle, At(nameof(sizes.IHeight)), (short)crop.CHeight);
     }
 
     /// <summary>The base rendering (<see cref="Adjustments.RawBaseCurve"/>), scene-linear to display-linear.</summary>
@@ -273,7 +298,7 @@ public static class RawImageLoader
         return bitmap;
     }
 
-    private static float ColorMathEncode(float linear) => Adjustments.ColorMath.LinearToSrgb(linear);
+    private static float ColorMathEncode(float linear) => Adjustments.ColorMath.LinearToSrgbFast(linear);
 
     private static SKBitmap LoadWithMagick(string path)
     {

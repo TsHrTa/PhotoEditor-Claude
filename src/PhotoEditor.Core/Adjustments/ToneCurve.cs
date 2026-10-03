@@ -35,6 +35,12 @@ public static class ToneCurve
     public const float MaxLocalGain = 8f;
 
     /// <summary>
+    /// Colour boost (factor on the distance from luminance) that goes with darkening a pixel by <paramref name="gain"/> (≤ 1)
+    /// with Highlights: a darker blue of the same channel ratios looks greyer, so up to +60 % colour is added at gain 0.125.
+    /// </summary>
+    public static float DarkenedColourBoost(float gain) => 1f + 0.6f * (1f - Math.Clamp(gain, 0f, 1f));
+
+    /// <summary>
     /// Highlights / shadows as a brightness factor for a pixel whose base (area) luminance is
     /// <paramref name="baseLuminance"/> (linear): the curve moves the base, the pixel follows by the same factor,
     /// so its detail relative to the area is kept. Mirrored in the shader.

@@ -201,14 +201,11 @@ public static class AdjustmentShader
             return max(x, 0.0);
         }
 
-        // Saturation boost limited softly so the smallest channel does not go below 0 (see SaturationMath.LimitFactor).
+        // Saturation boost applied in full up to the sRGB edge, 70 % of the rest beyond it (see SaturationMath.LimitFactor).
         float limitSaturation(float factor, float luminance, float minChannel) {
             if (factor <= 1.0 || minChannel >= luminance || luminance <= 0.0) return factor;
-            float mx = max(luminance / (luminance - minChannel), 1.0);
-            float knee = max(0.8 * mx, 1.0);
-            if (factor <= knee) return factor;
-            if (mx - knee < 1e-4) return min(factor, mx);
-            return knee + (mx - knee) * (1.0 - exp(-(factor - knee) / (mx - knee)));
+            float edge = max(luminance / (luminance - minChannel), 1.0);
+            return factor <= edge ? factor : edge + 0.7 * (factor - edge);
         }
 
         float3 rgbToHsv(float3 c) {
@@ -575,6 +572,10 @@ public static class AdjustmentShader
                 if (highlightsAmount > 0.0) gain = limitBrightening(max(c.r, max(c.g, c.b)), gain);
                 c *= gain;
                 y *= gain;
+                if (highlightsAmount < 0.0 && gain < 1.0) {
+                    float k = 1.0 + 0.6 * (1.0 - clamp(gain, 0.0, 1.0));
+                    c = max(y + (c - y) * k, 0.0);
+                }
             }
             if (clarityAmount != 0.0) {
                 float gain = clarityGain(y * ratio, ratio);

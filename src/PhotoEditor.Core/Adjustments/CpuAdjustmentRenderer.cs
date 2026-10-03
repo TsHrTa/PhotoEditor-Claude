@@ -447,6 +447,15 @@ public static class CpuAdjustmentRenderer
             g *= gain;
             b *= gain;
             y *= gain;
+            // Darkened highlights (a sky) keep their colour: darker pixels of the same chroma ratio look grey, so the
+            // colour is pushed out a little with the darkening (see ToneCurve.DarkenedColourBoost).
+            if (p.HighlightsAmount < 0f && gain < 1f)
+            {
+                float k = ToneCurve.DarkenedColourBoost(gain);
+                r = MathF.Max(y + (r - y) * k, 0f);
+                g = MathF.Max(y + (g - y) * k, 0f);
+                b = MathF.Max(y + (b - y) * k, 0f);
+            }
         }
 
         // Clarity: the pixel's contrast against its area, scaled (also local, on the same base).
