@@ -121,6 +121,9 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter SharpenRadius =
         new(Detail, "Radius", 0.5, 3, s => s.SharpenRadius, (s, v) => s with { SharpenRadius = v }, defaultValue: 1, format: "0.0", step: 0.1, id: "sharpenRadius");
 
+    public static readonly AdjustmentParameter SharpenDetail =
+        new(Detail, "Detail", 0, 100, s => s.SharpenDetail, (s, v) => s with { SharpenDetail = v }, id: "sharpenDetail");
+
     public static readonly AdjustmentParameter SharpenMasking =
         new(Detail, "Masking", 0, 100, s => s.SharpenMasking, (s, v) => s with { SharpenMasking = v }, id: "sharpenMasking");
 
@@ -195,7 +198,7 @@ public static class AdjustmentParameters
 
     /// <summary>Parameters that only apply to the whole image (not inside masks).</summary>
     public static readonly IReadOnlyList<AdjustmentParameter> GlobalOnly =
-        [DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor,
+        [DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenDetail, SharpenMasking, NoiseLuminance, NoiseColor,
          LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
          CurveHighlights, CurveLights, CurveDarks, CurveShadows, CurveShadowSplit, CurveMidtoneSplit, CurveHighlightSplit,
          TransformVertical, TransformHorizontal, TransformRotate, TransformAspect, TransformScale, TransformOffsetX, TransformOffsetY];
@@ -218,7 +221,7 @@ public static class AdjustmentParameters
         .. Hsl,
         VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
         Texture, Clarity, Dehaze, Soften,
-        DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenMasking, NoiseLuminance, NoiseColor,
+        DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenDetail, SharpenMasking, NoiseLuminance, NoiseColor,
         LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
         TransformVertical, TransformHorizontal, TransformRotate, TransformAspect, TransformScale, TransformOffsetX, TransformOffsetY,
     ];

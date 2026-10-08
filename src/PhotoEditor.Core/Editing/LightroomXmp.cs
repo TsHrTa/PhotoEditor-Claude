@@ -189,6 +189,7 @@ public static class LightroomXmp
             limited.Add("sharpening");
         Set("SharpenRadius", Signed(a.SharpenRadius, "0.0"));
         Set("SharpenEdgeMasking", Number(a.SharpenMasking, "0"));
+        Set("SharpenDetail", Number(a.SharpenDetail, "0"));
         Set("LuminanceSmoothing", Number(a.NoiseLuminance, "0"));
         Set("ColorNoiseReduction", Number(a.NoiseColor, "0"));
         // Lightroom's defringe amounts run 0..20.
@@ -530,6 +531,7 @@ public static class LightroomXmp
             SharpenAmount = Get("Sharpness", AdjustmentSettings.DefaultFor(geometry.IsRaw).SharpenAmount),
             SharpenRadius = Get("SharpenRadius", 1),
             SharpenMasking = Get("SharpenEdgeMasking"),
+            SharpenDetail = Get("SharpenDetail", AdjustmentSettings.DefaultFor(geometry.IsRaw).SharpenDetail),
             NoiseLuminance = Get("LuminanceSmoothing"),
             NoiseColor = Get("ColorNoiseReduction", AdjustmentSettings.DefaultFor(geometry.IsRaw).NoiseColor),
             DefringePurple = Get("DefringePurpleAmount") * 5,

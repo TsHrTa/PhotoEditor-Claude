@@ -4,7 +4,8 @@ namespace PhotoEditor.Core.Adjustments;
 
 /// <summary>
 /// Unsharp mask on luminance, CPU version of the shader's <c>sharpen</c>: a 5 × 5 Gaussian (sigma = one tap
-/// step = the radius) with bilinear, edge-clamped taps like Skia's linear sampling.
+/// step = the radius) with bilinear, edge-clamped taps like Skia's linear sampling, plus (Detail) a 3 × 3 one at half
+/// the step for the finest texture; large changes are compressed above a knee so strong edges get no glaring halos.
 /// </summary>
 public static class Sharpening
 {
@@ -27,6 +28,8 @@ public static class Sharpening
         int outRowBytes = result.RowBytes;
         nint inPtr = input.GetPixels(), outPtr = result.GetPixels();
         float step = p.SharpenRadius * pixelScale, amount = p.SharpenAmount, masking = p.SharpenMasking;
+        float detailWeight = p.SharpenDetail, fineStep = 0.5f * step;
+        bool fine = detailWeight > 0;
 
         // Tap k (offset k-2): pixel offset and bilinear fraction are the same for every pixel.
         var offsets = new int[5];
@@ -44,6 +47,21 @@ public static class Sharpening
             weights[k] /= weightSum;
         int margin = (int)MathF.Ceiling(2 * step) + 1;
 
+        // The fine scale (Detail): 3 taps at half the step, same construction.
+        var fineOffsets = new int[3];
+        var fineFractions = new float[3];
+        var fineWeights = new float[3];
+        float fineSum = 0;
+        for (int k = 0; k < 3; k++)
+        {
+            float d = (k - 1) * fineStep;
+            fineOffsets[k] = (int)MathF.Floor(d);
+            fineFractions[k] = d - fineOffsets[k];
+            fineSum += fineWeights[k] = MathF.Exp(-0.5f * (k - 1) * (k - 1));
+        }
+        for (int k = 0; k < 3; k++)
+            fineWeights[k] /= fineSum;
+
         int strips = (height + StripRows - 1) / StripRows;
         Parallel.For(0, strips, strip =>
         {
@@ -51,6 +69,7 @@ public static class Sharpening
             int rowMin = Math.Max(0, y0 - margin), rowMax = Math.Min(height - 1, y1 - 1 + margin);
             // Horizontally blurred premultiplied RGBA (0..1) of rows rowMin..rowMax.
             var h = new float[(rowMax - rowMin + 1) * width * 4];
+            var hFine = fine ? new float[h.Length] : null;
             unsafe
             {
                 byte* src = (byte*)inPtr;
@@ -73,6 +92,21 @@ public static class Sharpening
                         }
                         int o = hRow + x * 4;
                         h[o] = c0 / 255f; h[o + 1] = c1 / 255f; h[o + 2] = c2 / 255f; h[o + 3] = c3 / 255f;
+                        if (hFine is not null)
+                        {
+                            c0 = c1 = c2 = c3 = 0;
+                            for (int k = 0; k < 3; k++)
+                            {
+                                byte* a = row + Math.Clamp(x + fineOffsets[k], 0, width - 1) * 4;
+                                byte* b = row + Math.Clamp(x + fineOffsets[k] + 1, 0, width - 1) * 4;
+                                float wb = fineWeights[k] * fineFractions[k], wa = fineWeights[k] - wb;
+                                c0 += wa * a[0] + wb * b[0];
+                                c1 += wa * a[1] + wb * b[1];
+                                c2 += wa * a[2] + wb * b[2];
+                                c3 += wa * a[3] + wb * b[3];
+                            }
+                            hFine[o] = c0 / 255f; hFine[o + 1] = c1 / 255f; hFine[o + 2] = c2 / 255f; hFine[o + 3] = c3 / 255f;
+                        }
                     }
                 }
 
@@ -113,8 +147,32 @@ public static class Sharpening
                         }
 
                         float detail = 0.2126f * (sr - br) + 0.7152f * (sg - bg) + 0.0722f * (sb - bb);
+                        if (hFine is not null)
+                        {
+                            float fr = 0, fg = 0, fb = 0, fa = 0;
+                            for (int k = 0; k < 3; k++)
+                            {
+                                int ra = Math.Clamp(y + fineOffsets[k], 0, height - 1) - rowMin;
+                                int rb = Math.Clamp(y + fineOffsets[k] + 1, 0, height - 1) - rowMin;
+                                int ia = (ra * width + x) * 4, ib = (rb * width + x) * 4;
+                                float wb = fineWeights[k] * fineFractions[k], wa = fineWeights[k] - wb;
+                                fr += wa * hFine[ia] + wb * hFine[ib];
+                                fg += wa * hFine[ia + 1] + wb * hFine[ib + 1];
+                                fb += wa * hFine[ia + 2] + wb * hFine[ib + 2];
+                                fa += wa * hFine[ia + 3] + wb * hFine[ib + 3];
+                            }
+                            if (fa > 0)
+                            {
+                                fr /= fa; fg /= fa; fb /= fa;
+                            }
+                            else
+                            {
+                                fr = sr; fg = sg; fb = sb;
+                            }
+                            detail += detailWeight * (0.2126f * (sr - fr) + 0.7152f * (sg - fg) + 0.0722f * (sb - fb));
+                        }
                         float weight = masking > 0 ? ToneCurve.SmoothStep(masking * 0.02f, masking * 0.08f, MathF.Abs(detail)) : 1f;
-                        float add = amount * detail * weight;
+                        float add = PreparedAdjustments.LimitSharpening(amount * detail * weight);
                         float alpha = a8 / 255f;
                         dst[x * 4] = ColorMath.ToByte(Math.Clamp(sr + add, 0f, 1f) * alpha);
                         dst[x * 4 + 1] = ColorMath.ToByte(Math.Clamp(sg + add, 0f, 1f) * alpha);

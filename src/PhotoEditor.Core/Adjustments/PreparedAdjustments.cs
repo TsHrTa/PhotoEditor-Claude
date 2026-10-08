@@ -26,6 +26,7 @@ public readonly record struct PreparedAdjustments(
     float SharpenAmount,
     float SharpenRadius,
     float SharpenMasking,
+    float SharpenDetail,
     float SoftenAmount,
     float DehazeAmount,
     float NoiseLuminanceAmount,
@@ -126,6 +127,21 @@ public readonly record struct PreparedAdjustments(
     /// <summary>Unsharp-mask strength at slider 100 (detail added = strength × (pixel − blurred)).</summary>
     public const float SharpenStrengthAt100 = 2f;
 
+    /// <summary>Weight of the fine-scale component at Detail 100 (the fine mask is weaker than the coarse one for the same radius).</summary>
+    public const float SharpenDetailStrengthAt100 = 1.5f;
+
+    /// <summary>The added sharpening (in sRGB 0..1) up to which it is applied as it is; stronger is compressed (halo limit).</summary>
+    public const float SharpenKnee = 0.15f, SharpenHeadroom = 0.25f;
+
+    /// <summary>Compresses a large sharpening change softly, so strong edges get no glaring halos; small changes (texture) are untouched.</summary>
+    public static float LimitSharpening(float add)
+    {
+        float a = MathF.Abs(add);
+        if (a <= SharpenKnee) return add;
+        float e = a - SharpenKnee;
+        return MathF.Sign(add) * (SharpenKnee + e / (1f + e / SharpenHeadroom));
+    }
+
     public bool HasSharpening => SharpenAmount > 0f;
 
     /// <summary>Exposure change (stops) at full vignette weight for amount ±100.</summary>
@@ -172,6 +188,7 @@ public readonly record struct PreparedAdjustments(
             SharpenAmount: (float)s.SharpenAmount / 100f * SharpenStrengthAt100,
             SharpenRadius: (float)s.SharpenRadius,
             SharpenMasking: (float)s.SharpenMasking / 100f,
+            SharpenDetail: (float)s.SharpenDetail / 100f * SharpenDetailStrengthAt100,
             SoftenAmount: (float)Math.Clamp(s.Soften, 0, 100) / 100f,
             DehazeAmount: (float)Math.Clamp(s.Dehaze, -100, 100) / 100f,
             NoiseLuminanceAmount: (float)Math.Clamp(s.NoiseLuminance, 0, 100) / 100f,

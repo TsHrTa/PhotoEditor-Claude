@@ -21,7 +21,7 @@ public class LightroomXmpTests
             Vibrance = 25, Saturation = -10,
             Blues = new HslBand(-20, 30, -40), Oranges = new HslBand(5, -10, 15),
             VignetteAmount = -30, VignetteMidpoint = 40, VignetteRoundness = 20, VignetteFeather = 70,
-            SharpenAmount = 55, SharpenRadius = 1.3, SharpenMasking = 25,
+            SharpenAmount = 55, SharpenRadius = 1.3, SharpenDetail = 35, SharpenMasking = 25,
         },
         Crop = new Crop { Left = 0.1, Top = 0.15, Right = 0.8, Bottom = 0.9, Angle = 3.5 },
         Masks =

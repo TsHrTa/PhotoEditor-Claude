@@ -85,4 +85,53 @@ public class SharpeningTests
     public void GlobalOnly_ListsTheDetailLensToneCurveAndTransformSliders() =>
         Assert.All(AdjustmentParameters.GlobalOnly, p => Assert.Contains(p.Group,
             new[] { AdjustmentParameters.Detail, AdjustmentParameters.Lens, AdjustmentParameters.ToneCurve, AdjustmentParameters.Transform }));
+
+    /// <summary>Fine texture: a 2-px period stripe pattern of low contrast, too fine for the 1-px-radius mask to lift much.</summary>
+    private static SKBitmap FineStripes()
+    {
+        var bmp = new SKBitmap(new SKImageInfo(40, 20, SKColorType.Rgba8888, SKAlphaType.Premul));
+        for (int y = 0; y < bmp.Height; y++)
+        for (int x = 0; x < bmp.Width; x++)
+        {
+            byte v = (byte)(x % 2 == 0 ? 110 : 130);
+            bmp.SetPixel(x, y, new SKColor(v, v, v));
+        }
+        return bmp;
+    }
+
+    [Fact]
+    public void Detail_BringsOutFineTexture_MoreThanTheRadiusAlone()
+    {
+        using var src = FineStripes();
+        using var plain = CpuAdjustmentRenderer.Render(src, new AdjustmentSettings { SharpenAmount = 60 });
+        using var detail = CpuAdjustmentRenderer.Render(src, new AdjustmentSettings { SharpenAmount = 60, SharpenDetail = 100 });
+        int Contrast(SKBitmap b) => Math.Abs(Gray(b, 20, 10) - Gray(b, 21, 10));
+        Assert.True(Contrast(detail) > Contrast(plain) + 4, $"{Contrast(detail)} vs {Contrast(plain)}");
+    }
+
+    [Fact]
+    public void ZeroDetail_IsThePlainUnsharpMask()
+    {
+        using var src = SoftEdge();
+        using var a = CpuAdjustmentRenderer.Render(src, new AdjustmentSettings { SharpenAmount = 70 });
+        using var b = CpuAdjustmentRenderer.Render(src, new AdjustmentSettings { SharpenAmount = 70, SharpenDetail = 0 });
+        Assert.Equal(0, TestImages.MaxDifference(a, b, out _));
+    }
+
+    [Fact]
+    public void LimitSharpening_KeepsSmallChanges_AndCompressesLargeOnes()
+    {
+        Assert.Equal(0.05f, PreparedAdjustments.LimitSharpening(0.05f));
+        Assert.Equal(-0.1f, PreparedAdjustments.LimitSharpening(-0.1f));
+        float big = PreparedAdjustments.LimitSharpening(0.8f);
+        Assert.InRange(big, 0.3f, 0.4f);
+        Assert.Equal(-big, PreparedAdjustments.LimitSharpening(-0.8f));
+        float previous = 0;
+        for (float x = 0; x <= 2; x += 0.01f)
+        {
+            float y = PreparedAdjustments.LimitSharpening(x);
+            Assert.True(y >= previous - 1e-6f && y <= x + 1e-6f);
+            previous = y;
+        }
+    }
 }

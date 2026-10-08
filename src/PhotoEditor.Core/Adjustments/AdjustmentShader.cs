@@ -52,6 +52,8 @@ public static class AdjustmentShader
         uniform float sharpenAmount;
         uniform float sharpenStep;
         uniform float sharpenMasking;
+        uniform float sharpenDetail;
+        uniform float sharpenFineStep;
         // Soften: amount 0..1 and blur tap spacing in image pixels.
         // Dehaze: transmission map (red, stretched over the image), haze colour (linear), amount −1..1.
         uniform shader haze;
@@ -330,10 +332,35 @@ public static class AdjustmentShader
             return sum.a > 0.0 ? sum.rgb / sum.a : fallback;
         }
 
+        // 3 x 3 Gaussian (sigma = the fine step) of the original around coord, unpremultiplied (the fine scale of Detail).
+        float3 blurredFine(float2 coord, float3 fallback) {
+            float4 sum = float4(0);
+            float wsum = 0.0;
+            for (int j = -1; j <= 1; j++) {
+                for (int i = -1; i <= 1; i++) {
+                    float w = exp(-0.5 * float(i * i + j * j));
+                    sum += w * float4(source.eval(coord + float2(float(i), float(j)) * sharpenFineStep));
+                    wsum += w;
+                }
+            }
+            sum /= wsum;
+            return sum.a > 0.0 ? sum.rgb / sum.a : fallback;
+        }
+
+        // Unsharp mask: the coarse difference plus Detail times the fine one, masked by its size, with large changes
+        // compressed above a knee (see PreparedAdjustments.LimitSharpening).
         float3 sharpen(float3 s, float2 coord) {
-            float detail = dot(s - blurred(coord, s), float3(0.2126, 0.7152, 0.0722));
+            float3 lw = float3(0.2126, 0.7152, 0.0722);
+            float detail = dot(s - blurred(coord, s), lw);
+            if (sharpenDetail > 0.0) detail += sharpenDetail * dot(s - blurredFine(coord, s), lw);
             float weight = sharpenMasking > 0.0 ? smoothstep(sharpenMasking * 0.02, sharpenMasking * 0.08, abs(detail)) : 1.0;
-            return clamp(s + sharpenAmount * detail * weight, 0.0, 1.0);
+            float add = sharpenAmount * detail * weight;
+            float a = abs(add);
+            if (a > 0.15) {
+                float e = a - 0.15;
+                add = sign(add) * (0.15 + e / (1.0 + e / 0.25));
+            }
+            return clamp(s + add, 0.0, 1.0);
         }
 
         // Fine detail of the original: the pixel minus an edge-preserving (bilateral) 7 × 7 blur around it
@@ -798,6 +825,8 @@ public static class AdjustmentShader
             // sharpening vanishes: keep at least half a preview pixel, so a photo shown small stays crisp (Lightroom sharpens at full size and then reduces).
             ["sharpenStep"] = pixelScale < 1 ? MathF.Max(p.SharpenRadius * pixelScale, 0.5f) : p.SharpenRadius * pixelScale,
             ["sharpenMasking"] = p.SharpenMasking,
+            ["sharpenDetail"] = sharpen ? p.SharpenDetail : 0f,
+            ["sharpenFineStep"] = 0.5f * (pixelScale < 1 ? MathF.Max(p.SharpenRadius * pixelScale, 0.5f) : p.SharpenRadius * pixelScale),
             ["softenAmount"] = p.SoftenAmount,
             ["useToneBase"] = tone.Bound ? 1f : 0f,
             ["noiseLumaAmount"] = sharpen ? p.NoiseLuminanceAmount : 0f,
