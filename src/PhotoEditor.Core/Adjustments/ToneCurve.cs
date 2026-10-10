@@ -35,24 +35,25 @@ public static class ToneCurve
     public const float MaxLocalGain = 8f;
 
     /// <summary>
-    /// Colour boost (factor on the distance from luminance) that goes with darkening a pixel by <paramref name="gain"/> (≤ 1)
-    /// with Highlights: a darker blue of the same channel ratios looks greyer, so up to +60 % colour is added at gain 0.125.
-    /// </summary>
-    public static float DarkenedColourBoost(float gain) => 1f + 0.6f * (1f - Math.Clamp(gain, 0f, 1f));
-
-    /// <summary>
     /// Highlights / shadows as a brightness factor for a pixel whose base (area) luminance is
     /// <paramref name="baseLuminance"/> (linear): the curve moves the base, the pixel follows by the same factor,
     /// so its detail relative to the area is kept. Mirrored in the shader.
     /// </summary>
-    public static float LocalGain(float baseLuminance, in PreparedAdjustments p)
+    /// <param name="baseRatio">
+    /// Base over pixel luminance. Darkened highlights keep the visible detail: the base moves down by the curve, the
+    /// pixel's perceptual distance from it is kept (factor baseRatio^−(1/g − 1) for the highlights' perceptual factor g,
+    /// as Lightroom, whose Highlights −95 keeps the fine detail of bright foliage while darkening it by half a stop; a
+    /// plain gain lost 19 %).
+    /// </param>
+    public static float LocalGain(float baseLuminance, in PreparedAdjustments p, float baseRatio = 1f)
     {
         float yb = MathF.Max(baseLuminance, 1e-6f);
-        float x = MathF.Pow(yb, 1f / PerceptualGamma);
-        x = Highlights(Highlights(x, p.HighlightsAmount), p.HighlightsAmount2);
+        float x0 = MathF.Pow(yb, 1f / PerceptualGamma);
+        float x = Highlights(Highlights(x0, p.HighlightsAmount), p.HighlightsAmount2);
+        float detail = x < x0 && x > 0f ? MathF.Pow(MathF.Max(baseRatio, 1e-6f), 1f - x0 / x) : 1f;
         x = Shadows(Shadows(x, p.ShadowsAmount), p.ShadowsAmount2);
         float y2 = MathF.Pow(MathF.Max(x, 0f), PerceptualGamma);
-        return Math.Clamp(y2 / yb, 1f / MaxLocalGain, MaxLocalGain);
+        return Math.Clamp(y2 / yb * detail, 1f / MaxLocalGain, MaxLocalGain);
     }
 
     /// <summary>
@@ -75,34 +76,41 @@ public static class ToneCurve
     public const float HighlightsLiftGamma = 12f;
 
     /// <summary>
-    /// The highlights curve on t = position between <see cref="HighlightsPivot"/> and white (midtones below stay put).
+    /// The highlights curve on perceptual brightness (1 = white), applied to the base (area) brightness.
     /// <para>
-    /// Pulled down: lowers white by <paramref name="amount"/>, easing in (t²(2 − t), so the slope never drops below
-    /// ≈ 0.45 at −100 and the bright areas keep their contrast instead of turning a flat grey). Above white (RAW
-    /// highlights) the curve continues with its slope at white, rolled off, d / (1 + k·d) with k = 10 × |amount|
-    /// (2.5 at −100), so clouds 2 stops over come back under white.
+    /// Pulled down: as Lightroom (measured on its TIFFs of the R8 sample, Highlights 0 → −95,
+    /// <c>Bench/SliderFitBench</c>), a darkening by a number of stops that grows with the brightness
+    /// (<see cref="HighlightsDarkening"/>: none in the deepest shadows, 0.44 stops in the lower midtones, 0.76 at white,
+    /// more above white so RAW highlights come back): mostly an exposure reduction weighted towards the bright tones.
+    /// A gain keeps the local contrast and the colour ratios; the old curve, which flattened only the upper range, took
+    /// 20 % of the detail of bright foliage and turned skies grey. Beyond −100 the second pass applies it again.
     /// </para>
     /// <para>
-    /// Pushed up: brightens the upper tones but keeps white at white, as Lightroom does (Whites moves the white
-    /// point): t + t·(h − t) with h = 1 − (1 − t)^γ, rising everywhere, slope 1 at the pivot and 0 at white. Values
-    /// above white are left alone.
+    /// Pushed up: brightens the upper tones (from <see cref="HighlightsPivot"/>) but keeps white at white (Whites moves
+    /// the white point): t + t·(h − t) with h = 1 − (1 − t)^γ, rising everywhere, slope 1 at the pivot and 0 at white.
+    /// Values above white are left alone.
     /// </para>
     /// Mirrored in the shader.
     /// </summary>
     public static float Highlights(float x, float amount)
     {
-        if (x <= HighlightsPivot || (amount > 0f && x >= 1f))
+        if (amount < 0f)
+            return x * MathF.Pow(2f, amount / PreparedAdjustments.MaxHighlightsShift * HighlightsDarkening(x) / PerceptualGamma);
+        if (amount == 0f || x <= HighlightsPivot || x >= 1f)
             return x;
-        if (x < 1f)
-        {
-            float t = (x - HighlightsPivot) / (1f - HighlightsPivot);
-            if (amount < 0f)
-                return x + amount * t * t * (2f - t);
-            float h = 1f - MathF.Pow(1f - t, 1f + HighlightsLiftGamma * amount);
-            return HighlightsPivot + (t + t * (h - t)) * (1f - HighlightsPivot);
-        }
-        float d = x - 1f, slope = 1f + amount / (1f - HighlightsPivot);
-        return 1f + amount + slope * d / (1f - 10f * amount * d);
+        float t = (x - HighlightsPivot) / (1f - HighlightsPivot);
+        float h = 1f - MathF.Pow(1f - t, 1f + HighlightsLiftGamma * amount);
+        return HighlightsPivot + (t + t * (h - t)) * (1f - HighlightsPivot);
+    }
+
+    /// <summary>
+    /// Stops of darkening at Highlights −100 for a perceptual brightness <paramref name="x"/> (1 = white): fades in over
+    /// the deepest shadows (0.02 to 0.12), 0.44 stops up to 0.3, then rising linearly to 0.76 at white and beyond.
+    /// </summary>
+    public static float HighlightsDarkening(float x)
+    {
+        float s = Math.Clamp((x - 0.02f) / 0.1f, 0f, 1f);
+        return s * s * (3f - 2f * s) * (0.44f + 0.32f / 0.7f * MathF.Max(x - 0.3f, 0f));
     }
 
     /// <summary>Linear value from which a brightened pixel's brightest channel is compressed towards white.</summary>

@@ -115,7 +115,40 @@ public static class RawImageLoader
     /// and applies a fixed base rendering (<see cref="Adjustments.RawBaseCurve"/>) instead of LibRaw's per-photo
     /// auto-brightening.
     /// </summary>
-    private static SKBitmap LoadWithLibRaw(string path, RawDemosaic demosaic, bool halfSize = false)
+    private static SKBitmap LoadWithLibRaw(string path, RawDemosaic demosaic, bool halfSize = false) =>
+        DecodeWithLibRaw(path, demosaic, halfSize, DevelopSensor);
+
+    /// <summary>
+    /// The scene-linear photo before the base rendering: highlights rebuilt, linear sRGB, 1 = where a neutral clips on
+    /// the sensor (interleaved RGB floats). For fitting the rendering to references (tests / benches).
+    /// </summary>
+    public static (float[] Rgb, int Width, int Height) LoadScene(string path, RawDemosaic demosaic) =>
+        DecodeWithLibRaw(path, demosaic, false, (rgb, width, height, clip, matrix) =>
+        {
+            float white = clip.Min();
+            var scene = new float[width * height * 3];
+            var source = rgb.ToArray();
+            Parallel.For(0, height, y =>
+            {
+                Span<float> v = stackalloc float[3];
+                for (int x = 0; x < width; x++)
+                {
+                    int i = (y * width + x) * 3;
+                    v[0] = source[i];
+                    v[1] = source[i + 1];
+                    v[2] = source[i + 2];
+                    ReconstructHighlights(v, clip);
+                    for (int c = 0; c < 3; c++)
+                        scene[i + c] = Math.Clamp((matrix[c * 3] * v[0] + matrix[c * 3 + 1] * v[1] + matrix[c * 3 + 2] * v[2]) / white,
+                            0f, MaxSceneValue);
+                }
+            });
+            return (scene, width, height);
+        });
+
+    private delegate T Developer<T>(ReadOnlySpan<ushort> rgb, int width, int height, float[] clip, float[] matrix);
+
+    private static T DecodeWithLibRaw<T>(string path, RawDemosaic demosaic, bool halfSize, Developer<T> develop)
     {
         using var context = Sdcb.LibRaw.RawContext.OpenFile(path);
         UseCameraCrop(context);
@@ -144,7 +177,7 @@ public static class RawImageLoader
         var rgb = MemoryMarshal.Cast<byte, ushort>(image.AsSpan<byte>());
         float max = multipliers.Max();
         var clip = multipliers.Select(m => 65535f * m / max).ToArray();
-        return DevelopSensor(rgb, image.Width, image.Height, clip, matrix);
+        return develop(rgb, image.Width, image.Height, clip, matrix);
     }
 
     /// <summary>
@@ -208,7 +241,7 @@ public static class RawImageLoader
     /// Adobe's hue-preserving RGB tone curve: the curve is applied to the largest and smallest channel and the middle
     /// one is placed between them as before, so a bright colour keeps its hue (a curve per channel shifts it).
     /// </summary>
-    private static void ToneRgb(ref float r, ref float g, ref float b)
+    public static void ToneRgb(ref float r, ref float g, ref float b)
     {
         ref float hi = ref r, mid = ref g, lo = ref b;
         if (r >= g)
@@ -271,6 +304,7 @@ public static class RawImageLoader
                             o[c] = Math.Clamp((matrix[c * 3] * v[0] + matrix[c * 3 + 1] * v[1] + matrix[c * 3 + 2] * v[2]) / white,
                                 0f, MaxSceneValue);
                         ToneRgb(ref o[0], ref o[1], ref o[2]);
+                        Adjustments.RawLook.Apply(ref o[0], ref o[1], ref o[2]);
                         for (int c = 0; c < 3; c++)
                         {
                             float e = ColorMathEncode(o[c]);
@@ -464,11 +498,40 @@ public static class RawImageLoader
         {
             using var image = new MagickImage();
             image.Ping(path);
-            return ParseMetadata(name => image.GetAttribute(name));
+            return WithLibRawValues(path, ParseMetadata(name => image.GetAttribute(name)));
         }
         catch (MagickException)
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// ImageMagick prints LibRaw's numbers with one significant digit ("3e+01" for a 28 mm focal length, "4" for f/4.5)
+    /// and names a Canon RF lens by its focal range ("2e+01-1e+02mm f/0-0"), so lens profiles never matched. LibRaw's
+    /// own fields have the exact values and the lens name; they replace ImageMagick's where LibRaw reads the file.
+    /// </summary>
+    private static RawMetadata WithLibRawValues(string path, RawMetadata metadata)
+    {
+        try
+        {
+            using var context = Sdcb.LibRaw.RawContext.OpenFile(path);
+            var other = context.ImageOtherParams;
+            var lens = context.LensInfo;
+            string? lensName = new[] { lens.Lens, lens.MakerNotes.Lens }
+                .Select(n => n?.Trim('\0', ' ')).FirstOrDefault(n => !string.IsNullOrEmpty(n));
+            return metadata with
+            {
+                Iso = other.IsoSpeed > 0 ? other.IsoSpeed : metadata.Iso,
+                ExposureTime = other.Shutter > 0 ? other.Shutter : metadata.ExposureTime,
+                FNumber = other.Aperture > 1 ? Math.Round(other.Aperture, 2) : metadata.FNumber,
+                FocalLength = other.FocalLength > 0 ? Math.Round(other.FocalLength, 2) : metadata.FocalLength,
+                Lens = lensName ?? metadata.Lens,
+            };
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return metadata;
         }
     }
 

@@ -13,10 +13,12 @@ public sealed record AdjustmentSettings
 
     /// <summary>
     /// Where a RAW photo starts, like Lightroom's defaults for RAWs: sharpening 40 (radius 1, detail 25, masking 0) and colour
-    /// noise reduction 25, because a RAW has had neither in the camera. JPEGs and other finished images start at
+    /// noise reduction 25, because a RAW has had neither in the camera, and the lens profile (distortion, vignetting) on,
+    /// as Lightroom applies it on import (its corner brightening is part of how its default rendering looks). JPEGs and
+    /// other finished images start at
     /// <see cref="Default"/>.
     /// </summary>
-    public static readonly AdjustmentSettings RawDefault = new() { SharpenAmount = 40, SharpenDetail = 25, NoiseColor = 25 };
+    public static readonly AdjustmentSettings RawDefault = new() { SharpenAmount = 40, SharpenDetail = 25, NoiseColor = 25, LensProfile = true };
 
     /// <summary>The settings a photo starts with: <see cref="RawDefault"/> for RAWs, else <see cref="Default"/>.</summary>
     public static AdjustmentSettings DefaultFor(bool isRaw) => isRaw ? RawDefault : Default;

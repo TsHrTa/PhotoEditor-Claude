@@ -2,52 +2,51 @@ namespace PhotoEditor.Core.Adjustments;
 
 /// <summary>
 /// The base rendering of RAW photos (applied when they are decoded): scene-linear, 1 = where a neutral clips on the
-/// sensor, to display-linear. The midtones are brightened (<see cref="Exposure"/>), the deepest shadows get a toe and
-/// the highlights roll off smoothly (extended Reinhard), reaching white exactly at the sensor's white, so bright
-/// clouds keep their shading; brighter (rebuilt) values continue above white, into the headroom. Like Lightroom,
-/// the Exposure slider works before this curve on such photos (<see cref="ApplyExposure"/>): brightening moves the
-/// highlights along the shoulder instead of pushing them past white.
+/// sensor, to display-linear. A contrast power on the brightened scene value (<see cref="Exposure"/>,
+/// <see cref="Contrast"/>), then a highlight shoulder (extended Reinhard) reaching white at <see cref="WhiteScene"/>;
+/// brighter (rebuilt) values continue above white, into the headroom. Like Lightroom, the Exposure slider works
+/// before this curve on such photos (<see cref="ApplyExposure"/>): brightening moves the highlights along the
+/// shoulder instead of pushing them past white.
+/// <para>
+/// Fitted (<c>Bench/ProfileFitBench</c>) to Lightroom's default rendering of the Canon R8 sample (16-bit TIFF export,
+/// Exposure 0, image centre), through the hue-preserving rendering (the curve acts on the brightest and darkest
+/// channel, so a saturated colour renders brighter than its luminance alone would): the luminance of the result is
+/// within 2.8 sRGB levels RMS of Lightroom's from 10 stops under the clip to above it. Lightroom's rendering is an
+/// S-curve: deep shadows near black, steep midtones, a strong shoulder. The previous curve, fitted to the camera JPEG's
+/// midtones, was 28 levels off and read as flat and soft next to Lightroom: matched in tone, both renders have the
+/// same detail at every scale.
+/// </para>
 /// </summary>
 public static class RawBaseCurve
 {
-    /// <summary>
-    /// Brightening of the midtones, fitted to the camera's own JPEG (Canon R8, standard picture style) — what
-    /// Lightroom's "Camera Standard" profile imitates: 4 stops under the sensor's white becomes ≈ 20 % grey
-    /// (sRGB ≈ 124).
-    /// </summary>
-    public const float Exposure = 4.4f;
+    /// <summary>Gain on the scene value before the contrast power.</summary>
+    public const float Exposure = 4.989f;
+
+    /// <summary>Contrast: power on the brightened scene value (1 = none); the shadows fall towards black with it.</summary>
+    public const float Contrast = 2.02f;
 
     /// <summary>
     /// The scene value (1 = where a neutral clips on the sensor) at which the highlight shoulder reaches display white.
     /// Above 1 so that what the highlight rebuild reconstructs beyond the sensor's clip (bright clouds) still has
-    /// gradation under white instead of being clipped flat at once: with the shoulder ending exactly at 1, half of the
-    /// bright cloud pixels of a typical sky were already above white straight out of the decode, and became one flat
-    /// white area with a hard edge.
+    /// gradation under white instead of being clipped flat at once.
     /// </summary>
-    public const float WhiteScene = 1.6f;
+    public const float WhiteScene = 4.033f;
 
-    /// <summary>
-    /// The toe: the deepest shadows are darkened (≈ −0.5 stop at 2 % grey, −1.5 at 0.5 %), as the camera's and
-    /// Adobe's default curves do, so blacks are black instead of a grey veil of sensor noise.
-    /// </summary>
-    public const float Toe = 0.012f;
-
-    private const float WhiteZ = Exposure * WhiteScene;
+    /// <summary>(Exposure · WhiteScene)^Contrast, the shoulder's white in the curve's own units (shader constant).</summary>
+    public static readonly float WhiteZ = MathF.Pow(Exposure * WhiteScene, Contrast);
 
     public static float Apply(float x)
     {
-        float z = MathF.Max(x, 0) * Exposure;
-        float y = z * (1 + z / (WhiteZ * WhiteZ)) / (1 + z);
-        return y * y * (1 + Toe) / (y + Toe);
+        float z = MathF.Pow(MathF.Max(x, 0) * Exposure, Contrast);
+        return z * (1 + z / (WhiteZ * WhiteZ)) / (1 + z);
     }
 
-    /// <summary>Inverse of <see cref="Apply"/> (both steps solved as quadratics, in the stable form).</summary>
+    /// <summary>Inverse of <see cref="Apply"/> (the shoulder solved as a quadratic, in the stable form).</summary>
     public static float Invert(float y)
     {
         y = MathF.Max(y, 0);
-        float u = (y + MathF.Sqrt(y * y + 4 * (1 + Toe) * Toe * y)) / (2 * (1 + Toe));
-        float z = 2 * u / (1 - u + MathF.Sqrt((1 - u) * (1 - u) + 4 * u / (WhiteZ * WhiteZ)));
-        return z / Exposure;
+        float z = 2 * y / (1 - y + MathF.Sqrt((1 - y) * (1 - y) + 4 * y / (WhiteZ * WhiteZ)));
+        return MathF.Pow(z, 1 / Contrast) / Exposure;
     }
 
     /// <summary>

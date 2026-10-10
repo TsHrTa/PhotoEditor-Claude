@@ -128,17 +128,15 @@ public static class AdjustmentShader
             return x < 0.5 ? 0.5 * pow(2.0 * x, g) : 1.0 - 0.5 * pow(2.0 - 2.0 * x, g);
         }
 
-        // RawBaseCurve (constants: RawBaseCurve.Exposure / Toe) and Exposure applied before it.
+        // RawBaseCurve (constants: RawBaseCurve.Exposure 4.989 / Contrast 2.02 / WhiteZ 429.889) and Exposure applied before it.
         float rawCurve(float x) {
-            float z = max(x, 0.0) * 4.4;
-            float y = z * (1.0 + z / (7.04 * 7.04)) / (1.0 + z);
-            return y * y * (1.0 + 0.012) / (y + 0.012);
+            float z = pow(max(x, 0.0) * 4.989, 2.02);
+            return z * (1.0 + z / (429.889 * 429.889)) / (1.0 + z);
         }
         float rawCurveInverse(float y) {
             y = max(y, 0.0);
-            float u = (y + sqrt(y * y + 4.0 * (1.0 + 0.012) * 0.012 * y)) / (2.0 * (1.0 + 0.012));
-            float z = 2.0 * u / (1.0 - u + sqrt((1.0 - u) * (1.0 - u) + 4.0 * u / (7.04 * 7.04)));
-            return z / 4.4;
+            float z = 2.0 * y / (1.0 - y + sqrt((1.0 - y) * (1.0 - y) + 4.0 * y / (429.889 * 429.889)));
+            return pow(z, 1.0 / 2.02) / 4.989;
         }
         // Per-channel gains (white balance x exposure) on the scene values before the base curve (RawBaseCurve.ApplyScene).
         float3 rawScene(float3 c, float3 gains) {
@@ -156,17 +154,17 @@ public static class AdjustmentShader
             float l = rawCurve(lo2);
             if (hi2 - lo2 < 1e-9) return float3(h);
             return l + (s - lo2) * ((h - l) / (hi2 - lo2));
-        }        float highlightsStep(float x, float a) {
-            if (x <= 0.4 || (a > 0.0 && x >= 1.0)) return x;
-            if (x < 1.0) {
-                float t = (x - 0.4) / 0.6;
-                if (a < 0.0) return x + a * t * t * (2.0 - t);
-                float h = 1.0 - pow(1.0 - t, 1.0 + 12.0 * a);
-                return 0.4 + (t + t * (h - t)) * 0.6;
+        }        // ToneCurve.Highlights / HighlightsDarkening (MaxHighlightsShift 0.25).
+        float highlightsStep(float x, float a) {
+            if (a < 0.0) {
+                float s = clamp((x - 0.02) / 0.1, 0.0, 1.0);
+                float stops = s * s * (3.0 - 2.0 * s) * (0.44 + 0.32 / 0.7 * max(x - 0.3, 0.0));
+                return x * exp2(a / 0.25 * stops / perceptualGamma);
             }
-            float d = x - 1.0;
-            float slope = 1.0 + a / 0.6;
-            return 1.0 + a + slope * d / (1.0 - 10.0 * a * d);
+            if (a == 0.0 || x <= 0.4 || x >= 1.0) return x;
+            float t = (x - 0.4) / 0.6;
+            float h = 1.0 - pow(1.0 - t, 1.0 + 12.0 * a);
+            return 0.4 + (t + t * (h - t)) * 0.6;
         }
         // A brightening gain limited so the brightest channel approaches white softly (see ToneCurve.LimitBrightening).
         float limitBrightening(float hi, float gain) {
@@ -524,13 +522,15 @@ public static class AdjustmentShader
         }
 
         // Highlights / shadows as a factor: the curve moves the base brightness, the pixel follows (detail kept).
-        float localGain(float baseLuminance) {
+        // Darkened highlights keep the pixel's perceptual distance from the base (ToneCurve.LocalGain).
+        float localGain(float baseLuminance, float baseRatio) {
             float yb = max(baseLuminance, 1e-6);
-            float x = pow(yb, 1.0 / perceptualGamma);
-            x = highlightsStep(highlightsStep(x, highlightsAmount), highlightsAmount2);
+            float x0 = pow(yb, 1.0 / perceptualGamma);
+            float x = highlightsStep(highlightsStep(x0, highlightsAmount), highlightsAmount2);
+            float detail = x < x0 && x > 0.0 ? pow(max(baseRatio, 1e-6), 1.0 - x0 / x) : 1.0;
             x = shadowsStep(shadowsStep(x, shadowsAmount), shadowsAmount2);
             float y2 = pow(max(x, 0.0), perceptualGamma);
-            return clamp(y2 / yb, 0.125, 8.0);
+            return clamp(y2 / yb * detail, 0.125, 8.0);
         }
 
         // The tone curve table on each channel; values above 1 keep their distance above the curve's end.
@@ -581,7 +581,8 @@ public static class AdjustmentShader
                 }
                 float gain = lensTableOn > 0.0 ? float(lensTable.eval(float2(clamp(dot(m, m), 0.0, 1.0) * 255.0 + 0.5, 0.5)).r) : 1.0;
                 if (lensVignetteManual != 0.0) gain *= exp2(lensVignetteManual * r2);
-                c *= gain;
+                // On the scene values before the base curve for RAWs (the lens darkened the light, not the picture).
+                if (sceneExposure > 0.0) c = rawScene(c, float3(gain)); else c *= gain;
             }
             if (dehazeAmount != 0.0) c = dehaze(c, coord);
             if (sceneExposure > 0.0) {
@@ -595,14 +596,10 @@ public static class AdjustmentShader
             float y = dot(c, float3(0.2126, 0.7152, 0.0722));
             float ratio = highlightsAmount != 0.0 || shadowsAmount != 0.0 || clarityAmount != 0.0 ? baseRatioAt(coord) : 1.0;
             if (highlightsAmount != 0.0 || shadowsAmount != 0.0) {
-                float gain = localGain(y * ratio);
+                float gain = localGain(y * ratio, ratio);
                 if (highlightsAmount > 0.0) gain = limitBrightening(max(c.r, max(c.g, c.b)), gain);
                 c *= gain;
                 y *= gain;
-                if (highlightsAmount < 0.0 && gain < 1.0) {
-                    float k = 1.0 + 0.6 * (1.0 - clamp(gain, 0.0, 1.0));
-                    c = max(y + (c - y) * k, 0.0);
-                }
             }
             if (clarityAmount != 0.0) {
                 float gain = clarityGain(y * ratio, ratio);
@@ -613,14 +610,20 @@ public static class AdjustmentShader
             c = y > 1e-6 ? c * (y2 / y) : float3(y2);
             if (curveOn > 0.0) c = applyCurve(c);
 
-            // Vibrance then saturation around luminance
-            float mx = max(c.r, max(c.g, c.b));
-            float mn = min(c.r, min(c.g, c.b));
-            float sat = mx > 1e-6 ? (mx - mn) / mx : 0.0;
-            float factor = (1.0 + vibranceAmount * (1.0 - sat)) * saturationFactor;
-            y = dot(c, float3(0.2126, 0.7152, 0.0722));
-            factor = limitSaturation(factor, y, mn);
-            c = max(y + (c - y) * factor, 0.0);
+            // Vibrance and saturation around luminance, weighted by OKLab chroma (SaturationMath.Factor)
+            if (saturationFactor != 1.0 || vibranceAmount != 0.0) {
+                float2 ab = toOklab(c).yz;
+                float chroma = sqrt(dot(ab, ab));
+                float sAmount = saturationFactor - 1.0;
+                float satF = sAmount > 0.0
+                    ? 1.0 + sAmount * 1.35 * max(1.0 - chroma / (0.17 * max(sAmount, 1.0)), 0.0) : saturationFactor;
+                float vibF = 1.0 + vibranceAmount * 0.6 * max(1.0 - chroma / (0.25 * max(vibranceAmount, 1.0)), 0.0);
+                float factor = max(satF * vibF, 0.0);
+                float mn = min(c.r, min(c.g, c.b));
+                y = dot(c, float3(0.2126, 0.7152, 0.0722));
+                factor = limitSaturation(factor, y, mn);
+                c = max(y + (c - y) * factor, 0.0);
+            }
 
             if (hslOn > 0.5) c = applyHsl(c);
 

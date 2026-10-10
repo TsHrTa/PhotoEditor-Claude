@@ -237,13 +237,19 @@ public static class CpuAdjustmentRenderer
                 b = ColorMath.SrgbToLinear(Math.Min(1f, input[i + 2] * inv / 255f));
             }
 
-            // Lens vignetting (profile removed, manual applied), in linear light.
+            // Lens vignetting (profile removed, manual applied), in linear light; on the scene values before the base
+            // curve for RAWs (the lens darkened the light, not the rendered picture).
             if (lensGain.IsActive)
             {
                 float gain = lensGain.At(i / 4, y);
-                r *= gain;
-                g *= gain;
-                b *= gain;
+                if (p.SceneExposure)
+                    RawBaseCurve.ApplyScene(ref r, ref g, ref b, gain, gain, gain);
+                else
+                {
+                    r *= gain;
+                    g *= gain;
+                    b *= gain;
+                }
             }
 
             // Transmission at this pixel, sampled once when a pass dehazes.
@@ -439,7 +445,7 @@ public static class CpuAdjustmentRenderer
         float y = ToneCurve.Luminance(r, g, b);
         if (p.HasLocalTone)
         {
-            float gain = ToneCurve.LocalGain(y * baseRatio, p);
+            float gain = ToneCurve.LocalGain(y * baseRatio, p, baseRatio);
             // Raised highlights brighten colours without clipping a channel.
             if (p.HighlightsAmount > 0f)
                 gain = ToneCurve.LimitBrightening(MathF.Max(r, MathF.Max(g, b)), gain);
@@ -447,15 +453,6 @@ public static class CpuAdjustmentRenderer
             g *= gain;
             b *= gain;
             y *= gain;
-            // Darkened highlights (a sky) keep their colour: darker pixels of the same chroma ratio look grey, so the
-            // colour is pushed out a little with the darkening (see ToneCurve.DarkenedColourBoost).
-            if (p.HighlightsAmount < 0f && gain < 1f)
-            {
-                float k = ToneCurve.DarkenedColourBoost(gain);
-                r = MathF.Max(y + (r - y) * k, 0f);
-                g = MathF.Max(y + (g - y) * k, 0f);
-                b = MathF.Max(y + (b - y) * k, 0f);
-            }
         }
 
         // Clarity: the pixel's contrast against its area, scaled (also local, on the same base).
@@ -488,12 +485,13 @@ public static class CpuAdjustmentRenderer
         if (p.CurveTable is { } curve)
             ToneCurveTable.Apply(curve, ref r, ref g, ref b);
 
-        // Vibrance (weighted by how muted the colour is), then saturation, around luminance.
-        float max = MathF.Max(r, MathF.Max(g, b));
-        float min = MathF.Min(r, MathF.Min(g, b));
-        float sat = max > 1e-6f ? (max - min) / max : 0f;
-        float factor = (1f + p.VibranceAmount * (1f - sat)) * p.SaturationFactor;
-        SaturationMath.Apply(ref r, ref g, ref b, factor);
+        // Vibrance and saturation around luminance, weighted by how muted the colour is (OKLab chroma).
+        if (p.SaturationFactor != 1f || p.VibranceAmount != 0f)
+        {
+            var (_, ca, cb) = HslMath.ToOklab(r, g, b);
+            float factor = SaturationMath.Factor(MathF.Sqrt(ca * ca + cb * cb), p.SaturationFactor, p.VibranceAmount);
+            SaturationMath.Apply(ref r, ref g, ref b, factor);
+        }
 
         if (p.HasHsl)
             HslMath.Apply(ref r, ref g, ref b, p.Hsl);
