@@ -171,7 +171,8 @@ public static class Sharpening
                             }
                             detail += detailWeight * (0.2126f * (sr - fr) + 0.7152f * (sg - fg) + 0.0722f * (sb - fb));
                         }
-                        float weight = masking > 0 ? ToneCurve.SmoothStep(masking * 0.02f, masking * 0.08f, MathF.Abs(detail)) : 1f;
+                        float weight = (masking > 0 ? ToneCurve.SmoothStep(masking * 0.02f, masking * 0.08f, MathF.Abs(detail)) : 1f)
+                            * PreparedAdjustments.SharpenAmplitudeWeight(detail);
                         float add = PreparedAdjustments.LimitSharpening(amount * detail * weight);
                         float alpha = a8 / 255f;
                         dst[x * 4] = ColorMath.ToByte(Math.Clamp(sr + add, 0f, 1f) * alpha);

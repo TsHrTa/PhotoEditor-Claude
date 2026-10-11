@@ -25,20 +25,23 @@ public sealed class SharpnessAnalysisBench(ITestOutputHelper output)
         var lrFile = Environment.GetEnvironmentVariable("PHOTOEDITOR_LR_FILE") ?? "IMG_5645 sharpening 0";
         using var lr = TiffImageLoader.Load(Path.Combine(dir, lrFile + ".tif"));
         var lrLuma = Luma(lr);
+        var (lrA, lrB) = Chroma(lr);
         var lens = Core.Lens.PhotoLens.Of(raw);
         output.WriteLine($"lens: {lens}");
         bool lensProfile = Environment.GetEnvironmentVariable("PHOTOEDITOR_NO_LENS") is null;
         var variants = new List<(string Name, RawDemosaic Demosaic, AdjustmentSettings Settings)>();
-        foreach (var demosaic in (Environment.GetEnvironmentVariable("PHOTOEDITOR_DEMOSAICS") ?? "Dcb").Split(','))
+        foreach (var demosaic in (Environment.GetEnvironmentVariable("PHOTOEDITOR_DEMOSAICS") ?? "Rcd").Split(','))
             variants.Add(($"{demosaic} sharpen 0", Enum.Parse<RawDemosaic>(demosaic), AdjustmentSettings.RawDefault with { SharpenAmount = 0 }));
         if (Environment.GetEnvironmentVariable("PHOTOEDITOR_EXTRA") is { } extra)
             foreach (var part in extra.Split(';'))
             {
                 var v = part.Split(',').Select(s => double.Parse(s, CultureInfo.InvariantCulture)).ToArray();
-                variants.Add(($"Dcb sharpen {v[0]} radius {v[1]} detail {v[2]}", RawDemosaic.Dcb,
-                    AdjustmentSettings.RawDefault with { SharpenAmount = v[0], SharpenRadius = v[1], SharpenDetail = v[2] }));
+                variants.Add(($"Rcd sharpen {v[0]} radius {v[1]} detail {v[2]} colour NR {(v.Length > 3 ? v[3] : 25)}", RawDemosaic.Rcd,
+                    AdjustmentSettings.RawDefault with { SharpenAmount = v[0], SharpenRadius = v[1], SharpenDetail = v[2], NoiseColor = v.Length > 3 ? v[3] : 25 }));
             }
-        var centres = new[] { (2000, 3000), (2600, 2300), (1200, 4500), (3300, 2000), (900, 1500) };
+        var centres = Environment.GetEnvironmentVariable("PHOTOEDITOR_CENTRES") is { } list
+            ? list.Split(';').Select(p => p.Split(',')).Select(p => (int.Parse(p[0], CultureInfo.InvariantCulture), int.Parse(p[1], CultureInfo.InvariantCulture))).ToArray()
+            : new[] { (2000, 3000), (2600, 2300), (1200, 4500), (3300, 2000), (900, 1500) };
         var photos = new Dictionary<RawDemosaic, SKBitmap>();
         foreach (var (name, demosaic, settings) in variants)
         {
@@ -46,29 +49,62 @@ public sealed class SharpnessAnalysisBench(ITestOutputHelper output)
                 photos[demosaic] = photo = RawImageLoader.Load(raw, demosaic);
             using var ours = CpuAdjustmentRenderer.Render(photo, new EditState { Adjustments = settings with { LensProfile = lensProfile } }, lens);
             var ourLuma = Luma(ours);
+            var (ourA, ourB) = Chroma(ours);
             output.WriteLine($"== {name}");
-            var sum = new double[5];
+            var sum = new double[6];
+            var sumRaw = new double[6];
+            var sumChroma = new double[6];
             foreach (var (cx, cy) in centres)
             {
                 const int size = 320;
                 var (dx, dy) = Align(lrLuma, ourLuma, lr.Width, cx, cy, size);
-                var a = Crop(lrLuma, lr.Width, cx - size / 2, cy - size / 2, size);
-                var b = Crop(ourLuma, ours.Width, cx - size / 2 + dx, cy - size / 2 + dy, size);
+                int lx = cx - size / 2, ly = cy - size / 2, ox = lx + dx, oy = ly + dy;
+                var a = Crop(lrLuma, lr.Width, lx, ly, size);
+                var b = Crop(ourLuma, ours.Width, ox, oy, size);
                 var mapped = MatchTone(b, a);
                 var ea = Bands(a, size);
                 var em = Bands(mapped, size);
+                var eb = Bands(b, size);
                 var ratios = ea.Zip(em, (x, y) => x / y).ToArray();
-                for (int i = 0; i < ratios.Length; i++) sum[i] += Math.Log(ratios[i]);
+                var rawRatios = ea.Zip(eb, (x, y) => x / y).ToArray();
+                double[] ChromaBands(float[] pa, float[] pb, int w, int x0, int y0) =>
+                    Bands(Crop(pa, w, x0, y0, size), size).Zip(Bands(Crop(pb, w, x0, y0, size), size), (p, q) => Math.Sqrt(p * p + q * q)).ToArray();
+                var chromaRatios = ChromaBands(lrA, lrB, lr.Width, lx, ly).Zip(ChromaBands(ourA, ourB, ours.Width, ox, oy), (x, y) => x / y).ToArray();
+                for (int i = 0; i < ratios.Length; i++)
+                {
+                    sum[i] += Math.Log(ratios[i]);
+                    sumRaw[i] += Math.Log(rawRatios[i]);
+                    sumChroma[i] += Math.Log(chromaRatios[i]);
+                }
                 output.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                    $"  ({cx},{cy}) shift ({dx},{dy}) LR/ours band energy fine to coarse: {Join(ratios)}"));
+                    $"  ({cx},{cy}) shift ({dx},{dy}) LR/ours luma as is: {Join(rawRatios)} | tone-matched: {Join(ratios)} | colour: {Join(chromaRatios)}"));
             }
-            output.WriteLine("  geometric mean: " + Join(sum.Select(s => Math.Exp(s / centres.Length))));
+            output.WriteLine("  geometric mean, LR / ours per band (fine to coarse, sigma 0.7-1.4-2.8-5.6-11-22):");
+            output.WriteLine("    luma as is      " + Join(sumRaw.Select(s => Math.Exp(s / centres.Length))));
+            output.WriteLine("    luma tone-match " + Join(sum.Select(s => Math.Exp(s / centres.Length))));
+            output.WriteLine("    colour (a, b)   " + Join(sumChroma.Select(s => Math.Exp(s / centres.Length))));
         }
         foreach (var photo in photos.Values) photo.Dispose();
     }
 
     private static string Join(IEnumerable<double> values) =>
         string.Join(" ", values.Select(r => r.ToString("F2", CultureInfo.InvariantCulture)));
+
+    /// <summary>OKLab a and b planes (from sRGB-encoded pixels).</summary>
+    private static (float[] A, float[] B) Chroma(SKBitmap bitmap)
+    {
+        var pixels = bitmap.Pixels;
+        var a = new float[pixels.Length];
+        var b = new float[pixels.Length];
+        Parallel.For(0, pixels.Length, i =>
+        {
+            var c = pixels[i];
+            var (_, ca, cb) = HslMath.ToOklab(ColorMath.SrgbByteToLinear(c.Red), ColorMath.SrgbByteToLinear(c.Green), ColorMath.SrgbByteToLinear(c.Blue));
+            a[i] = ca;
+            b[i] = cb;
+        });
+        return (a, b);
+    }
 
     private static float[] Luma(SKBitmap bitmap)
     {
@@ -161,7 +197,7 @@ public sealed class SharpnessAnalysisBench(ITestOutputHelper output)
     /// <summary>RMS of the bands I − G(0.7), G(0.7) − G(1.4), G(1.4) − G(2.8), G(2.8) − G(5.6), G(5.6) − G(11.2), inner part only.</summary>
     private static double[] Bands(float[] img, int size)
     {
-        var sigmas = new[] { 0.7, 1.4, 2.8, 5.6, 11.2 };
+        var sigmas = new[] { 0.7, 1.4, 2.8, 5.6, 11.2, 22.4 };
         var levels = new List<float[]> { img };
         levels.AddRange(sigmas.Select(s => Blur(img, size, s)));
         var result = new double[sigmas.Length];

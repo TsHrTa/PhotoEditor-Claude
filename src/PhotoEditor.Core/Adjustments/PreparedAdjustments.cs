@@ -139,14 +139,37 @@ public readonly record struct PreparedAdjustments(
 
     public bool HasSoften => SoftenAmount > 0f;
 
-    /// <summary>Unsharp-mask strength at slider 100 (detail added = strength × (pixel − blurred)).</summary>
-    public const float SharpenStrengthAt100 = 2f;
+    /// <summary>
+    /// Unsharp-mask strength at slider 100 (detail added = strength × (pixel − blurred)). 2.5 (was 2): measured against
+    /// the user's Lightroom TIFFs (<c>Bench/SharpnessAnalysisBench</c>, foliage crops), our 40 now adds the fine contrast
+    /// Lightroom's 40 adds (before, it took our 50).
+    /// </summary>
+    public const float SharpenStrengthAt100 = 2.5f;
 
     /// <summary>Weight of the fine-scale component at Detail 100 (the fine mask is weaker than the coarse one for the same radius).</summary>
     public const float SharpenDetailStrengthAt100 = 1.5f;
 
-    /// <summary>The added sharpening (in sRGB 0..1) up to which it is applied as it is; stronger is compressed (halo limit).</summary>
-    public const float SharpenKnee = 0.15f, SharpenHeadroom = 0.25f;
+    /// <summary>
+    /// The added sharpening (in sRGB 0..1) up to which it is applied as it is; stronger is compressed (halo limit).
+    /// 0.08 / 0.15 (were 0.15 / 0.25): Lightroom holds back on strong edges such as dark leaves against a bright sky,
+    /// where our stronger sharpening had 18 % more contrast than Lightroom's; foliage texture stays below the knee.
+    /// </summary>
+    public const float SharpenKnee = 0.08f, SharpenHeadroom = 0.15f;
+
+    /// <summary>
+    /// Share of the sharpening a small, noise-sized difference from the blur gets (<see cref="SharpenSmallFrom"/>:
+    /// this share; from <see cref="SharpenSmallTo"/> up: all of it, sRGB 0..1 units of the luma detail).
+    /// </summary>
+    public const float SharpenSmallShare = 0.7f, SharpenSmallFrom = 0.01f, SharpenSmallTo = 0.04f;
+
+    /// <summary>
+    /// Weight of the sharpening for a pixel whose luma detail (pixel minus blur) is <paramref name="detail"/>. Measured
+    /// against the user's Lightroom TIFFs: at sharpening 40 Lightroom adds as much fine contrast to foliage as our 50, but
+    /// less than our 50 to smoother, noisier areas (ground, bark); full strength for real edges, less for noise-sized
+    /// differences gives both. Mirrored in the shader.
+    /// </summary>
+    public static float SharpenAmplitudeWeight(float detail) =>
+        SharpenSmallShare + (1f - SharpenSmallShare) * ToneCurve.SmoothStep(SharpenSmallFrom, SharpenSmallTo, MathF.Abs(detail));
 
     /// <summary>Compresses a large sharpening change softly, so strong edges get no glaring halos; small changes (texture) are untouched.</summary>
     public static float LimitSharpening(float add)
@@ -166,6 +189,14 @@ public readonly record struct PreparedAdjustments(
 
     /// <summary>Largest shift (in perceptual units, at white) the highlights slider applies at ±100.</summary>
     public const float MaxHighlightsShift = 0.25f;
+
+    /// <summary>
+    /// Colour noise reduction amount (0..1) for the slider value: (value / 100)^1.6. Measured against the user's
+    /// Lightroom TIFFs (<c>Bench/SharpnessAnalysisBench</c>, foliage): our linear 25 evened out the colour between leaves
+    /// as much as Lightroom's 25 only does at about 10 to 15 (10 % less colour variation at leaf scale); 25 now acts like
+    /// the old 11, 100 is unchanged.
+    /// </summary>
+    public static float ColorNoiseResponse(double value) => MathF.Pow((float)Math.Clamp(value, 0, 100) / 100f, 1.6f);
 
     public static PreparedAdjustments From(AdjustmentSettings s)
     {
@@ -207,7 +238,7 @@ public readonly record struct PreparedAdjustments(
             SoftenAmount: (float)Math.Clamp(s.Soften, 0, 100) / 100f,
             DehazeAmount: (float)Math.Clamp(s.Dehaze, -100, 100) / 100f,
             NoiseLuminanceAmount: (float)Math.Clamp(s.NoiseLuminance, 0, 100) / 100f,
-            NoiseColorAmount: (float)Math.Clamp(s.NoiseColor, 0, 100) / 100f,
+            NoiseColorAmount: ColorNoiseResponse(s.NoiseColor),
             DefringePurpleAmount: (float)Math.Clamp(s.DefringePurple, 0, 100) / 100f,
             DefringeGreenAmount: (float)Math.Clamp(s.DefringeGreen, 0, 100) / 100f,
             PurpleHueFrom: HueRange(s.DefringePurpleHueLow, s.DefringePurpleHueHigh, PurpleHue0, PurpleHue100).From,

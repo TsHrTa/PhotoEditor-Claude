@@ -121,10 +121,11 @@ public class SharpeningTests
     [Fact]
     public void LimitSharpening_KeepsSmallChanges_AndCompressesLargeOnes()
     {
+        // foliage-sized changes pass unchanged; a huge one (a dark leaf against a white sky) is held near knee + headroom
         Assert.Equal(0.05f, PreparedAdjustments.LimitSharpening(0.05f));
-        Assert.Equal(-0.1f, PreparedAdjustments.LimitSharpening(-0.1f));
+        Assert.Equal(-0.07f, PreparedAdjustments.LimitSharpening(-0.07f));
         float big = PreparedAdjustments.LimitSharpening(0.8f);
-        Assert.InRange(big, 0.3f, 0.4f);
+        Assert.InRange(big, 0.18f, PreparedAdjustments.SharpenKnee + PreparedAdjustments.SharpenHeadroom);
         Assert.Equal(-big, PreparedAdjustments.LimitSharpening(-0.8f));
         float previous = 0;
         for (float x = 0; x <= 2; x += 0.01f)
