@@ -190,6 +190,14 @@ public readonly record struct PreparedAdjustments(
     /// <summary>Largest shift (in perceptual units, at white) the highlights slider applies at ±100.</summary>
     public const float MaxHighlightsShift = 0.25f;
 
+    /// <summary>
+    /// Colour noise reduction amount (0..1) for the slider value: (value / 100)^1.6. Measured against the user's
+    /// Lightroom TIFFs (<c>Bench/SharpnessAnalysisBench</c>, foliage): our linear 25 evened out the colour between leaves
+    /// as much as Lightroom's 25 only does at about 10 to 15 (10 % less colour variation at leaf scale); 25 now acts like
+    /// the old 11, 100 is unchanged.
+    /// </summary>
+    public static float ColorNoiseResponse(double value) => MathF.Pow((float)Math.Clamp(value, 0, 100) / 100f, 1.6f);
+
     public static PreparedAdjustments From(AdjustmentSettings s)
     {
         var (wbR, wbG, wbB) = WhiteBalanceGains(s.Temperature, s.Tint);
@@ -230,7 +238,7 @@ public readonly record struct PreparedAdjustments(
             SoftenAmount: (float)Math.Clamp(s.Soften, 0, 100) / 100f,
             DehazeAmount: (float)Math.Clamp(s.Dehaze, -100, 100) / 100f,
             NoiseLuminanceAmount: (float)Math.Clamp(s.NoiseLuminance, 0, 100) / 100f,
-            NoiseColorAmount: (float)Math.Clamp(s.NoiseColor, 0, 100) / 100f,
+            NoiseColorAmount: ColorNoiseResponse(s.NoiseColor),
             DefringePurpleAmount: (float)Math.Clamp(s.DefringePurple, 0, 100) / 100f,
             DefringeGreenAmount: (float)Math.Clamp(s.DefringeGreen, 0, 100) / 100f,
             PurpleHueFrom: HueRange(s.DefringePurpleHueLow, s.DefringePurpleHueHigh, PurpleHue0, PurpleHue100).From,

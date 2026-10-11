@@ -36,8 +36,8 @@ public sealed class SharpnessAnalysisBench(ITestOutputHelper output)
             foreach (var part in extra.Split(';'))
             {
                 var v = part.Split(',').Select(s => double.Parse(s, CultureInfo.InvariantCulture)).ToArray();
-                variants.Add(($"Rcd sharpen {v[0]} radius {v[1]} detail {v[2]}", RawDemosaic.Rcd,
-                    AdjustmentSettings.RawDefault with { SharpenAmount = v[0], SharpenRadius = v[1], SharpenDetail = v[2] }));
+                variants.Add(($"Rcd sharpen {v[0]} radius {v[1]} detail {v[2]} colour NR {(v.Length > 3 ? v[3] : 25)}", RawDemosaic.Rcd,
+                    AdjustmentSettings.RawDefault with { SharpenAmount = v[0], SharpenRadius = v[1], SharpenDetail = v[2], NoiseColor = v.Length > 3 ? v[3] : 25 }));
             }
         var centres = Environment.GetEnvironmentVariable("PHOTOEDITOR_CENTRES") is { } list
             ? list.Split(';').Select(p => p.Split(',')).Select(p => (int.Parse(p[0], CultureInfo.InvariantCulture), int.Parse(p[1], CultureInfo.InvariantCulture))).ToArray()

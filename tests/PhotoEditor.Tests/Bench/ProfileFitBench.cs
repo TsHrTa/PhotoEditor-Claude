@@ -165,6 +165,88 @@ public sealed class ProfileFitBench(ITestOutputHelper output)
                 $"  {hb * 15,3}-{hb * 15 + 15,3}: dH {Median(dh),6:F1}  C {Median(bin.Select(c => c.C2 / c.C1).ToList()):F2}  L {Median(bin.Select(c => c.L1).ToList()):F2} → {Median(bin.Select(c => c.L2).ToList()):F2}  n={bin.Count}"));
         }
 
+        // by chroma: does Lightroom stretch chroma (vivid colours more vivid, dull ones less) within the foliage hues?
+        output.WriteLine("foliage hues 60-105 by OKLCh chroma of ours: C ratio LR / ours, dH, dL (n); and by lightness x chroma");
+        var foliage = central.Select(p =>
+        {
+            float r0 = p.S[0], g0 = p.S[1], b0 = p.S[2];
+            RawImageLoader.ToneRgb(ref r0, ref g0, ref b0);
+            if (Environment.GetEnvironmentVariable("PHOTOEDITOR_LOOK") is not null) RawLook.Apply(ref r0, ref g0, ref b0);
+            var (l1, a1, b1) = HslMath.ToOklab(r0, g0, b0);
+            var (l2, a2, b2) = HslMath.ToOklab(p.L[0], p.L[1], p.L[2]);
+            return (H1: Hue(a1, b1), C1: MathF.Sqrt(a1 * a1 + b1 * b1), L1: l1, H2: Hue(a2, b2), C2: MathF.Sqrt(a2 * a2 + b2 * b2), L2: l2);
+        }).Where(c => c.H1 >= 60 && c.H1 < 105 && c.C1 > 0.01f).ToList();
+        for (float c0 = 0.02f; c0 < 0.2f; c0 += 0.02f)
+        {
+            var bin = foliage.Where(c => c.C1 >= c0 && c.C1 < c0 + 0.02f).ToList();
+            if (bin.Count < 200) continue;
+            var dh = bin.Select(c => { float d = c.H2 - c.H1; return d > 180 ? d - 360 : d < -180 ? d + 360 : d; }).ToList();
+            output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"  C {c0:F2}-{c0 + 0.02f:F2}: C ratio {Median(bin.Select(c => c.C2 / c.C1).ToList()):F3}  LR C {Median(bin.Select(c => c.C2).ToList()):F3}  dH {Median(dh),5:F1}  dL {Median(bin.Select(c => c.L2 - c.L1).ToList()):+0.000;-0.000}  n={bin.Count}"));
+        }
+        // spread: standard deviation of chroma and of hue in the foliage, ours vs Lightroom (same pixels)
+        double Sd(IEnumerable<float> v) { var a = v.ToArray(); double m = a.Average(); return Math.Sqrt(a.Average(x => (x - m) * (x - m))); }
+        output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"  foliage spread: chroma SD ours {Sd(foliage.Select(c => c.C1)):F4} LR {Sd(foliage.Select(c => c.C2)):F4}; hue SD ours {Sd(foliage.Select(c => c.H1)):F2} LR {Sd(foliage.Select(c => c.H2)):F2}; lightness SD ours {Sd(foliage.Select(c => c.L1)):F4} LR {Sd(foliage.Select(c => c.L2)):F4}"));
+        foreach (var (lo, hi) in new[] { (0.01f, 0.04f), (0.04f, 0.08f), (0.08f, 0.3f) })
+        {
+            var part = foliage.Where(c => c.C1 >= lo && c.C1 < hi).ToList();
+            output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"  chroma {lo:F2}-{hi:F2} (n={part.Count}): hue SD ours {Sd(part.Select(c => c.H1)):F2} LR {Sd(part.Select(c => c.H2)):F2}; chroma SD ours {Sd(part.Select(c => c.C1)):F4} LR {Sd(part.Select(c => c.C2)):F4}"));
+        }
+
+        // a 3 x 3 colour matrix (display-linear, after our rendering) fitted ours -> Lightroom by least squares, rows
+        // normalised to keep white; then the foliage spread with it
+        {
+            var rendered3 = central.Select(p =>
+            {
+                float r0 = p.S[0], g0 = p.S[1], b0 = p.S[2];
+                RawImageLoader.ToneRgb(ref r0, ref g0, ref b0);
+                if (Environment.GetEnvironmentVariable("PHOTOEDITOR_LOOK") is not null) RawLook.Apply(ref r0, ref g0, ref b0);
+                return (O: new[] { r0, g0, b0 }, L: p.L);
+            }).Where(p => p.O.Max() < 0.95f && p.L.Max() < 0.95f && p.O.Max() > 0.005f).ToList();
+            var ata = new double[3, 3];
+            var atb = new double[3, 3];
+            foreach (var (o, l) in rendered3)
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 3; j++)
+                    {
+                        ata[i, j] += o[i] * o[j];
+                        atb[i, j] += o[i] * l[j];
+                    }
+            var inv = Invert3(ata);
+            var m = new double[3, 3]; // l_j = sum_i m[i, j] o_i
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++)
+                    for (int k = 0; k < 3; k++)
+                        m[i, j] += inv[i, k] * atb[k, j];
+            output.WriteLine("fitted matrix (rows: output R, G, B; columns: input R, G, B; each row normalised to sum 1):");
+            for (int j = 0; j < 3; j++)
+            {
+                double s = m[0, j] + m[1, j] + m[2, j];
+                output.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {m[0, j] / s:F4} {m[1, j] / s:F4} {m[2, j] / s:F4}   (row sum {s:F4})"));
+            }
+            var fol2 = rendered3.Select(p =>
+            {
+                var o = new float[3];
+                for (int j = 0; j < 3; j++)
+                {
+                    double s = m[0, j] + m[1, j] + m[2, j];
+                    o[j] = (float)((m[0, j] * p.O[0] + m[1, j] * p.O[1] + m[2, j] * p.O[2]) / s);
+                }
+                var (l1, a1, b1) = HslMath.ToOklab(Math.Max(o[0], 0), Math.Max(o[1], 0), Math.Max(o[2], 0));
+                var (l2, a2, b2) = HslMath.ToOklab(p.L[0], p.L[1], p.L[2]);
+                return (H1: Hue(a1, b1), C1: MathF.Sqrt(a1 * a1 + b1 * b1), H2: Hue(a2, b2), C2: MathF.Sqrt(a2 * a2 + b2 * b2));
+            }).Where(c => c.H1 >= 60 && c.H1 < 105 && c.C1 > 0.01f).ToList();
+            foreach (var (lo, hi) in new[] { (0.01f, 0.04f), (0.04f, 0.08f), (0.08f, 0.3f) })
+            {
+                var part = fol2.Where(c => c.C1 >= lo && c.C1 < hi).ToList();
+                var dh = part.Select(c => { float d = c.H2 - c.H1; return d > 180 ? d - 360 : d < -180 ? d + 360 : d; }).ToList();
+                output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"  with matrix, chroma {lo:F2}-{hi:F2} (n={part.Count}): hue SD ours {Sd(part.Select(c => c.H1)):F2} LR {Sd(part.Select(c => c.H2)):F2}; chroma SD ours {Sd(part.Select(c => c.C1)):F4} LR {Sd(part.Select(c => c.C2)):F4}; median dH {Median(dh):F1} C ratio {Median(part.Select(c => c.C2 / c.C1).ToList()):F2}"));
+            }
+        }
+
         // the same by lightness: does Lightroom's look depend on how bright a colour is (lit vs shaded leaves)?
         output.WriteLine("colour by OKLCh hue and OKLab lightness of ours: dH (deg) / C ratio LR / ours / dL (n)");
         for (int hb = 3; hb < 9; hb++)
@@ -234,6 +316,23 @@ public sealed class ProfileFitBench(ITestOutputHelper output)
     }
 
     private static float Enc(float linear) => ColorMath.LinearToSrgbFast(Math.Clamp(linear, 0, 1)) * 255;
+
+    private static double[,] Invert3(double[,] a)
+    {
+        double det = a[0, 0] * (a[1, 1] * a[2, 2] - a[1, 2] * a[2, 1]) - a[0, 1] * (a[1, 0] * a[2, 2] - a[1, 2] * a[2, 0])
+            + a[0, 2] * (a[1, 0] * a[2, 1] - a[1, 1] * a[2, 0]);
+        var r = new double[3, 3];
+        r[0, 0] = (a[1, 1] * a[2, 2] - a[1, 2] * a[2, 1]) / det;
+        r[0, 1] = (a[0, 2] * a[2, 1] - a[0, 1] * a[2, 2]) / det;
+        r[0, 2] = (a[0, 1] * a[1, 2] - a[0, 2] * a[1, 1]) / det;
+        r[1, 0] = (a[1, 2] * a[2, 0] - a[1, 0] * a[2, 2]) / det;
+        r[1, 1] = (a[0, 0] * a[2, 2] - a[0, 2] * a[2, 0]) / det;
+        r[1, 2] = (a[0, 2] * a[1, 0] - a[0, 0] * a[1, 2]) / det;
+        r[2, 0] = (a[1, 0] * a[2, 1] - a[1, 1] * a[2, 0]) / det;
+        r[2, 1] = (a[0, 1] * a[2, 0] - a[0, 0] * a[2, 1]) / det;
+        r[2, 2] = (a[0, 0] * a[1, 1] - a[0, 1] * a[1, 0]) / det;
+        return r;
+    }
 
     private static float Hue(float a, float b)
     {
