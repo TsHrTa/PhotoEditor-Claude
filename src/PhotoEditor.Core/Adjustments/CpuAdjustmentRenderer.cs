@@ -105,27 +105,80 @@ public static class CpuAdjustmentRenderer
             ? new Softening(original.GetPixels(), original.RowBytes, width, height, PreparedAdjustments.SoftenStepFor(Math.Max(width, height)))
             : null;
 
-        Parallel.For(0, height, () => new float[width * 4], (y, _, row) =>
+        // Masks that darken a RAW's highlights take the scene colour from the global pass's result on the original
+        // (SceneReference), worked out per band of rows with the rows its taps reach above and below.
+        bool sceneReference = sceneExposure && layers.Any(l => l.Adjustments.HighlightsAmount < 0f);
+        int bandCount = (height + BandRows - 1) / BandRows;
+        Parallel.For(0, bandCount, () => new float[width * 4], (band, _, row) =>
         {
-            unsafe
-            {
-                var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
-                var extraRow = headroom is null ? default : new ReadOnlySpan<byte>((byte*)extraPtr + (long)y * extraRowBytes, width * 4);
-                var fineRow = finePtr == 0 ? default : new ReadOnlySpan<byte>((byte*)finePtr + (long)y * fineRowBytes, width * 4);
-                ProcessRow(inRow, row, p, layers, y, frame, soften, haze, height, detailFilters, toneBase, originalPixels,
-                    extraRow, headroom?.Scale ?? 0f, fineRow, lensGain);
-                if (floatOutput)
+            int y0 = band * BandRows, y1 = Math.Min(height, y0 + BandRows);
+            var reference = sceneReference
+                ? SceneReference.Compute(y0, y1, width, height, p, frame, haze, toneBase, originalPixels, lensGain)
+                : null;
+            for (int y = y0; y < y1; y++)
+                unsafe
                 {
-                    var halves = new Span<Half>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
-                    for (int i = 0; i < row.Length; i++)
-                        halves[i] = (Half)row[i];
+                    var inRow = new ReadOnlySpan<byte>((byte*)inPtr + (long)y * rowBytesIn, width * 4);
+                    var extraRow = headroom is null ? default : new ReadOnlySpan<byte>((byte*)extraPtr + (long)y * extraRowBytes, width * 4);
+                    var fineRow = finePtr == 0 ? default : new ReadOnlySpan<byte>((byte*)finePtr + (long)y * fineRowBytes, width * 4);
+                    ProcessRow(inRow, row, p, layers, y, frame, soften, haze, height, detailFilters, toneBase, originalPixels,
+                        extraRow, headroom?.Scale ?? 0f, fineRow, lensGain, reference);
+                    if (floatOutput)
+                    {
+                        var halves = new Span<Half>((byte*)outPtr + (long)y * rowBytesOut, width * 4);
+                        for (int i = 0; i < row.Length; i++)
+                            halves[i] = (Half)row[i];
+                    }
+                    else
+                        ToBytes(row, new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4));
                 }
-                else
-                    ToBytes(row, new Span<byte>((byte*)outPtr + (long)y * rowBytesOut, width * 4));
-            }
             return row;
         }, _ => { });
         return result;
+    }
+
+    /// <summary>Rows rendered together (they share a <see cref="SceneReference"/>).</summary>
+    private const int BandRows = 32;
+
+    /// <summary>
+    /// The global pass's result on the original pixels (no sharpening or other detail filters), linear light, for
+    /// the rows of a band and the ones its scene-colour taps reach: the "original" of a mask pass that darkens a RAW's
+    /// highlights (<see cref="RawBaseCurve.SceneColour"/>). Mask passes start from the previous pass's (sharpened)
+    /// result; this is the same pixel in the same light without the filters. Mirrored in the shader (a reference pass,
+    /// <c>sceneSource</c>).
+    /// </summary>
+    private sealed class SceneReference : ILinearPixels
+    {
+        private readonly float[] _pixels;
+        private readonly int _width, _firstRow;
+
+        private SceneReference(float[] pixels, int width, int firstRow) => (_pixels, _width, _firstRow) = (pixels, width, firstRow);
+
+        public static SceneReference Compute(int y0, int y1, int width, int height, in PreparedAdjustments p, in VignetteMath.Frame frame,
+            HazeMap? haze, ToneBaseMap? toneBase, ToneSource originalPixels, in LensGain lensGain)
+        {
+            int from = Math.Max(0, y0 - AdjustmentShader.SceneColourStep), to = Math.Min(height, y1 + AdjustmentShader.SceneColourStep);
+            var pixels = new float[(to - from) * width * 3];
+            for (int y = from; y < to; y++)
+                for (int x = 0; x < width; x++)
+                {
+                    int o = ((y - from) * width + x) * 3;
+                    if (originalPixels.Alpha(x, y) == 0)
+                        continue;
+                    originalPixels.Linear(x, y, out float r, out float g, out float b);
+                    DevelopGlobal(ref r, ref g, ref b, x, y, width, height, p, frame, haze, toneBase, originalPixels, lensGain, out _, out _, out _);
+                    pixels[o] = Math.Clamp(r, 0f, AdjustmentShader.PassLimit);
+                    pixels[o + 1] = Math.Clamp(g, 0f, AdjustmentShader.PassLimit);
+                    pixels[o + 2] = Math.Clamp(b, 0f, AdjustmentShader.PassLimit);
+                }
+            return new SceneReference(pixels, width, from);
+        }
+
+        public void Linear(int x, int y, out float r, out float g, out float b)
+        {
+            int o = ((y - _firstRow) * _width + x) * 3;
+            (r, g, b) = (_pixels[o], _pixels[o + 1], _pixels[o + 2]);
+        }
     }
 
     /// <summary>A mask's prepared adjustments and its 8-bit coverage at output resolution.</summary>
@@ -155,7 +208,7 @@ public static class CpuAdjustmentRenderer
     private static void ProcessRow(ReadOnlySpan<byte> input, Span<float> output, in PreparedAdjustments p, MaskLayer[] layers, int y,
         in VignetteMath.Frame frame, Softening? soften, HazeMap? haze, int height, DetailFilters? detailFilters,
         ToneBaseMap? toneBase, ToneSource originalPixels, ReadOnlySpan<byte> headroom, float headroomScale, ReadOnlySpan<byte> fine,
-        in LensGain lensGain)
+        in LensGain lensGain, SceneReference? sceneReference = null)
     {
         int width = input.Length / 4;
         // The global pass hands values up to PassLimit to the masks; the last pass clips at white.
@@ -237,51 +290,8 @@ public static class CpuAdjustmentRenderer
                 b = ColorMath.SrgbToLinear(Math.Min(1f, input[i + 2] * inv / 255f));
             }
 
-            // RAW highlights darkened on scene values take their colour from the original (before the detail filters).
-            bool sceneColour = p.SceneExposure && p.HighlightsAmount < 0f;
-            float r0 = r, g0 = g, b0 = b, rn = r, gn = g, bn = b;
-            if (sceneColour && originalPixels.IsBound)
-                originalPixels.SceneColourSource(i / 4, y, width, height, out r0, out g0, out b0, out rn, out gn, out bn);
-
-            // Lens vignetting (profile removed, manual applied), in linear light; on the scene values before the base
-            // curve for RAWs (the lens darkened the light, not the rendered picture).
-            if (lensGain.IsActive)
-            {
-                float gain = lensGain.At(i / 4, y);
-                if (p.SceneExposure)
-                {
-                    RawBaseCurve.ApplyScene(ref r, ref g, ref b, gain, gain, gain);
-                    if (sceneColour)
-                    {
-                        RawBaseCurve.ApplyScene(ref r0, ref g0, ref b0, gain, gain, gain);
-                        RawBaseCurve.ApplyScene(ref rn, ref gn, ref bn, gain, gain, gain);
-                    }
-                }
-                else
-                {
-                    r *= gain;
-                    g *= gain;
-                    b *= gain;
-                }
-            }
-
-            // Transmission at this pixel, sampled once when a pass dehazes.
-            float t = -1f;
-            if (p.HasDehaze && haze is not null)
-            {
-                t = haze.Sample(i / 4, y, width, height);
-                HazeMap.Apply(ref r, ref g, ref b, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
-                if (sceneColour)
-                {
-                    HazeMap.Apply(ref r0, ref g0, ref b0, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
-                    HazeMap.Apply(ref rn, ref gn, ref bn, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
-                }
-            }
-            // Base / pixel brightness from the original, computed once per pixel when a pass needs it.
-            var (baseRatio, detailRatio) = toneBase is not null ? originalPixels.Ratios(toneBase, i / 4, y, width, height) : (1f, 1f);
-            ApplyLinear(ref r, ref g, ref b, p, baseRatio, detailRatio, sceneColour ? new SceneColourInput(r0, g0, b0, rn, gn, bn) : null);
-            if (p.HasVignette)
-                VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, p);
+            DevelopGlobal(ref r, ref g, ref b, i / 4, y, width, height, p, frame, haze, toneBase, originalPixels, lensGain,
+                out float t, out float baseRatio, out float detailRatio);
             if (layers.Length == 0)
                 ToneCurve.RollToWhite(ref r, ref g, ref b);
             // Result of the global pass as unpremultiplied sRGB, like the shader hands to the next pass.
@@ -310,13 +320,24 @@ public static class CpuAdjustmentRenderer
                 r = ColorMath.SrgbToLinear(lr);
                 g = ColorMath.SrgbToLinear(lg);
                 b = ColorMath.SrgbToLinear(lb);
+                // Darkened RAW highlights take their scene colour from the global pass's result on the original.
+                bool sceneColour = sceneReference is not null && layer.Adjustments.SceneExposure && layer.Adjustments.HighlightsAmount < 0f;
+                float r0 = 0, g0 = 0, b0 = 0, rn = 0, gn = 0, bn = 0;
+                if (sceneColour)
+                    SceneColourSource(sceneReference!, i / 4, y, width, height, out r0, out g0, out b0, out rn, out gn, out bn);
                 if (layer.Adjustments.HasDehaze && haze is not null)
                 {
                     if (t < 0f)
                         t = haze.Sample(i / 4, y, width, height);
                     HazeMap.Apply(ref r, ref g, ref b, t, layer.Adjustments.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
+                    if (sceneColour)
+                    {
+                        HazeMap.Apply(ref r0, ref g0, ref b0, t, layer.Adjustments.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
+                        HazeMap.Apply(ref rn, ref gn, ref bn, t, layer.Adjustments.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
+                    }
                 }
-                ApplyLinear(ref r, ref g, ref b, layer.Adjustments, baseRatio, detailRatio);
+                ApplyLinear(ref r, ref g, ref b, layer.Adjustments, baseRatio, detailRatio,
+                    sceneColour ? new SceneColourInput(r0, g0, b0, rn, gn, bn) : null);
                 if (layer.Adjustments.HasVignette)
                     VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, layer.Adjustments);
                 if (last)
@@ -333,6 +354,61 @@ public static class CpuAdjustmentRenderer
             output[i + 2] = sb * a;
             output[i + 3] = a;
         }
+    }
+
+    /// <summary>
+    /// The global pass's per-pixel adjustments on a linear-light pixel (lens vignetting, dehaze, <see cref="ApplyLinear"/>,
+    /// vignette). Returns the haze transmission (−1 = not sampled) and the tone base ratios for the mask passes.
+    /// </summary>
+    private static void DevelopGlobal(ref float r, ref float g, ref float b, int x, int y, int width, int height, in PreparedAdjustments p,
+        in VignetteMath.Frame frame, HazeMap? haze, ToneBaseMap? toneBase, ToneSource originalPixels, in LensGain lensGain,
+        out float t, out float baseRatio, out float detailRatio)
+    {
+        // RAW highlights darkened on scene values take their colour from the original (before the detail filters).
+        bool sceneColour = p.SceneExposure && p.HighlightsAmount < 0f;
+        float r0 = r, g0 = g, b0 = b, rn = r, gn = g, bn = b;
+        if (sceneColour && originalPixels.IsBound)
+            SceneColourSource(originalPixels, x, y, width, height, out r0, out g0, out b0, out rn, out gn, out bn);
+
+        // Lens vignetting (profile removed, manual applied), in linear light; on the scene values before the base
+        // curve for RAWs (the lens darkened the light, not the rendered picture).
+        if (lensGain.IsActive)
+        {
+            float gain = lensGain.At(x, y);
+            if (p.SceneExposure)
+            {
+                RawBaseCurve.ApplyScene(ref r, ref g, ref b, gain, gain, gain);
+                if (sceneColour)
+                {
+                    RawBaseCurve.ApplyScene(ref r0, ref g0, ref b0, gain, gain, gain);
+                    RawBaseCurve.ApplyScene(ref rn, ref gn, ref bn, gain, gain, gain);
+                }
+            }
+            else
+            {
+                r *= gain;
+                g *= gain;
+                b *= gain;
+            }
+        }
+
+        // Transmission at this pixel, sampled once when a pass dehazes.
+        t = -1f;
+        if (p.HasDehaze && haze is not null)
+        {
+            t = haze.Sample(x, y, width, height);
+            HazeMap.Apply(ref r, ref g, ref b, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
+            if (sceneColour)
+            {
+                HazeMap.Apply(ref r0, ref g0, ref b0, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
+                HazeMap.Apply(ref rn, ref gn, ref bn, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
+            }
+        }
+        // Base / pixel brightness from the original, computed once per pixel when a pass needs it.
+        (baseRatio, detailRatio) = toneBase is not null ? originalPixels.Ratios(toneBase, x, y, width, height) : (1f, 1f);
+        ApplyLinear(ref r, ref g, ref b, p, baseRatio, detailRatio, sceneColour ? new SceneColourInput(r0, g0, b0, rn, gn, bn) : null);
+        if (p.HasVignette)
+            VignetteMath.Apply(ref r, ref g, ref b, x, y, frame, p);
     }
 
     private static bool UsesDetail(in PreparedAdjustments p) => p.HasSoften || p.HasTexture;
@@ -415,8 +491,36 @@ public static class CpuAdjustmentRenderer
         }
     }
 
-    /// <summary>The original photo's pixels, for the base / pixel brightness ratio.</summary>
-    private readonly unsafe struct ToneSource(nint pixels, int rowBytes, Headroom? headroom)
+    /// <summary>Pixels in linear light, for the scene colour's taps (<see cref="SceneColourSource{T}"/>).</summary>
+    private interface ILinearPixels
+    {
+        void Linear(int x, int y, out float r, out float g, out float b);
+    }
+
+    /// <summary>
+    /// The pixel (<paramref name="cr"/> …) and its luminance with the colour of its 5 × 5 neighbourhood (3 × 3 taps,
+    /// <see cref="AdjustmentShader.SceneColourStep"/> apart, summed in linear light so the bright pixels lead), for
+    /// <see cref="RawBaseCurve.SceneColour"/>. Mirrored in the shader (<c>sceneColourShift</c>).
+    /// </summary>
+    private static void SceneColourSource<T>(T pixels, int x, int y, int width, int height, out float cr, out float cg, out float cb,
+        out float r, out float g, out float b) where T : ILinearPixels
+    {
+        pixels.Linear(x, y, out cr, out cg, out cb);
+        float sr = 0, sg = 0, sb = 0;
+        const int step = AdjustmentShader.SceneColourStep;
+        for (int j = -1; j <= 1; j++)
+            for (int i = -1; i <= 1; i++)
+            {
+                pixels.Linear(Math.Clamp(x + i * step, 0, width - 1), Math.Clamp(y + j * step, 0, height - 1), out float nr, out float ng, out float nb);
+                sr += nr; sg += ng; sb += nb;
+            }
+        float ys = ToneCurve.Luminance(sr, sg, sb);
+        float k = ys > 1e-9f ? ToneCurve.Luminance(cr, cg, cb) / ys : 0f;
+        (r, g, b) = ys > 1e-9f ? (sr * k, sg * k, sb * k) : (cr, cg, cb);
+    }
+
+    /// <summary>The original photo's pixels, for the base / pixel brightness ratio and the scene colour.</summary>
+    private readonly unsafe struct ToneSource(nint pixels, int rowBytes, Headroom? headroom) : ILinearPixels
     {
         private readonly nint _extra = headroom?.Bitmap.GetPixels() ?? 0;
         private readonly int _extraRowBytes = headroom?.Bitmap.RowBytes ?? 0;
@@ -427,8 +531,10 @@ public static class CpuAdjustmentRenderer
 
         public bool IsBound => pixels != 0;
 
+        public byte Alpha(int x, int y) => ((byte*)pixels + (long)y * rowBytes + x * 4)[3];
+
         /// <summary>The original pixel in linear light, with its headroom and fine fraction.</summary>
-        private void Linear(int x, int y, out float r, out float g, out float b)
+        public void Linear(int x, int y, out float r, out float g, out float b)
         {
             byte* p = (byte*)pixels + (long)y * rowBytes + x * 4;
             float inv = p[3] > 0 ? 1f / p[3] : 0f;
@@ -446,28 +552,6 @@ public static class CpuAdjustmentRenderer
             r = ColorMath.SrgbToLinear(s0);
             g = ColorMath.SrgbToLinear(s1);
             b = ColorMath.SrgbToLinear(s2);
-        }
-
-        /// <summary>
-        /// The original pixel (<paramref name="cr"/> …) and its luminance with the colour of its 5 × 5 neighbourhood
-        /// (3 × 3 taps, <see cref="AdjustmentShader.SceneColourStep"/> apart, summed in linear light so the bright pixels
-        /// lead), for <see cref="RawBaseCurve.SceneColour"/>. Mirrored in the shader (<c>sceneColourSource</c>).
-        /// </summary>
-        public void SceneColourSource(int x, int y, int width, int height, out float cr, out float cg, out float cb,
-            out float r, out float g, out float b)
-        {
-            Linear(x, y, out cr, out cg, out cb);
-            float sr = 0, sg = 0, sb = 0;
-            const int step = AdjustmentShader.SceneColourStep;
-            for (int j = -1; j <= 1; j++)
-                for (int i = -1; i <= 1; i++)
-                {
-                    Linear(Math.Clamp(x + i * step, 0, width - 1), Math.Clamp(y + j * step, 0, height - 1), out float nr, out float ng, out float nb);
-                    sr += nr; sg += ng; sb += nb;
-                }
-            float ys = ToneCurve.Luminance(sr, sg, sb);
-            float k = ys > 1e-9f ? ToneCurve.Luminance(cr, cg, cb) / ys : 0f;
-            (r, g, b) = ys > 1e-9f ? (sr * k, sg * k, sb * k) : (cr, cg, cb);
         }
 
         public (float Base, float Detail) Ratios(ToneBaseMap map, int x, int y, int width, int height)
@@ -502,7 +586,7 @@ public static class CpuAdjustmentRenderer
     /// The same pixel of the original photo before the detail filters (sharpening, noise reduction, …) and its
     /// neighbourhood's colour, in the same linear light as <paramref name="r"/> … (lens vignetting and dehaze applied):
     /// when given, a RAW's darkened highlights get their colour back from them (<see cref="RawBaseCurve.SceneColour"/>).
-    /// Global pass only.
+    /// In a mask pass, the global pass's result on the original pixels (<see cref="SceneReference"/>).
     /// </param>
     public static void ApplyLinear(ref float r, ref float g, ref float b, in PreparedAdjustments p, float baseRatio = 1f,
         float detailRatio = 1f, SceneColourInput? original = null)

@@ -117,10 +117,14 @@ public static class AdjustmentShader
         // blue), used when curveOn = 1.
         uniform shader curveTable;
         uniform float curveOn;
-        // Darkened RAW highlights get their scene colour back (RawBaseCurve.SceneColour; global pass, Highlights < 0):
+        // Darkened RAW highlights get their scene colour back (RawBaseCurve.SceneColour; Highlights < 0):
         // 1 when on; the spacing of the 3 × 3 neighbourhood taps in image pixels.
         uniform float sceneColour;
         uniform float sceneColourStep;
+        // A mask pass takes the scene colour from sceneSource (sceneFromPass = 1): the global pass on the original
+        // without its detail filters (CpuAdjustmentRenderer.SceneReference), premultiplied sRGB like a pass's result.
+        uniform shader sceneSource;
+        uniform float sceneFromPass;
         const float softenRangeSigma = 0.1;
 
         const float perceptualGamma = 2.2;
@@ -620,14 +624,24 @@ public static class AdjustmentShader
             float k = ys > 1e-9 ? y0 * gain / ys : gain;
             return s * k - c0 * gain;
         }
-        // RawBaseCurve.SceneColour on the original pixel and its neighbourhood colour (ToneSource.SceneColourSource):
+        // The scene colour's original at p: the photo (global pass) or the reference pass (a mask pass), linear light.
+        float3 sceneOriginal(float2 p) {
+            if (sceneFromPass > 0.0) {
+                half4 o = sceneSource.eval(p);
+                if (o.a <= 0.0) return float3(0.0);
+                float3 s = float3(o.rgb) / o.a;
+                return float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b));
+            }
+            return originalLinear(p);
+        }
+        // RawBaseCurve.SceneColour on the original pixel and its neighbourhood colour (CpuAdjustmentRenderer.SceneColourSource):
         // the darkened pixel plus the colour change both agree on.
         float3 sceneColourShift(float3 c, float gain, float2 coord) {
-            float3 o = originalLinear(coord);
+            float3 o = sceneOriginal(coord);
             float3 sum = float3(0.0);
             for (int j = -1; j <= 1; j++) {
                 for (int i = -1; i <= 1; i++) {
-                    sum += originalLinear(coord + float2(float(i), float(j)) * sceneColourStep);
+                    sum += sceneOriginal(coord + float2(float(i), float(j)) * sceneColourStep);
                 }
             }
             float ys = lum(sum);
@@ -842,6 +856,12 @@ public static class AdjustmentShader
         float softenStep = (float)(PreparedAdjustments.SoftenStepFor(fullLongSide) * pixelScale);
         var current = CreatePass(imageShader, imageShader, white, haze, tone, extra, lens, state.Adjustments, frame, (float)pixelScale, softenStep,
             sharpen: true, last: masks.Count == 0);
+        // Masks that darken a RAW's highlights take the scene colour from the global pass on the original without its
+        // detail filters (CpuAdjustmentRenderer.SceneReference): their input is the sharpened result.
+        using var sceneReference = extra.BaseCurve && masks.Any(m => PreparedAdjustments.From(m.Mask.Adjustments).HighlightsAmount < 0f)
+            ? CreatePass(imageShader, imageShader, white, haze, tone, extra, lens, WithoutDetailFilters(state.Adjustments), frame,
+                (float)pixelScale, softenStep, sharpen: true, last: false)
+            : null;
 
         for (int i = 0; i < masks.Count; i++)
         {
@@ -850,7 +870,7 @@ public static class AdjustmentShader
             using var maskShader = maskImg.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
                 MaskSampling(maskImg, image), toImage);
             var next = CreatePass(current, imageShader, maskShader, haze, tone, extra, lens, mask.Adjustments, frame, (float)pixelScale, softenStep,
-                sharpen: false, last: i == masks.Count - 1);
+                sharpen: false, last: i == masks.Count - 1, sceneReference);
             current.Dispose();
             current = next;
         }
@@ -917,8 +937,18 @@ public static class AdjustmentShader
 
     private static bool LocalTone(AdjustmentSettings s) => s.Highlights != 0 || s.Shadows != 0 || s.Clarity != 0;
 
+    /// <summary><paramref name="s"/> without sharpening, noise reduction, defringe, soften and texture.</summary>
+    private static AdjustmentSettings WithoutDetailFilters(AdjustmentSettings s) => s with
+    {
+        SharpenAmount = 0, NoiseLuminance = 0, NoiseColor = 0, DefringePurple = 0, DefringeGreen = 0, Soften = 0, Texture = 0,
+    };
+
+    /// <param name="sceneSource">
+    /// A mask pass's scene-colour original (the reference pass, see <see cref="CreateShader(SKImage, EditState, SKSamplingOptions, Func{Mask, SKImage?}, double, HazeMap?)"/>);
+    /// null: the global pass takes it from the photo, a mask pass has none.
+    /// </param>
     private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, HazeInput haze, ToneInput tone, HeadroomInput headroom, LensInput lens,
-        AdjustmentSettings settings, VignetteMath.Frame frame, float pixelScale, float softenStep, bool sharpen, bool last)
+        AdjustmentSettings settings, VignetteMath.Frame frame, float pixelScale, float softenStep, bool sharpen, bool last, SKShader? sceneSource = null)
     {
         var p = PreparedAdjustments.From(settings).ForScene(headroom.BaseCurve);
         // Only the features this pass uses are compiled in (the same conditions as the uniforms below set).
@@ -990,8 +1020,9 @@ public static class AdjustmentShader
             ["textureStep"] = pixelScale,
             ["clarityAmount"] = p.ClarityAmount,
             ["curveOn"] = curve is null ? 0f : 1f,
-            ["sceneColour"] = sharpen && headroom.BaseCurve && p.HighlightsAmount < 0f ? 1f : 0f,
+            ["sceneColour"] = (sharpen || sceneSource is not null) && headroom.BaseCurve && p.HighlightsAmount < 0f ? 1f : 0f,
             ["sceneColourStep"] = SceneColourStep * pixelScale,
+            ["sceneFromPass"] = sceneSource is null ? 0f : 1f,
             ["headroomScale"] = headroom.Scale,
             ["addHeadroom"] = sharpen && headroom.Scale > 0 ? 1f : 0f,
             ["addFine"] = sharpen && headroom.HasFine ? 1f : 0f,
@@ -1019,6 +1050,7 @@ public static class AdjustmentShader
             ["lensTable"] = lens.Table,
             ["fine"] = headroom.Fine,
             ["curveTable"] = curveShader,
+            ["sceneSource"] = sceneSource ?? mask,
         };
         return effect.ToShader(uniforms, children);
     }
