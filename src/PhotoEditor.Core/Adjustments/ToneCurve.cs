@@ -44,7 +44,8 @@ public static class ToneCurve
     /// acts on that plain local mean, not on the edge-preserving base: the guided base follows foliage texture pixel by
     /// pixel, so a darkening that grows with brightness flattened the texture (19 % less detail at −95, where Lightroom
     /// keeps it). A darkened area also gets back the detail the darkening takes from it, ×
-    /// <see cref="HighlightsDetailKeep"/> (factor detailRatio^(keep · (1 − 1/g)) for the perceptual factor g).
+    /// <see cref="HighlightsDetailKeep"/> (factor detailRatio^(keep · (1 − 1/g)) for the perceptual factor g), and on
+    /// RAWs what the base curve's shoulder pressed together (<see cref="ShoulderLift"/>: clouds).
     /// Shadows stays on the edge-preserving base.
     /// </param>
     public static float LocalGain(float baseLuminance, in PreparedAdjustments p, float detailRatio = 1f, float meanLuminance = -1f)
@@ -59,7 +60,13 @@ public static class ToneCurve
             float h = Highlights(Highlights(h0, p.HighlightsAmount), p.HighlightsAmount2);
             gain = MathF.Pow(MathF.Max(h, 0f) / h0, PerceptualGamma);
             if (h < h0 && h > 0f)
+            {
+                float meanGain = gain;
                 gain *= MathF.Pow(MathF.Max(detailRatio, 1e-6f), HighlightsDetailKeep * (1f - h0 / h));
+                // at most back to where the pixel was
+                if (p.SceneExposure)
+                    gain *= MathF.Min(ShoulderLift(ym, meanGain, detailRatio), MathF.Max(1f / gain, 1f));
+            }
         }
         float x0 = MathF.Pow(yb * gain, 1f / PerceptualGamma);
         float x = Shadows(Shadows(x0, p.ShadowsAmount), p.ShadowsAmount2);
@@ -139,6 +146,54 @@ public static class ToneCurve
         // above white the growth is 0.4 x as steep, so even two passes (-200) never reverse the order of tones
         float rise = MathF.Max(MathF.Min(x, 1f) - 0.3f, 0f) + 0.4f * MathF.Max(x - 1f, 0f);
         return s * s * (3f - 2f * s) * (0.44f + HighlightsTopStops / 0.7f * rise);
+    }
+
+    /// <summary>
+    /// Strength of <see cref="ShoulderLift"/>: how much of the brightness a RAW pixel had above its local mean, before
+    /// the base curve's shoulder pressed it together, comes back (per unit of shoulder expansion beyond
+    /// <see cref="ShoulderLiftStart"/>).
+    /// </summary>
+    public const float ShoulderLiftAmount = 1.5f;
+
+    /// <summary>Shoulder expansion (slope after / before the darkening) below which <see cref="ShoulderLift"/> does nothing.</summary>
+    public const float ShoulderLiftStart = 2.5f;
+
+    /// <summary>Lift above the local mean (natural log) treated as grain and left out of <see cref="ShoulderLift"/> (4 %).</summary>
+    public const float ShoulderLiftGrain = 0.04f;
+
+    /// <summary>
+    /// Extra factor for a RAW pixel brighter than its local mean when Highlights darkens that mean (<see cref="LocalGain"/>).
+    /// <para>
+    /// The base curve's shoulder (<see cref="RawBaseCurve"/>) presses everything near white together: on the R8 sample a
+    /// cloud edge (scene 1.7, twice the sky) and the blue sky next to it render 0.985 and 0.93 linear, and the cloud's
+    /// local mean is even darker than the sky's. A darkening of the mean alone brought both to the same grey (luma 191 and
+    /// 183), where Lightroom, which darkens before its curve, keeps the cloud a stop brighter (214 and 185). Darkened,
+    /// the mean leaves the shoulder: its log-slope grows by e = <see cref="ShoulderSlope"/> after / before (about 5 for
+    /// clouds, 1.5 for foliage highlights). The pixel's lift above the mean, in natural log, is multiplied by
+    /// 1 + <see cref="ShoulderLiftAmount"/> · (e − <see cref="ShoulderLiftStart"/>) beyond <see cref="ShoulderLiftGrain"/>:
+    /// only where the shoulder pressed hard, only upwards (darker pixels pushed down left dark blotches in the sky) and not
+    /// the sky's grain, and at most back to the pixel's own brightness. Lightroom −95 on the R8 sample: cloud edge 215 (Lightroom 214, before 191), sky unchanged, tone
+    /// 2.1 levels RMS (before 2.5).
+    /// </para>
+    /// Mirrored in the shader.
+    /// </summary>
+    public static float ShoulderLift(float meanLuminance, float meanGain, float detailRatio)
+    {
+        float e = ShoulderSlope(meanLuminance * meanGain) / ShoulderSlope(meanLuminance);
+        float lift = MathF.Max(-MathF.Log(MathF.Max(detailRatio, 1e-6f)) - ShoulderLiftGrain, 0f);
+        return MathF.Exp(ShoulderLiftAmount * MathF.Max(e - ShoulderLiftStart, 0f) * lift);
+    }
+
+    /// <summary>
+    /// The base curve's log-slope (d ln display / d ln scene, over <see cref="RawBaseCurve.Contrast"/>) at the display
+    /// value <paramref name="y"/>: 1 in the midtones, towards 0 on the shoulder.
+    /// </summary>
+    public static float ShoulderSlope(float y)
+    {
+        y = MathF.Max(y, 1e-6f);
+        float w2 = RawBaseCurve.WhiteZ * RawBaseCurve.WhiteZ;
+        float z = 2 * y / (1 - y + MathF.Sqrt((1 - y) * (1 - y) + 4 * y / w2));
+        return 1f + z / (w2 + z) - z / (1f + z);
     }
 
     /// <summary>Linear value from which a brightened pixel's brightest channel is compressed towards white.</summary>
