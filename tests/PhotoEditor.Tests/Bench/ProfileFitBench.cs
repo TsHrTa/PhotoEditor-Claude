@@ -25,7 +25,7 @@ public sealed class ProfileFitBench(ITestOutputHelper output)
             return;
         var lrFile = Environment.GetEnvironmentVariable("PHOTOEDITOR_LR_FILE") ?? "IMG_5645 sharpening 0";
         var (lr, w, h) = LoadAdobeRgb(Path.Combine(dir, lrFile + ".tif"));
-        var (scene, sw, sh) = RawImageLoader.LoadScene(raw, RawDemosaic.Dcb);
+        var (scene, sw, sh) = RawImageLoader.LoadScene(raw, RawImageLoader.DefaultDemosaic);
         Assert.Equal((w, h), (sw, sh));
         var lrY = Luminance(lr);
         var sY = Luminance(scene);
@@ -84,6 +84,7 @@ public sealed class ProfileFitBench(ITestOutputHelper output)
                 $"  {e + 0.125f,6:F2} ({MathF.Pow(2, e + 0.125f):F5}): {med:F5}  enc {Enc(med):F1}  [{Enc(bin[bin.Count / 4]):F1}, {Enc(bin[bin.Count * 3 / 4]):F1}] n={bin.Count}"));
         }
 
+        bool colourOnly = Environment.GetEnvironmentVariable("PHOTOEDITOR_COLOUR_ONLY") is not null;
         // fit (exposure, white scene, toe, contrast power) of the curve form to the centre (no vignetting difference)
         var data = new List<(float X, float Y, int N)>();
         var inner = pairs.Where(p => p.Radius < 0.3f).ToList();
@@ -105,7 +106,7 @@ public sealed class ProfileFitBench(ITestOutputHelper output)
             }
             return sum / data.Count;
         }
-        var fit = NelderMead(Error, [4.4, 1.6, 0.012, 1.0]);
+        var fit = colourOnly ? [4.4, 1.6, 0.012, 1.0] : NelderMead(Error, [4.4, 1.6, 0.012, 1.0]);
         output.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"fit: exposure {fit[0]:F4} white {fit[1]:F4} toe {fit[2]:F5} power {fit[3]:F4}; rms {Math.Sqrt(Error(fit)):F2} levels (old curve {Math.Sqrt(Error([4.4, 1.6, 0.012, 1.0])):F2})"));
         foreach (var (x, y, n) in data)
@@ -140,7 +141,7 @@ public sealed class ProfileFitBench(ITestOutputHelper output)
             }
             return sum / model.Count;
         }
-        var rendered = NelderMead(RenderedError, fit);
+        var rendered = colourOnly ? fit : NelderMead(RenderedError, fit);
         output.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"fit through the rendering: exposure {rendered[0]:F4} white {rendered[1]:F4} toe {rendered[2]:F5} power {rendered[3]:F4}; rms {Math.Sqrt(RenderedError(rendered)):F2} (luminance fit gives {Math.Sqrt(RenderedError(fit)):F2})"));
 
@@ -162,6 +163,26 @@ public sealed class ProfileFitBench(ITestOutputHelper output)
             var dh = bin.Select(c => { float d = c.H2 - c.H1; return d > 180 ? d - 360 : d < -180 ? d + 360 : d; }).ToList();
             output.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"  {hb * 15,3}-{hb * 15 + 15,3}: dH {Median(dh),6:F1}  C {Median(bin.Select(c => c.C2 / c.C1).ToList()):F2}  L {Median(bin.Select(c => c.L1).ToList()):F2} → {Median(bin.Select(c => c.L2).ToList()):F2}  n={bin.Count}"));
+        }
+
+        // the same by lightness: does Lightroom's look depend on how bright a colour is (lit vs shaded leaves)?
+        output.WriteLine("colour by OKLCh hue and OKLab lightness of ours: dH (deg) / C ratio LR / ours / dL (n)");
+        for (int hb = 3; hb < 9; hb++)
+        {
+            var line = new System.Text.StringBuilder(string.Create(CultureInfo.InvariantCulture, $"  {hb * 15,3}-{hb * 15 + 15,3}:"));
+            for (float l0 = 0.2f; l0 < 0.9f; l0 += 0.1f)
+            {
+                var bin = colour.Where(c => c.H1 >= hb * 15 && c.H1 < hb * 15 + 15 && c.L1 >= l0 && c.L1 < l0 + 0.1f).ToList();
+                if (bin.Count < 100)
+                {
+                    line.Append(string.Create(CultureInfo.InvariantCulture, $"  L{l0:F1} -"));
+                    continue;
+                }
+                var dh = bin.Select(c => { float d = c.H2 - c.H1; return d > 180 ? d - 360 : d < -180 ? d + 360 : d; }).ToList();
+                line.Append(string.Create(CultureInfo.InvariantCulture,
+                    $"  L{l0:F1} {Median(dh),5:F1}/{Median(bin.Select(c => c.C2 / c.C1).ToList()):F2}/{Median(bin.Select(c => c.L2 - c.L1).ToList()):+0.00;-0.00}({bin.Count})"));
+            }
+            output.WriteLine(line.ToString());
         }
     }
 

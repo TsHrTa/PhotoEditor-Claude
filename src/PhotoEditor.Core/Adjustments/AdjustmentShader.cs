@@ -376,11 +376,13 @@ public static class AdjustmentShader
             float detail = dot(s - blurred(coord, s), lw);
             if (sharpenDetail > 0.0) detail += sharpenDetail * dot(s - blurredFine(coord, s), lw);
             float weight = sharpenMasking > 0.0 ? smoothstep(sharpenMasking * 0.02, sharpenMasking * 0.08, abs(detail)) : 1.0;
+            // small, noise-sized differences get less (PreparedAdjustments.SharpenAmplitudeWeight)
+            weight *= 0.7 + 0.3 * smoothstep(0.01, 0.04, abs(detail));
             float add = sharpenAmount * detail * weight;
             float a = abs(add);
-            if (a > 0.15) {
-                float e = a - 0.15;
-                add = sign(add) * (0.15 + e / (1.0 + e / 0.25));
+            if (a > 0.08) {
+                float e = a - 0.08;
+                add = sign(add) * (0.08 + e / (1.0 + e / 0.15));
             }
             return clamp(s + add, 0.0, 1.0);
         }
