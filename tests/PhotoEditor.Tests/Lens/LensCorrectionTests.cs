@@ -158,6 +158,52 @@ public sealed class LensCorrectionTests
     }
 
     [Fact]
+    public void Vignetting_RF24105Stm_At28mmF45_FollowsLensfun()
+    {
+        // mil-canon.xml, Canon RF 24-105mm F4-7.1 IS STM (distance 1000 entries); IMG_5645.CR3 is 28 mm, f/4.5.
+        var lens = LensDatabase.Parse("""
+            <lensdatabase version="2"><lens><maker>Canon</maker><model>Canon RF 24-105mm F4-7.1 IS STM</model>
+            <mount>Canon RF</mount><cropfactor>1.0</cropfactor><calibration>
+            <vignetting model="pa" focal="24.0" aperture="4.0" distance="1000" k1="-1.4077177" k2="0.8392461" k3="-0.4213888" />
+            <vignetting model="pa" focal="24.0" aperture="5.6" distance="1000" k1="-0.5510631" k2="0.8890181" k3="-1.3080243" />
+            <vignetting model="pa" focal="24.0" aperture="8.0" distance="1000" k1="-1.1152525" k2="3.1004240" k3="-2.9019186" />
+            <vignetting model="pa" focal="24.0" aperture="11.0" distance="1000" k1="-1.1829427" k2="3.2307237" k3="-2.9015380" />
+            <vignetting model="pa" focal="24.0" aperture="22.0" distance="1000" k1="-0.9735176" k2="2.3450408" k3="-2.0584339" />
+            <vignetting model="pa" focal="35.0" aperture="4.5" distance="1000" k1="-1.2710351" k2="0.7676896" k3="-0.3080409" />
+            <vignetting model="pa" focal="35.0" aperture="6.3" distance="1000" k1="-0.3080800" k2="0.1581723" k3="-0.4027886" />
+            <vignetting model="pa" focal="35.0" aperture="9.0" distance="1000" k1="-0.4721178" k2="0.6990310" k3="-0.5804643" />
+            <vignetting model="pa" focal="35.0" aperture="13.0" distance="1000" k1="-0.3511111" k2="0.2409201" k3="-0.1629625" />
+            <vignetting model="pa" focal="35.0" aperture="22.0" distance="1000" k1="-0.2922151" k2="0.0362025" k3="0.0210291" />
+            <vignetting model="pa" focal="50.0" aperture="5.0" distance="1000" k1="-0.8693064" k2="0.1797716" k3="0.0896104" />
+            <vignetting model="pa" focal="50.0" aperture="7.1" distance="1000" k1="0.0218784" k2="-0.4974730" k3="0.2191000" />
+            <vignetting model="pa" focal="70.0" aperture="6.3" distance="1000" k1="-0.8326892" k2="0.5225184" k3="-0.1840721" />
+            </calibration></lens></lensdatabase>
+            """).Lenses[0];
+        var k = LensProfile.For(lens, 28, 4.5).Vignetting!;
+        // By hand: at 24 mm f/4.5 is 0.35005 of the way (in stops) from f/4 to f/5.6, giving
+        // (-1.10784, 0.85667, -0.73176); 28 mm is 4/11 of the way from that to 35 mm f/4.5.
+        Assert.Equal(-1.167186, k[0], 5);
+        Assert.Equal(0.824313, k[1], 5);
+        Assert.Equal(-0.577679, k[2], 5);
+
+        // lensfun itself (lfLens::InterpolateVignetting) blends all calibrations by inverse distance weighting
+        // (power 3.5; axes (f - 24) / 81, 4 / N, 0.1 / d), which gives (-1.23557, 0.78023, -0.39196) here. The
+        // correction differs by under 0.07 stop out to r = 0.85 (ours is 0.26 stop stronger at r = 0.95).
+        float[] lensfun = [-1.23557f, 0.78023f, -0.39196f];
+        float[] ours = [(float)k[0], (float)k[1], (float)k[2]];
+        foreach (float r in new[] { 0.3f, 0.5f, 0.7f, 0.85f })
+        {
+            double stops = Math.Log2(LensVignetting.GainFromTerms(ours, r * r));
+            Assert.InRange(stops - Math.Log2(LensVignetting.GainFromTerms(lensfun, r * r)), -0.07, 0.07);
+        }
+        // r = 1 at the corner of a full-frame 6000 x 4000 photo (EOS R8): the terms apply unchanged, and the
+        // correction at r = 0.85 is 1.44 stops (Lightroom's built-in profile brightens about 0.6 of that).
+        var terms = new LensCorrection(6000, 4000, LensProfile.For(lens, 28, 4.5), 1).VignettingTerms!;
+        Assert.Equal(k[0], terms[0], 4);
+        Assert.Equal(1.438, Math.Log2(LensVignetting.GainFromTerms(terms, 0.85f * 0.85f)), 2);
+    }
+
+    [Fact]
     public void Vignetting_TermsAreInTheCorrectedPhotosUnits()
     {
         var lens = LensDatabase.Parse(Canon).Lenses[0];
