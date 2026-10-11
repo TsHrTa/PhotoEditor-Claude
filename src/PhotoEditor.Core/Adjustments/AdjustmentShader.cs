@@ -856,9 +856,12 @@ public static class AdjustmentShader
         float softenStep = (float)(PreparedAdjustments.SoftenStepFor(fullLongSide) * pixelScale);
         var current = CreatePass(imageShader, imageShader, white, haze, tone, extra, lens, state.Adjustments, frame, (float)pixelScale, softenStep,
             sharpen: true, last: masks.Count == 0);
-        // Masks that darken a RAW's highlights take the scene colour from the global pass on the original without its
-        // detail filters (CpuAdjustmentRenderer.SceneReference): their input is the sharpened result.
-        using var sceneReference = extra.BaseCurve && masks.Any(m => PreparedAdjustments.From(m.Mask.Adjustments).HighlightsAmount < 0f)
+        // Masks that darken a RAW's highlights take the scene colour from a reference: their input (the global pass and
+        // the masks before) worked out on the original without the detail filters (CpuAdjustmentRenderer.SceneReference),
+        // as their input is the sharpened result. A reference pass under a mask that darkens highlights evaluates the one
+        // below it 10 times: each such mask before the last one multiplies the cost of the chain.
+        int lastScene = extra.BaseCurve ? masks.FindLastIndex(m => SceneColourIn(m.Mask.Adjustments)) : -1;
+        var reference = lastScene >= 0
             ? CreatePass(imageShader, imageShader, white, haze, tone, extra, lens, WithoutDetailFilters(state.Adjustments), frame,
                 (float)pixelScale, softenStep, sharpen: true, last: false)
             : null;
@@ -869,10 +872,21 @@ public static class AdjustmentShader
             var toImage = SKMatrix.CreateScale((float)image.Width / maskImg.Width, (float)image.Height / maskImg.Height);
             using var maskShader = maskImg.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp,
                 MaskSampling(maskImg, image), toImage);
+            bool sceneColour = i <= lastScene && SceneColourIn(mask.Adjustments);
             var next = CreatePass(current, imageShader, maskShader, haze, tone, extra, lens, mask.Adjustments, frame, (float)pixelScale, softenStep,
-                sharpen: false, last: i == masks.Count - 1, sceneReference);
+                sharpen: false, last: i == masks.Count - 1, sceneColour ? reference : null);
             current.Dispose();
             current = next;
+            if (reference is not null)
+            {
+                // The next mask's reference: this pass on this one's.
+                var nextReference = i < lastScene
+                    ? CreatePass(reference, imageShader, maskShader, haze, tone, extra, lens, WithoutDetailFilters(mask.Adjustments), frame,
+                        (float)pixelScale, softenStep, sharpen: false, last: false, sceneColour ? reference : null)
+                    : null;
+                reference.Dispose();
+                reference = nextReference;
+            }
         }
         return current;
     }
@@ -936,6 +950,9 @@ public static class AdjustmentShader
     public const int SceneColourStep = 2;
 
     private static bool LocalTone(AdjustmentSettings s) => s.Highlights != 0 || s.Shadows != 0 || s.Clarity != 0;
+
+    /// <summary>Whether a pass with <paramref name="s"/> darkens highlights (on a RAW: <see cref="RawBaseCurve.SceneColour"/>).</summary>
+    private static bool SceneColourIn(AdjustmentSettings s) => PreparedAdjustments.From(s).HighlightsAmount < 0f;
 
     /// <summary><paramref name="s"/> without sharpening, noise reduction, defringe, soften and texture.</summary>
     private static AdjustmentSettings WithoutDetailFilters(AdjustmentSettings s) => s with
