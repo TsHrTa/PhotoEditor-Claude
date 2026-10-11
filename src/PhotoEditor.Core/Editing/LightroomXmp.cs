@@ -164,7 +164,10 @@ public static class LightroomXmp
         // Lens corrections: Lightroom finds the profile for the lens itself ("LensDefaults").
         Set("LensProfileEnable", a.LensProfile ? "1" : "0");
         if (a.LensProfile)
+        {
             Set("LensProfileSetup", "LensDefaults");
+            Set("LensProfileVignettingScale", Number(Math.Clamp(a.LensProfileVignetting, 0, 200), "0"));
+        }
         Set("AutoLateralCA", a.RemoveChromaticAberration ? "1" : "0");
         Set("LensManualDistortionAmount", Signed(a.LensDistortion));
         Set("VignetteAmount", Signed(a.LensVignetting));
@@ -518,6 +521,7 @@ public static class LightroomXmp
             Dehaze = Get("Dehaze"),
             LensProfile = Get("LensProfileEnable", AdjustmentSettings.DefaultFor(geometry.IsRaw).LensProfile ? 1 : 0) != 0,
             RemoveChromaticAberration = Get("AutoLateralCA") != 0,
+            LensProfileVignetting = Get("LensProfileVignettingScale", AdjustmentSettings.DefaultFor(geometry.IsRaw).LensProfileVignetting),
             LensDistortion = Get("LensManualDistortionAmount"),
             LensVignetting = Get("VignetteAmount"),
             Temperature = geometry.IsRaw ? 0 : Get("IncrementalTemperature"),

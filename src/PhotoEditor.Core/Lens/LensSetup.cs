@@ -87,6 +87,9 @@ public static class LensSetup
                 };
             }
         }
+        double vignettingScale = Math.Clamp(settings.LensProfileVignetting, 0, 200) / 100;
+        if (vignettingScale == 0 && profile is not null)
+            profile = profile with { Vignetting = null };
         double red = 1, blue = 1;
         if (settings.RemoveChromaticAberration && profile?.TcaModel is null && measureCa is not null)
             (red, blue) = measureCa();
@@ -94,7 +97,7 @@ public static class LensSetup
         var perspective = Perspective.For(settings, width, height);
         bool anything = profile is { DistortionModel: not null } or { TcaModel: not null } or { Vignetting: not null }
             || manual != 0 || red != 1 || blue != 1 || perspective is not null;
-        return anything ? new LensCorrection(width, height, profile, crop, manual, red, blue, perspective) : null;
+        return anything ? new LensCorrection(width, height, profile, crop, manual, red, blue, perspective, vignettingScale) : null;
     }
 
     /// <summary>The database files (lensfun's data/db folder).</summary>

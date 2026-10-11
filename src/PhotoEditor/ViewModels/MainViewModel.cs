@@ -631,6 +631,7 @@ public partial class MainViewModel : ViewModelBase
         var (a, b) = (oldValue.Adjustments, newValue.Adjustments);
         RefreshToneCurve(a, b);
         if (a.LensProfile != b.LensProfile || a.RemoveChromaticAberration != b.RemoveChromaticAberration || a.LensDistortion != b.LensDistortion
+            || a.LensProfileVignetting != b.LensProfileVignetting
             || a.TransformVertical != b.TransformVertical || a.TransformHorizontal != b.TransformHorizontal || a.TransformRotate != b.TransformRotate
             || a.TransformAspect != b.TransformAspect || a.TransformScale != b.TransformScale || a.TransformOffsetX != b.TransformOffsetX
             || a.TransformOffsetY != b.TransformOffsetY)

@@ -53,6 +53,31 @@ public sealed class LensRenderTests : IDisposable
     }
 
     [Fact]
+    public void ProfileVignettingAmount_ScalesTheCorrectionInStops_OnCpuAndShader()
+    {
+        using var photo = Vignetted();
+        var corner = new Dictionary<double, byte>();
+        foreach (double amount in new[] { 0.0, 60, 100, 200 })
+        {
+            var state = new EditState { Adjustments = new AdjustmentSettings { LensProfile = true, LensProfileVignetting = amount } };
+            using var cpu = CpuAdjustmentRenderer.Render(photo, state, Shot);
+            using var gpu = AdjustmentShader.RenderRaster(photo, state, Shot);
+            Assert.True(TestImages.MaxDifference(cpu, gpu, out var at) <= 2, $"amount {amount}: difference at {at}");
+            corner[amount] = cpu.GetPixel(2, 2).Red;
+            // The centre has no vignetting to remove.
+            Assert.InRange(cpu.GetPixel(300, 200).Red, 148, 152);
+        }
+        // 0 leaves the vignetting (only the distortion is removed); 60 % of the stops is in between; 200 overcorrects.
+        Assert.InRange(corner[100], 146, 154);
+        Assert.True(corner[0] < corner[60] && corner[60] < corner[100] && corner[100] < corner[200], string.Join(" ", corner));
+        // The gain table at 60 is the full gain to the power 0.6 (in stops: 60 %).
+        var profile = LensProfile.For(LensSetup.Database.Lenses[0], 24, 4);
+        var table = new LensCorrection(600, 400, profile with { DistortionModel = null, TcaModel = null }, 1, vignettingScale: 0.6).VignettingTable!;
+        var full = new LensCorrection(600, 400, profile with { DistortionModel = null, TcaModel = null }, 1).VignettingTable!;
+        Assert.Equal(Math.Pow(full[200], 0.6), table[200], 2);
+    }
+
+    [Fact]
     public void ProfileVignetting_WithATransform_IsStillRemoved()
     {
         // The gain must follow each output pixel back through the Transform to where it is in the lens's frame.

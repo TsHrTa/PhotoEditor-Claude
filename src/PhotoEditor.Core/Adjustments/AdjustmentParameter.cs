@@ -139,6 +139,10 @@ public static class AdjustmentParameters
     public static readonly AdjustmentParameter DefringeGreen =
         new(Lens, "Defringe green", 0, 100, s => s.DefringeGreen, (s, v) => s with { DefringeGreen = v }, id: "defringeGreen");
 
+    public static readonly AdjustmentParameter LensProfileVignetting =
+        new(Lens, "Profile vignetting", 0, 200, s => s.LensProfileVignetting, (s, v) => s with { LensProfileVignetting = v },
+            defaultValue: 100, id: "lensProfileVignetting");
+
     public static readonly AdjustmentParameter LensDistortion =
         new(Lens, "Distortion", -100, 100, s => s.LensDistortion, (s, v) => s with { LensDistortion = v }, id: "lensDistortion");
 
@@ -199,7 +203,7 @@ public static class AdjustmentParameters
     /// <summary>Parameters that only apply to the whole image (not inside masks).</summary>
     public static readonly IReadOnlyList<AdjustmentParameter> GlobalOnly =
         [DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenDetail, SharpenMasking, NoiseLuminance, NoiseColor,
-         LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
+         LensProfileVignetting, LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
          CurveHighlights, CurveLights, CurveDarks, CurveShadows, CurveShadowSplit, CurveMidtoneSplit, CurveHighlightSplit,
          TransformVertical, TransformHorizontal, TransformRotate, TransformAspect, TransformScale, TransformOffsetX, TransformOffsetY];
 
@@ -222,7 +226,7 @@ public static class AdjustmentParameters
         VignetteAmount, VignetteMidpoint, VignetteRoundness, VignetteFeather,
         Texture, Clarity, Dehaze, Soften,
         DenoiseAmount, DeblurAmount, SharpenAmount, SharpenRadius, SharpenDetail, SharpenMasking, NoiseLuminance, NoiseColor,
-        LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
+        LensProfileVignetting, LensDistortion, LensVignetting, DefringePurple, DefringePurpleHueLow, DefringePurpleHueHigh, DefringeGreen, DefringeGreenHueLow, DefringeGreenHueHigh,
         TransformVertical, TransformHorizontal, TransformRotate, TransformAspect, TransformScale, TransformOffsetX, TransformOffsetY,
     ];
 

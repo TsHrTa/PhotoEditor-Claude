@@ -342,6 +342,20 @@ public class LightroomXmpTests
         var read = LightroomXmp.Read(xml, Landscape).Adjustments;
         Assert.True(read.LensProfile && read.RemoveChromaticAberration);
         Assert.Equal((-12.0, 30.0), (read.LensDistortion, read.LensVignetting));
+        Assert.Equal(100, read.LensProfileVignetting);
+    }
+
+    [Fact]
+    public void ProfileVignettingAmount_RoundTrips_AndDefaultsTo100()
+    {
+        var state = new EditState { Adjustments = new AdjustmentSettings { LensProfile = true, LensProfileVignetting = 60 } };
+        var xml = LightroomXmp.Write(state, Landscape, null, out _);
+        Assert.Contains("crs:LensProfileVignettingScale=\"60\"", xml);
+        Assert.Equal(60, LightroomXmp.Read(xml, Landscape).Adjustments.LensProfileVignetting);
+        // A file without the value (or with the profile off) gets Lightroom's default.
+        var off = LightroomXmp.Write(new EditState(), Landscape, null, out _);
+        Assert.DoesNotContain("LensProfileVignettingScale", off);
+        Assert.Equal(100, LightroomXmp.Read(off, Landscape).Adjustments.LensProfileVignetting);
     }
 
     [Fact]

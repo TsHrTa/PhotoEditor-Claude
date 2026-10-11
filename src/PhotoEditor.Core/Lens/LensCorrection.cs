@@ -24,9 +24,11 @@ public sealed class LensCorrection
     /// <param name="redScale">Extra radial scale of the red image (automatic chromatic aberration, 1 = none).</param>
     /// <param name="blueScale">Same for blue.</param>
     /// <param name="perspective">The Transform panel's map (applied before the lens corrections), or null.</param>
+    /// <param name="vignettingScale">How much of the profile's vignetting correction to apply, in stops (0..2, 1 = all).</param>
     public LensCorrection(int width, int height, LensProfile? profile, double cropFactor, double manualDistortion = 0,
-        double redScale = 1, double blueScale = 1, Perspective? perspective = null)
+        double redScale = 1, double blueScale = 1, Perspective? perspective = null, double vignettingScale = 1)
     {
+        VignettingScale = vignettingScale;
         Width = width;
         Height = height;
         Profile = profile;
@@ -45,6 +47,12 @@ public sealed class LensCorrection
     public double ManualDistortion { get; }
     public double RedScale { get; }
     public double BlueScale { get; }
+
+    /// <summary>
+    /// How much of the profile's vignetting correction is applied, in stops: its gain is raised to this power
+    /// (Lightroom's Profile "Vignetting" amount / 100).
+    /// </summary>
+    public double VignettingScale { get; }
 
     /// <summary>The Transform panel's map from the output to the photo (before the lens corrections), or null.</summary>
     public Perspective? Perspective { get; }
@@ -174,7 +182,7 @@ public sealed class LensCorrection
     /// r = 1 at <see cref="LensReach"/> half-diagonals), as <see cref="VignettingTableSize"/> half-float-rounded
     /// entries: each position is traced to where its pixels come from in the photo (distortion is radial), so steep
     /// vignetting near the corners is removed exactly. The renderers get there from an output position through
-    /// <see cref="LensShading.Matrix"/>. Null without data.
+    /// <see cref="LensShading.Matrix"/>. The gain is raised to <see cref="VignettingScale"/>. Null without data.
     /// </summary>
     public float[]? VignettingTable
     {
@@ -187,7 +195,8 @@ public sealed class LensCorrection
             {
                 double u = Math.Sqrt((double)i / (VignettingTableSize - 1)) * _halfDiagonal * LensReach;
                 double source = u * Uncorrected(u, 0).Green / _halfDiagonal;
-                table[i] = (float)(Half)LensVignetting.GainFromTerms(k, (float)(source * source));
+                double gain = LensVignetting.GainFromTerms(k, (float)(source * source));
+                table[i] = (float)(Half)(VignettingScale == 1 ? gain : Math.Pow(gain, VignettingScale));
             }
             return table;
         }
