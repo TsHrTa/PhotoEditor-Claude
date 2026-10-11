@@ -122,6 +122,12 @@ public sealed record AdjustmentSettings
     /// </summary>
     public bool RemoveChromaticAberration { get; init; }
 
+    /// <summary>
+    /// How much of the profile's vignetting correction is applied, 0..200 (Lightroom's Profile "Vignetting",
+    /// crs:LensProfileVignettingScale): the correction's gain in stops is scaled, gain^(amount / 100). Whole image only.
+    /// </summary>
+    public double LensProfileVignetting { get; init; } = 100;
+
     /// <summary>Manual distortion −100..100 (positive straightens barrel distortion, negative pincushion). Whole image only.</summary>
     public double LensDistortion { get; init; }
 

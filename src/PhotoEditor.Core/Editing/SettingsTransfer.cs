@@ -76,7 +76,7 @@ public static class SettingsTransfer
                 NoiseLuminance = s.NoiseLuminance, NoiseColor = s.NoiseColor, DefringePurple = s.DefringePurple, DefringeGreen = s.DefringeGreen,
                 DefringePurpleHueLow = s.DefringePurpleHueLow, DefringePurpleHueHigh = s.DefringePurpleHueHigh,
                 DefringeGreenHueLow = s.DefringeGreenHueLow, DefringeGreenHueHigh = s.DefringeGreenHueHigh,
-                LensProfile = s.LensProfile, RemoveChromaticAberration = s.RemoveChromaticAberration,
+                LensProfile = s.LensProfile, RemoveChromaticAberration = s.RemoveChromaticAberration, LensProfileVignetting = s.LensProfileVignetting,
                 LensDistortion = s.LensDistortion, LensVignetting = s.LensVignetting };
 
         if (groups.HasFlag(SettingsGroups.Transform))

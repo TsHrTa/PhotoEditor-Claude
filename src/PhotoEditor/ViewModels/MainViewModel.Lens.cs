@@ -106,7 +106,7 @@ public partial class MainViewModel
     private bool _lensRunning;
 
     /// <summary>The lens settings the correction depends on (manual vignetting is done live by the renderer).</summary>
-    private readonly record struct LensKey(bool Profile, bool Ca, double Distortion, string? Path, TransformKey Transform);
+    private readonly record struct LensKey(bool Profile, bool Ca, double Distortion, double ProfileVignetting, string? Path, TransformKey Transform);
 
     /// <summary>The Transform panel's values (they move pixels, so they are part of the corrected photo).</summary>
     private readonly record struct TransformKey(double Vertical, double Horizontal, double Rotate, double Aspect, double Scale, double X, double Y)
@@ -116,7 +116,7 @@ public partial class MainViewModel
     }
 
     private LensKey CurrentLensKey => new(State.Adjustments.LensProfile, State.Adjustments.RemoveChromaticAberration,
-        State.Adjustments.LensDistortion, FilePath, TransformKey.Of(State.Adjustments));
+        State.Adjustments.LensDistortion, State.Adjustments.LensProfileVignetting, FilePath, TransformKey.Of(State.Adjustments));
 
     /// <summary>The photo before spots: corrected, AI-restored or original.</summary>
     private PreviewImage? RetouchBase => _lensPreview ?? _workingPreview ?? _originalPreview;
