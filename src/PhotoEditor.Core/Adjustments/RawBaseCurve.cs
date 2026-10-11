@@ -95,4 +95,45 @@ public static class RawBaseCurve
         g = l + (sg - lo2) * m;
         b = l + (sb - lo2) * m;
     }
+
+    /// <summary>
+    /// A brightness factor (<paramref name="gain"/>, display-linear: darkened highlights) on a pixel of a photo rendered
+    /// with this curve, with the colour the darkening brings back when it is done on the scene values: near white the
+    /// shoulder has pressed colours together (Lightroom's −95 Highlights turns the R8 sample's near-white sky into a
+    /// saturated blue, with the scene's own hue), a plain factor keeps them pale. The colour change is worked out at the
+    /// luminance the plain factor gives and added to the plainly darkened pixel, so tone and detail stay as before.
+    /// Undoing the shoulder enlarges colour differences near white up to 20 times, so it is worked out twice, on
+    /// <paramref name="r0"/> … (the same pixel before sharpening and the other detail filters: per-channel sharpening
+    /// made speckle) and on <paramref name="rn"/> … (the neighbourhood's colour), and only what both agree on is
+    /// applied: one- or two-pixel colour fringes along edges (lateral chromatic aberration, demosaicing: cyan on one
+    /// side of a leaf, red on the other) cancel out in the neighbourhood and stay as they were; an even sky or cloud
+    /// gets its full colour.
+    /// </summary>
+    public static void SceneColour(ref float r, ref float g, ref float b, float gain, float r0, float g0, float b0,
+        float rn, float gn, float bn)
+    {
+        var (dr, dg, db) = SceneColourShift(gain, r0, g0, b0);
+        var (nr, ng, nb) = SceneColourShift(gain, rn, gn, bn);
+        r = MathF.Max(r * gain + Agreed(dr, nr), 0f);
+        g = MathF.Max(g * gain + Agreed(dg, ng), 0f);
+        b = MathF.Max(b * gain + Agreed(db, nb), 0f);
+    }
+
+    /// <summary>The part of two changes both agree on: the smaller one where they have the same sign, else none.</summary>
+    private static float Agreed(float a, float b) => a > 0 && b > 0 ? MathF.Min(a, b) : a < 0 && b < 0 ? MathF.Max(a, b) : 0f;
+
+    /// <summary>Darkening on the scene values at the plain darkening's luminance, minus the plain darkening.</summary>
+    private static (float R, float G, float B) SceneColourShift(float gain, float r0, float g0, float b0)
+    {
+        float y0 = ToneCurve.Luminance(r0, g0, b0);
+        float sr = r0, sg = g0, sb = b0;
+        if (y0 > 1e-6f)
+        {
+            float gs = Invert(y0 * gain) / Invert(y0);
+            ApplyScene(ref sr, ref sg, ref sb, gs, gs, gs);
+        }
+        float ys = ToneCurve.Luminance(sr, sg, sb);
+        float k = ys > 1e-9f ? y0 * gain / ys : gain;
+        return (sr * k - r0 * gain, sg * k - g0 * gain, sb * k - b0 * gain);
+    }
 }

@@ -128,6 +128,7 @@ public static class RawImageLoader
             float white = clip.Min();
             var scene = new float[width * height * 3];
             var source = rgb.ToArray();
+            var rebuild = HighlightReconstruction.Build(rgb, width, height, clip);
             Parallel.For(0, height, y =>
             {
                 Span<float> v = stackalloc float[3];
@@ -137,7 +138,7 @@ public static class RawImageLoader
                     v[0] = source[i];
                     v[1] = source[i + 1];
                     v[2] = source[i + 2];
-                    ReconstructHighlights(v, clip);
+                    rebuild.Apply(v, x, y);
                     for (int c = 0; c < 3; c++)
                         scene[i + c] = Math.Clamp((matrix[c * 3] * v[0] + matrix[c * 3 + 1] * v[1] + matrix[c * 3 + 2] * v[2]) / white,
                             0f, MaxSceneValue);
@@ -145,6 +146,13 @@ public static class RawImageLoader
             });
             return (scene, width, height);
         });
+
+    /// <summary>
+    /// LibRaw's output before any development: white-balanced camera RGB (interleaved, 16-bit), the clip level per
+    /// channel and the camera → linear sRGB matrix (row-major). For measuring the highlight rebuild (benches).
+    /// </summary>
+    public static (ushort[] Rgb, int Width, int Height, float[] Clip, float[] Matrix) LoadSensor(string path, RawDemosaic demosaic) =>
+        DecodeWithLibRaw(path, demosaic, false, (rgb, width, height, clip, matrix) => (rgb.ToArray(), width, height, clip, matrix));
 
     private delegate T Developer<T>(ReadOnlySpan<ushort> rgb, int width, int height, float[] clip, float[] matrix);
 
@@ -208,33 +216,30 @@ public static class RawImageLoader
     public static float BaseCurve(float x) => Adjustments.RawBaseCurve.Apply(x);
 
     /// <summary>
-    /// Rebuilds the channels the sensor clipped (<paramref name="rgb"/>: white-balanced camera RGB, channel c clipped
-    /// at <paramref name="clip"/>[c]). Clipped highlights are nearly always neutral or pale, so a clipped channel is
-    /// raised towards the average of the channels that weren't clipped (each weighted by how far it is from its own
-    /// clip level) — their texture carries over, instead of a flat plateau at the clip level (which also tints:
-    /// green clips first, so clipped white turned pink). Blended in from 80 % of the clip level (demosaicing smears
-    /// the clip a little); only ever raises; where every channel clipped, all go to the brightest.
+    /// Rebuilds the channels the sensor clipped in one pixel (<paramref name="rgb"/>: white-balanced camera RGB, channel c
+    /// clipped at <paramref name="clip"/>[c]), without its neighbourhood (see <see cref="HighlightReconstruction"/>, which the
+    /// photo is developed with).
     /// </summary>
-    public static void ReconstructHighlights(Span<float> rgb, ReadOnlySpan<float> clip)
+    public static void ReconstructHighlights(Span<float> rgb, ReadOnlySpan<float> clip) =>
+        HighlightReconstruction.Apply(rgb, clip, 0f, 0f, 0f);
+
+    /// <summary>The highlight rebuild over a whole image (interleaved camera RGB), as floats.</summary>
+    public static float[] ReconstructAll(ushort[] rgb, int width, int height, float[] clip)
     {
-        Span<float> t = stackalloc float[3];
-        float sum = 0, weight = 0, brightest = 0;
-        bool any = false;
-        for (int c = 0; c < 3; c++)
+        var result = new float[rgb.Length];
+        var rebuild = HighlightReconstruction.Build(rgb, width, height, clip);
+        Parallel.For(0, height, y =>
         {
-            float f = Math.Clamp((rgb[c] / clip[c] - 0.8f) / 0.17f, 0f, 1f);
-            t[c] = f * f * (3 - 2 * f);
-            any |= t[c] > 0;
-            brightest = Math.Max(brightest, rgb[c]);
-            sum += (1 - t[c]) * rgb[c];
-            weight += 1 - t[c];
-        }
-        if (!any)
-            return;
-        float target = weight > 1e-3f ? sum / weight : brightest;
-        for (int c = 0; c < 3; c++)
-            if (target > rgb[c])
-                rgb[c] += t[c] * (target - rgb[c]);
+            Span<float> v = stackalloc float[3];
+            for (int x = 0; x < width; x++)
+            {
+                int i = (y * width + x) * 3;
+                v[0] = rgb[i]; v[1] = rgb[i + 1]; v[2] = rgb[i + 2];
+                rebuild.Apply(v, x, y);
+                result[i] = v[0]; result[i + 1] = v[1]; result[i + 2] = v[2];
+            }
+        });
+        return result;
     }
 
     /// <summary>
@@ -275,6 +280,7 @@ public static class RawImageLoader
     public static SKBitmap DevelopSensor(ReadOnlySpan<ushort> rgb, int width, int height, float[] clip, float[] matrix)
     {
         float white = clip.Min();
+        var rebuild = HighlightReconstruction.Build(rgb, width, height, clip);
         float scale = ColorMathEncode(BaseCurve(MaxSceneValue)) - 1;
         var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         var info = new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque);
@@ -299,7 +305,7 @@ public static class RawImageLoader
                         v[0] = src[x * 3];
                         v[1] = src[x * 3 + 1];
                         v[2] = src[x * 3 + 2];
-                        ReconstructHighlights(v, clip);
+                        rebuild.Apply(v, x, y);
                         for (int c = 0; c < 3; c++)
                             o[c] = Math.Clamp((matrix[c * 3] * v[0] + matrix[c * 3 + 1] * v[1] + matrix[c * 3 + 2] * v[2]) / white,
                                 0f, MaxSceneValue);

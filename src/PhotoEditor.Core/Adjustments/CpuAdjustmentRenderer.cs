@@ -237,13 +237,26 @@ public static class CpuAdjustmentRenderer
                 b = ColorMath.SrgbToLinear(Math.Min(1f, input[i + 2] * inv / 255f));
             }
 
+            // RAW highlights darkened on scene values take their colour from the original (before the detail filters).
+            bool sceneColour = p.SceneExposure && p.HighlightsAmount < 0f;
+            float r0 = r, g0 = g, b0 = b, rn = r, gn = g, bn = b;
+            if (sceneColour && originalPixels.IsBound)
+                originalPixels.SceneColourSource(i / 4, y, width, height, out r0, out g0, out b0, out rn, out gn, out bn);
+
             // Lens vignetting (profile removed, manual applied), in linear light; on the scene values before the base
             // curve for RAWs (the lens darkened the light, not the rendered picture).
             if (lensGain.IsActive)
             {
                 float gain = lensGain.At(i / 4, y);
                 if (p.SceneExposure)
+                {
                     RawBaseCurve.ApplyScene(ref r, ref g, ref b, gain, gain, gain);
+                    if (sceneColour)
+                    {
+                        RawBaseCurve.ApplyScene(ref r0, ref g0, ref b0, gain, gain, gain);
+                        RawBaseCurve.ApplyScene(ref rn, ref gn, ref bn, gain, gain, gain);
+                    }
+                }
                 else
                 {
                     r *= gain;
@@ -258,10 +271,15 @@ public static class CpuAdjustmentRenderer
             {
                 t = haze.Sample(i / 4, y, width, height);
                 HazeMap.Apply(ref r, ref g, ref b, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
+                if (sceneColour)
+                {
+                    HazeMap.Apply(ref r0, ref g0, ref b0, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
+                    HazeMap.Apply(ref rn, ref gn, ref bn, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
+                }
             }
             // Base / pixel brightness from the original, computed once per pixel when a pass needs it.
             var (baseRatio, detailRatio) = toneBase is not null ? originalPixels.Ratios(toneBase, i / 4, y, width, height) : (1f, 1f);
-            ApplyLinear(ref r, ref g, ref b, p, baseRatio, detailRatio);
+            ApplyLinear(ref r, ref g, ref b, p, baseRatio, detailRatio, sceneColour ? new SceneColourInput(r0, g0, b0, rn, gn, bn) : null);
             if (p.HasVignette)
                 VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, p);
             if (layers.Length == 0)
@@ -404,6 +422,54 @@ public static class CpuAdjustmentRenderer
         private readonly int _extraRowBytes = headroom?.Bitmap.RowBytes ?? 0;
         private readonly float _extraScale = (headroom?.Scale ?? 0f) / 255f;
 
+        private readonly nint _fine = headroom?.Fine?.GetPixels() ?? 0;
+        private readonly int _fineRowBytes = headroom?.Fine?.RowBytes ?? 0;
+
+        public bool IsBound => pixels != 0;
+
+        /// <summary>The original pixel in linear light, with its headroom and fine fraction.</summary>
+        private void Linear(int x, int y, out float r, out float g, out float b)
+        {
+            byte* p = (byte*)pixels + (long)y * rowBytes + x * 4;
+            float inv = p[3] > 0 ? 1f / p[3] : 0f;
+            float s0 = p[0] * inv, s1 = p[1] * inv, s2 = p[2] * inv;
+            if (_extra != 0)
+            {
+                byte* e = (byte*)_extra + (long)y * _extraRowBytes + x * 4;
+                s0 += e[0] * _extraScale; s1 += e[1] * _extraScale; s2 += e[2] * _extraScale;
+            }
+            if (_fine != 0)
+            {
+                byte* f = (byte*)_fine + (long)y * _fineRowBytes + x * 4;
+                s0 += Headroom.FineOffset(f[0]); s1 += Headroom.FineOffset(f[1]); s2 += Headroom.FineOffset(f[2]);
+            }
+            r = ColorMath.SrgbToLinear(s0);
+            g = ColorMath.SrgbToLinear(s1);
+            b = ColorMath.SrgbToLinear(s2);
+        }
+
+        /// <summary>
+        /// The original pixel (<paramref name="cr"/> …) and its luminance with the colour of its 5 × 5 neighbourhood
+        /// (3 × 3 taps, <see cref="AdjustmentShader.SceneColourStep"/> apart, summed in linear light so the bright pixels
+        /// lead), for <see cref="RawBaseCurve.SceneColour"/>. Mirrored in the shader (<c>sceneColourSource</c>).
+        /// </summary>
+        public void SceneColourSource(int x, int y, int width, int height, out float cr, out float cg, out float cb,
+            out float r, out float g, out float b)
+        {
+            Linear(x, y, out cr, out cg, out cb);
+            float sr = 0, sg = 0, sb = 0;
+            const int step = AdjustmentShader.SceneColourStep;
+            for (int j = -1; j <= 1; j++)
+                for (int i = -1; i <= 1; i++)
+                {
+                    Linear(Math.Clamp(x + i * step, 0, width - 1), Math.Clamp(y + j * step, 0, height - 1), out float nr, out float ng, out float nb);
+                    sr += nr; sg += ng; sb += nb;
+                }
+            float ys = ToneCurve.Luminance(sr, sg, sb);
+            float k = ys > 1e-9f ? ToneCurve.Luminance(cr, cg, cb) / ys : 0f;
+            (r, g, b) = ys > 1e-9f ? (sr * k, sg * k, sb * k) : (cr, cg, cb);
+        }
+
         public (float Base, float Detail) Ratios(ToneBaseMap map, int x, int y, int width, int height)
         {
             byte* p = (byte*)pixels + (long)y * rowBytes + x * 4;
@@ -417,6 +483,12 @@ public static class CpuAdjustmentRenderer
         }
     }
 
+    /// <summary>An original pixel and its neighbourhood's colour at its luminance (<see cref="ApplyLinear"/>), linear light.</summary>
+    public struct SceneColourInput(float r, float g, float b, float nr, float ng, float nb)
+    {
+        public float R = r, G = g, B = b, NR = nr, NG = ng, NB = nb;
+    }
+
     /// <summary>Same formula as SkSL <c>mix</c>.</summary>
     private static float Mix(float x, float y, float t) => x * (1f - t) + y * t;
 
@@ -426,15 +498,30 @@ public static class CpuAdjustmentRenderer
     /// highlights / shadows then act on the pixel itself, like a global curve).
     /// </param>
     /// <param name="detailRatio">Local mean over pixel brightness (<see cref="ToneBaseMap.Ratios"/>): the detail darkened highlights keep.</param>
+    /// <param name="original">
+    /// The same pixel of the original photo before the detail filters (sharpening, noise reduction, …) and its
+    /// neighbourhood's colour, in the same linear light as <paramref name="r"/> … (lens vignetting and dehaze applied):
+    /// when given, a RAW's darkened highlights get their colour back from them (<see cref="RawBaseCurve.SceneColour"/>).
+    /// Global pass only.
+    /// </param>
     public static void ApplyLinear(ref float r, ref float g, ref float b, in PreparedAdjustments p, float baseRatio = 1f,
-        float detailRatio = 1f)
+        float detailRatio = 1f, SceneColourInput? original = null)
     {
+        bool sceneColour = original is not null && p.SceneExposure && p.HighlightsAmount < 0f;
+        var o = original ?? default;
         if (p.SceneExposure)
         {
             // RAW base curve: white balance and exposure act on the scene values before it (see RawBaseCurve.ApplyScene).
             float gr = p.WhiteBalanceR * p.ExposureGain, gg = p.WhiteBalanceG * p.ExposureGain, gb = p.WhiteBalanceB * p.ExposureGain;
             if (gr != 1f || gg != 1f || gb != 1f)
+            {
                 RawBaseCurve.ApplyScene(ref r, ref g, ref b, gr, gg, gb);
+                if (sceneColour)
+                {
+                    RawBaseCurve.ApplyScene(ref o.R, ref o.G, ref o.B, gr, gg, gb);
+                    RawBaseCurve.ApplyScene(ref o.NR, ref o.NG, ref o.NB, gr, gg, gb);
+                }
+            }
         }
         else
         {
@@ -451,9 +538,14 @@ public static class CpuAdjustmentRenderer
             // Raised highlights brighten colours without clipping a channel.
             if (p.HighlightsAmount > 0f)
                 gain = ToneCurve.LimitBrightening(MathF.Max(r, MathF.Max(g, b)), gain);
-            r *= gain;
-            g *= gain;
-            b *= gain;
+            if (sceneColour)
+                RawBaseCurve.SceneColour(ref r, ref g, ref b, gain, o.R, o.G, o.B, o.NR, o.NG, o.NB);
+            else
+            {
+                r *= gain;
+                g *= gain;
+                b *= gain;
+            }
             y *= gain;
         }
 

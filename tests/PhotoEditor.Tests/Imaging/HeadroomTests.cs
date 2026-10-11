@@ -269,6 +269,63 @@ public sealed class HeadroomTests
         Assert.True(TestImages.MaxDifference(b, gpu, out var at) <= 2, $"shader differs at {at}");
     }
 
+    /// <summary>
+    /// A RAW's near-white blue sky (left), a neutral near-white area with a one-pixel cyan fringe (right) and
+    /// coloured midtones (bottom), with headroom and fine layers.
+    /// </summary>
+    private static SKBitmap SceneColourPhoto()
+    {
+        const int w = 96, h = 64;
+        var photo = new SKBitmap(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul));
+        var info = new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Opaque);
+        var extra = new SKBitmap(info);
+        var fine = new SKBitmap(info);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int t = (int)(4 * Math.Sin(x * 0.7) * Math.Cos(y * 0.5));
+                SKColor c = y >= 40 ? new SKColor((byte)(60 + 2 * x), (byte)(150 - y), (byte)(40 + x))
+                    : x < 48 ? new SKColor((byte)(228 + t), (byte)(238 + t), (byte)(250 + t / 2))
+                    : x == 72 ? new SKColor(200, 246, 248)
+                    : new SKColor((byte)(241 + t), (byte)(241 + t), (byte)(241 + t));
+                photo.SetPixel(x, y, c);
+                extra.SetPixel(x, y, y < 8 ? new SKColor((byte)(3 * x % 40), (byte)(3 * x % 40), (byte)(3 * x % 40)) : SKColors.Black);
+                fine.SetPixel(x, y, new SKColor((byte)(128 + (x * 7 + y * 3) % 60 - 30), (byte)(128 + (x * 5) % 60 - 30), (byte)(128 + (y * 11) % 60 - 30)));
+            }
+        Headroom.Attach(photo, new Headroom(extra, 0.01f, fine) { BaseCurve = true });
+        return photo;
+    }
+
+    private static double Chroma(SKColor c) => Math.Max(c.Red, Math.Max(c.Green, c.Blue)) - Math.Min(c.Red, Math.Min(c.Green, c.Blue));
+
+    [Fact]
+    public void RawHighlights_DarkenedOnSceneValues_BringBackTheSkysColour_NotFringes()
+    {
+        using var photo = SceneColourPhoto();
+        var settings = new AdjustmentSettings { Exposure = 1, Highlights = -95, SharpenAmount = 40 };
+        using var result = CpuAdjustmentRenderer.Render(photo, settings);
+        // The same pixels as a JPEG (Exposure and Highlights as plain factors): the sky stays pale.
+        using var plainPhoto = photo.Copy();
+        using var plain = CpuAdjustmentRenderer.Render(plainPhoto, settings);
+        var sky = result.GetPixel(20, 20);
+        Assert.True(sky.Blue > sky.Green && sky.Green > sky.Red, sky.ToString());
+        Assert.True(Chroma(sky) > 2 * Chroma(plain.GetPixel(20, 20)) && Chroma(sky) > 40, $"{sky} vs {plain.GetPixel(20, 20)}");
+        // The neutral area stays neutral; the one-pixel fringe in it is not enlarged (its neighbourhood disagrees).
+        Assert.True(Chroma(result.GetPixel(60, 20)) <= 3, result.GetPixel(60, 20).ToString());
+        var fringe = result.GetPixel(72, 20);
+        var before = photo.GetPixel(72, 20);
+        Assert.True(Chroma(fringe) <= Chroma(before) + 3, $"{fringe} vs {before}");
+
+        // The shader matches, also with lens vignetting and white balance on the way.
+        foreach (var s in new[] { settings, settings with { LensVignetting = 40, Temperature = 15 } })
+        {
+            using var cpu = CpuAdjustmentRenderer.Render(photo, s);
+            using var gpu = AdjustmentShader.RenderRaster(photo, new EditState { Adjustments = s });
+            int diff = TestImages.MaxDifference(cpu, gpu, out var at);
+            Assert.True(diff <= 2, $"shader differs by {diff} at {at}: {cpu.GetPixel(at.X, at.Y)} vs {gpu.GetPixel(at.X, at.Y)} ({s.Dehaze})");
+        }
+    }
+
     [Fact]
     public void AMask_BringsBackWhatTheGlobalPassPushedAboveWhite()
     {
@@ -406,6 +463,43 @@ public sealed class HeadroomTests
         float[] e = [10000, 30000, 5000];
         RawImageLoader.ReconstructHighlights(e, clip);
         Assert.Equal([10000f, 30000f, 5000f], e);
+        // Green and blue clipped: both rise to red together (a white cloud core) …
+        float[] f = [50000, 30000, 40000];
+        RawImageLoader.ReconstructHighlights(f, clip);
+        Assert.Equal(50000f, f[1], 30f);
+        Assert.Equal(50000f, f[2], 30f);
+        // … but where blue's clip level is above red, blue stays and green settles between (bluish white, not
+        // lavender as when green followed red alone).
+        float[] g = [36000, 30000, 40000];
+        RawImageLoader.ReconstructHighlights(g, clip);
+        Assert.Equal(40000f, g[2]);
+        Assert.Equal(38000f, g[1], 30f);
+    }
+
+    [Fact]
+    public void Reconstruction_TreatsGreenNextToAClipAsClipped_OnBrightPixelsOnly()
+    {
+        float[] clip = [60000, 30000, 40000];
+        // A row: green clipped (cloud), then a bright pixel whose demosaiced green came out low (magenta), then a dark leaf.
+        ushort[] rgb =
+        [
+            40000, 30000, 30000,
+            40000, 26000, 30000,
+            40000, 26000, 30000,
+            6000, 2000, 1000,
+        ];
+        var rebuild = HighlightReconstruction.Build(rgb, 4, 1, clip);
+        float[] next = [40000, 26000, 30000];
+        rebuild.Apply(next, 1, 0);
+        Assert.Equal(35000f, next[1], 30f);
+        float[] leaf = [6000, 2000, 1000];
+        rebuild.Apply(leaf, 3, 0);
+        Assert.Equal([6000f, 2000f, 1000f], leaf);
+        // Beyond Reach: as it is.
+        var far = HighlightReconstruction.Build([40000, 30000, 36000, 0, 0, 0, 0, 0, 0, 40000, 23000, 30000], 4, 1, clip);
+        float[] p = [40000, 23000, 30000];
+        far.Apply(p, 3, 0);
+        Assert.Equal(23000f, p[1]);
     }
 
     [Fact]

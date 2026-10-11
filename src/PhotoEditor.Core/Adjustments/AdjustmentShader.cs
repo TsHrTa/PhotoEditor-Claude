@@ -117,6 +117,10 @@ public static class AdjustmentShader
         // blue), used when curveOn = 1.
         uniform shader curveTable;
         uniform float curveOn;
+        // Darkened RAW highlights get their scene colour back (RawBaseCurve.SceneColour; global pass, Highlights < 0):
+        // 1 when on; the spacing of the 3 × 3 neighbourhood taps in image pixels.
+        uniform float sceneColour;
+        uniform float sceneColourStep;
         const float softenRangeSigma = 0.1;
 
         const float perceptualGamma = 2.2;
@@ -573,6 +577,71 @@ public static class AdjustmentShader
             return pow(v + max(x - 1.0, 0.0), float3(perceptualGamma));
         }
 
+        // Lens vignetting, dehaze, white balance and exposure on a linear-light pixel at coord (the global pass's start).
+        float3 develop(float3 c, float2 coord) {
+            if (lensVignetteOn > 0.0) {
+                float2 n = (coord - lensCenter) * sqrt(lensInvHalfDiagonal2);
+                float r2 = dot(n, n);
+                float2 m = n;
+                if (lensMapOn > 0.0) {
+                    float3 h = float3(n, 1.0);
+                    m = float2(dot(lensRow0, h), dot(lensRow1, h)) / dot(lensRow2, h);
+                }
+                float gain = lensTableOn > 0.0 ? float(lensTable.eval(float2(clamp(dot(m, m), 0.0, 1.0) * 255.0 + 0.5, 0.5)).r) : 1.0;
+                if (lensVignetteManual != 0.0) gain *= exp2(lensVignetteManual * r2);
+                // On the scene values before the base curve for RAWs (the lens darkened the light, not the picture).
+                if (sceneExposure > 0.0) c = rawScene(c, float3(gain)); else c *= gain;
+            }
+            if (kDehaze && dehazeAmount != 0.0) c = dehaze(c, coord);
+            if (sceneExposure > 0.0) {
+                float3 gains = whiteBalance * exposureGain;
+                if (gains.r != 1.0 || gains.g != 1.0 || gains.b != 1.0) c = rawScene(c, gains);
+            } else {
+                c *= whiteBalance * exposureGain;
+            }
+            return c;
+        }
+
+        // The original photo at p in linear light, with its headroom and fine fraction.
+        float3 originalLinear(float2 p) {
+            half4 o = source.eval(p);
+            if (o.a <= 0.0) return float3(0.0);
+            float3 s = float3(o.rgb) / o.a + headroomScale * float3(headroom.eval(p).rgb);
+            if (addFine > 0.0) s += (float3(fine.eval(p).rgb) - 128.0 / 255.0) * (255.0 / 65025.0);
+            return float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b));
+        }
+
+        // RawBaseCurve.SceneColourShift: darkening on the scene values at the plain darkening's luminance, minus it.
+        float3 sceneShift(float gain, float3 c0) {
+            float y0 = lum(c0);
+            float3 s = c0;
+            if (y0 > 1e-6) s = rawScene(c0, float3(rawCurveInverse(y0 * gain) / rawCurveInverse(y0)));
+            float ys = lum(s);
+            float k = ys > 1e-9 ? y0 * gain / ys : gain;
+            return s * k - c0 * gain;
+        }
+        // RawBaseCurve.SceneColour on the original pixel and its neighbourhood colour (ToneSource.SceneColourSource):
+        // the darkened pixel plus the colour change both agree on.
+        float3 sceneColourShift(float3 c, float gain, float2 coord) {
+            float3 o = originalLinear(coord);
+            float3 sum = float3(0.0);
+            for (int j = -1; j <= 1; j++) {
+                for (int i = -1; i <= 1; i++) {
+                    sum += originalLinear(coord + float2(float(i), float(j)) * sceneColourStep);
+                }
+            }
+            float ys = lum(sum);
+            float3 n = ys > 1e-9 ? sum * (lum(o) / ys) : o;
+            float3 a = sceneShift(gain, develop(o, coord));
+            float3 b = sceneShift(gain, develop(n, coord));
+            float3 agreed = float3(0.0);
+            for (int k = 0; k < 3; k++) {
+                if (a[k] > 0.0 && b[k] > 0.0) agreed[k] = min(a[k], b[k]);
+                else if (a[k] < 0.0 && b[k] < 0.0) agreed[k] = max(a[k], b[k]);
+            }
+            return max(c * gain + agreed, 0.0);
+        }
+
         half4 main(float2 coord) {
             half4 src = image.eval(coord);
             float a = src.a;
@@ -601,27 +670,7 @@ public static class AdjustmentShader
             if (addFine > 0.0) s += (float3(fine.eval(coord).rgb) - 128.0 / 255.0) * (255.0 / 65025.0);
 
             // Linear light
-            float3 c = float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b));
-            if (lensVignetteOn > 0.0) {
-                float2 n = (coord - lensCenter) * sqrt(lensInvHalfDiagonal2);
-                float r2 = dot(n, n);
-                float2 m = n;
-                if (lensMapOn > 0.0) {
-                    float3 h = float3(n, 1.0);
-                    m = float2(dot(lensRow0, h), dot(lensRow1, h)) / dot(lensRow2, h);
-                }
-                float gain = lensTableOn > 0.0 ? float(lensTable.eval(float2(clamp(dot(m, m), 0.0, 1.0) * 255.0 + 0.5, 0.5)).r) : 1.0;
-                if (lensVignetteManual != 0.0) gain *= exp2(lensVignetteManual * r2);
-                // On the scene values before the base curve for RAWs (the lens darkened the light, not the picture).
-                if (sceneExposure > 0.0) c = rawScene(c, float3(gain)); else c *= gain;
-            }
-            if (kDehaze && dehazeAmount != 0.0) c = dehaze(c, coord);
-            if (sceneExposure > 0.0) {
-                float3 gains = whiteBalance * exposureGain;
-                if (gains.r != 1.0 || gains.g != 1.0 || gains.b != 1.0) c = rawScene(c, gains);
-            } else {
-                c *= whiteBalance * exposureGain;
-            }
+            float3 c = develop(float3(srgbToLinear(s.r), srgbToLinear(s.g), srgbToLinear(s.b)), coord);
 
             // Local highlights / shadows, then the tone curve on perceptual luminance, applied as a ratio
             float y = dot(c, float3(0.2126, 0.7152, 0.0722));
@@ -630,7 +679,7 @@ public static class AdjustmentShader
             if (highlightsAmount != 0.0 || shadowsAmount != 0.0) {
                 float gain = localGain(y * ratio, y * ratios.y, ratios.y);
                 if (highlightsAmount > 0.0) gain = limitBrightening(max(c.r, max(c.g, c.b)), gain);
-                c *= gain;
+                if (kLocal && sceneColour > 0.0) c = sceneColourShift(c, gain, coord); else c *= gain;
                 y *= gain;
             }
             if (clarityAmount != 0.0) {
@@ -863,6 +912,9 @@ public static class AdjustmentShader
     /// <summary>Brightest linear value handed from one pass to the next (≈ 6 stops above white).</summary>
     public const float PassLimit = 64f;
 
+    /// <summary>Spacing (full-resolution pixels) of the 3 × 3 taps the scene colour of darkened RAW highlights is taken from.</summary>
+    public const int SceneColourStep = 2;
+
     private static bool LocalTone(AdjustmentSettings s) => s.Highlights != 0 || s.Shadows != 0 || s.Clarity != 0;
 
     private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, HazeInput haze, ToneInput tone, HeadroomInput headroom, LensInput lens,
@@ -938,6 +990,8 @@ public static class AdjustmentShader
             ["textureStep"] = pixelScale,
             ["clarityAmount"] = p.ClarityAmount,
             ["curveOn"] = curve is null ? 0f : 1f,
+            ["sceneColour"] = sharpen && headroom.BaseCurve && p.HighlightsAmount < 0f ? 1f : 0f,
+            ["sceneColourStep"] = SceneColourStep * pixelScale,
             ["headroomScale"] = headroom.Scale,
             ["addHeadroom"] = sharpen && headroom.Scale > 0 ? 1f : 0f,
             ["addFine"] = sharpen && headroom.HasFine ? 1f : 0f,

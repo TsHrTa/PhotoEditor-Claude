@@ -40,7 +40,7 @@ public sealed class LightroomCompareBench(ITestOutputHelper output)
         var only = Environment.GetEnvironmentVariable("PHOTOEDITOR_LR_ONLY");
         var regions = ParseRegions(Environment.GetEnvironmentVariable("PHOTOEDITOR_LR_REGIONS"));
         using var photo = RawImageLoader.Load(raw);
-        foreach (var (file, ours) in Cases)
+        foreach (var (file, settings) in Cases)
         {
             if (only is not null && !file.Contains(only, StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -48,6 +48,11 @@ public sealed class LightroomCompareBench(ITestOutputHelper output)
             if (!File.Exists(path))
                 continue;
             using var lr = TiffImageLoader.Load(path);
+            var ours = settings;
+            if (Environment.GetEnvironmentVariable("PHOTOEDITOR_OURS_SHARPEN") is { } sharpen)
+                ours = ours with { SharpenAmount = double.Parse(sharpen, CultureInfo.InvariantCulture) };
+            if (Environment.GetEnvironmentVariable("PHOTOEDITOR_OURS_CA") == "1")
+                ours = ours with { RemoveChromaticAberration = true };
             using var mine = CpuAdjustmentRenderer.Render(photo, new Core.Editing.EditState { Adjustments = ours }, Core.Lens.PhotoLens.Of(raw));
             output.WriteLine($"== {file} (LR {lr.Width} x {lr.Height}, ours {mine.Width} x {mine.Height})");
             WriteOverview(lr, mine, Path.Combine(outDir, Slug(file) + "_overview.png"));
@@ -69,16 +74,16 @@ public sealed class LightroomCompareBench(ITestOutputHelper output)
         }
     }
 
-    public readonly record struct Stats(double Luma, double Gradient, double Chroma, double R, double G, double B)
+    public readonly record struct Stats(double Luma, double Gradient, double Chroma, double R, double G, double B, double OkChroma = 0, double OkHue = 0)
     {
         public override string ToString() => string.Create(CultureInfo.InvariantCulture,
-            $"luma {Luma:F1} grad {Gradient:F2} chroma {Chroma:F1} rgb ({R:F0},{G:F0},{B:F0})");
+            $"luma {Luma:F1} grad {Gradient:F2} chroma {Chroma:F1} rgb ({R:F0},{G:F0},{B:F0}) OKLCh C {OkChroma:F3} h {OkHue:F0}");
     }
 
     /// <summary>Mean luma (0..255), mean gradient magnitude of the luma, mean chroma (max − min channel), mean RGB.</summary>
     public static Stats Measure(SKBitmap bitmap, SKRectI r)
     {
-        double luma = 0, grad = 0, chroma = 0, sr = 0, sg = 0, sb = 0;
+        double luma = 0, grad = 0, chroma = 0, sr = 0, sg = 0, sb = 0, oa = 0, ob = 0;
         int n = 0, ng = 0;
         for (int y = r.Top; y < r.Bottom; y++)
             for (int x = r.Left; x < r.Right; x++)
@@ -88,6 +93,8 @@ public sealed class LightroomCompareBench(ITestOutputHelper output)
                 luma += l;
                 chroma += Math.Max(c.Red, Math.Max(c.Green, c.Blue)) - Math.Min(c.Red, Math.Min(c.Green, c.Blue));
                 sr += c.Red; sg += c.Green; sb += c.Blue;
+                var (_, la, lb) = HslMath.ToOklab(ColorMath.SrgbByteToLinear(c.Red), ColorMath.SrgbByteToLinear(c.Green), ColorMath.SrgbByteToLinear(c.Blue));
+                oa += la; ob += lb;
                 n++;
                 if (x + 1 < r.Right && y + 1 < r.Bottom)
                 {
@@ -96,7 +103,8 @@ public sealed class LightroomCompareBench(ITestOutputHelper output)
                     ng++;
                 }
             }
-        return new(luma / n, grad / ng, chroma / n, sr / n, sg / n, sb / n);
+        return new(luma / n, grad / ng, chroma / n, sr / n, sg / n, sb / n, Math.Sqrt(oa * oa + ob * ob) / n,
+            (Math.Atan2(ob, oa) * 180 / Math.PI + 360) % 360);
     }
 
     private static string Percentiles(SKBitmap bitmap)
@@ -178,11 +186,15 @@ public sealed class LightroomCompareBench(ITestOutputHelper output)
 
     private static void WriteSideBySide(SKBitmap lr, SKBitmap mine, SKRectI r, string path)
     {
-        using var surface = SKSurface.Create(new SKImageInfo(r.Width * 2 + 6, r.Height));
+        // PHOTOEDITOR_LR_ZOOM: pixel-sized enlargement of small crops (nearest neighbour)
+        int z = int.TryParse(Environment.GetEnvironmentVariable("PHOTOEDITOR_LR_ZOOM"), out var zoom) && zoom > 1 ? zoom : 1;
+        int w = r.Width * z, h = r.Height * z;
+        using var surface = SKSurface.Create(new SKImageInfo(w * 2 + 6, h));
         var canvas = surface.Canvas;
         canvas.Clear(SKColors.Black);
-        using (var a = SKImage.FromBitmap(lr)) canvas.DrawImage(a, r, new SKRect(0, 0, r.Width, r.Height));
-        using (var b = SKImage.FromBitmap(mine)) canvas.DrawImage(b, r, new SKRect(r.Width + 6, 0, r.Width * 2 + 6, r.Height));
+        var nearest = new SKSamplingOptions(SKFilterMode.Nearest);
+        using (var a = SKImage.FromBitmap(lr)) canvas.DrawImage(a, r, new SKRect(0, 0, w, h), nearest);
+        using (var b = SKImage.FromBitmap(mine)) canvas.DrawImage(b, r, new SKRect(w + 6, 0, w * 2 + 6, h), nearest);
         Save(surface, path);
     }
 
