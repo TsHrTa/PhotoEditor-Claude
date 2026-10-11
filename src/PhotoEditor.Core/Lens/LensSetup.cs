@@ -63,12 +63,13 @@ public static class LensSetup
     /// <summary>
     /// The corrections <paramref name="settings"/> ask for on a <paramref name="width"/> × <paramref name="height"/>
     /// photo, or null when nothing moves or changes brightness (manual vignetting alone is done by the renderers
-    /// from the settings). <paramref name="measureCa"/> measures the red / blue scales in the photo (see
-    /// <see cref="ChromaticAberration"/>); it is called only when chromatic aberration is to be removed and the
-    /// profile has no data for it.
+    /// from the settings). <paramref name="measureCa"/> measures the red / blue shifts in the photo (see
+    /// <see cref="ChromaticAberration"/>); it is called when chromatic aberration is to be removed. What it measures
+    /// replaces the profile's chromatic aberration data (a profile is the average of other copies of the lens and
+    /// knows no off-centre shifts); the profile's data is used when the photo has too little detail to measure.
     /// </summary>
     public static LensCorrection? For(PhotoLens photo, AdjustmentSettings settings, int width, int height,
-        LensDatabase? database = null, Func<(double Red, double Blue)>? measureCa = null)
+        LensDatabase? database = null, Func<ChannelShift?>? measureCa = null)
     {
         LensProfile? profile = null;
         double crop = 1;
@@ -90,14 +91,21 @@ public static class LensSetup
         double vignettingScale = Math.Clamp(settings.LensProfileVignetting, 0, 200) / 100;
         if (vignettingScale == 0 && profile is not null)
             profile = profile with { Vignetting = null };
-        double red = 1, blue = 1;
-        if (settings.RemoveChromaticAberration && profile?.TcaModel is null && measureCa is not null)
-            (red, blue) = measureCa();
+        var shift = ChannelShift.None;
+        if (settings.RemoveChromaticAberration && measureCa?.Invoke() is { } measured)
+        {
+            shift = measured;
+            if (profile is not null)
+                profile = profile with { TcaModel = null };
+        }
         double manual = Math.Clamp(settings.LensDistortion, -100, 100) / 100;
         var perspective = Perspective.For(settings, width, height);
         bool anything = profile is { DistortionModel: not null } or { TcaModel: not null } or { Vignetting: not null }
-            || manual != 0 || red != 1 || blue != 1 || perspective is not null;
-        return anything ? new LensCorrection(width, height, profile, crop, manual, red, blue, perspective, vignettingScale) : null;
+            || manual != 0 || !shift.IsNone || perspective is not null;
+        return anything
+            ? new LensCorrection(width, height, profile, crop, manual, shift.RedScale, shift.BlueScale, perspective, vignettingScale,
+                shift.Moves)
+            : null;
     }
 
     /// <summary>The database files (lensfun's data/db folder).</summary>

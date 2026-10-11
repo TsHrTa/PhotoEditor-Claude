@@ -43,7 +43,7 @@ public partial class MainViewModel
             var result = await Task.Run(() =>
             {
                 using var photo = SKBitmap.FromImage(basePreview.Preview);
-                var correction = LensSetup.For(lens, settings, photo.Width, photo.Height, measureCa: () => (1, 1));
+                var correction = LensSetup.For(lens, settings, photo.Width, photo.Height, measureCa: () => null);
                 var corrected = correction?.Apply(photo) ?? photo;
                 try
                 {
