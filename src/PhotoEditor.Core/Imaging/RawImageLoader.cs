@@ -158,6 +158,7 @@ public static class RawImageLoader
 
     private static T DecodeWithLibRaw<T>(string path, RawDemosaic demosaic, bool halfSize, Developer<T> develop)
     {
+        bool ownDemosaic = demosaic >= RawDemosaic.BilinearCs && !halfSize;
         using var context = Sdcb.LibRaw.RawContext.OpenFile(path);
         UseCameraCrop(context);
         context.Unpack();
@@ -169,8 +170,10 @@ public static class RawImageLoader
             o.HighlightMode = 1; // channel multipliers normalised by the largest: nothing clips before the sensor
             o.NoAutoBright = true;
             o.OutputBps = 16;
-            o.UserQual = (Sdcb.LibRaw.DemosaicAlgorithm)(int)demosaic;
+            o.UserQual = ownDemosaic ? 0 : (Sdcb.LibRaw.DemosaicAlgorithm)(int)demosaic;
             o.HalfSize = halfSize; // one output pixel per 2 x 2 sensor cells: no demosaicing at all
+            if (ownDemosaic)
+                o.Interpolation = false; // LibRaw's mosaic as it would interpolate it; BayerDemosaic does that step
         });
         var multipliers = context.PreMultipler.Take(3).ToArray();
         if (multipliers.Length != 3 || multipliers.Any(m => !(m > 0)))
@@ -185,7 +188,66 @@ public static class RawImageLoader
         var rgb = MemoryMarshal.Cast<byte, ushort>(image.AsSpan<byte>());
         float max = multipliers.Max();
         var clip = multipliers.Select(m => 65535f * m / max).ToArray();
+        if (ownDemosaic)
+        {
+            var interpolated = DemosaicMosaic(rgb, image.Width, image.Height, demosaic, clip.Min());
+            return develop(interpolated, image.Width, image.Height, clip, matrix);
+        }
         return develop(rgb, image.Width, image.Height, clip, matrix);
+    }
+
+    /// <summary>
+    /// LibRaw's un-interpolated output (each pixel has only its own colour, the others 0; orientation applied) to an
+    /// interpolated image with one of <see cref="BayerDemosaic"/>'s methods. The colour of each position of the 2 × 2
+    /// pattern is read from the data (after the flip it need not be the sensor's).
+    /// </summary>
+    private static ushort[] DemosaicMosaic(ReadOnlySpan<ushort> mosaic, int width, int height, RawDemosaic demosaic, float clipPoint)
+    {
+        var sums = new double[4, 3];
+        for (int y = 0; y < Math.Min(height, 256); y++)
+            for (int x = 0; x < Math.Min(width, 256); x++)
+                for (int c = 0; c < 3; c++)
+                    sums[((y & 1) << 1) | (x & 1), c] += mosaic[(y * width + x) * 3 + c];
+        var pattern = new byte[4];
+        for (int p = 0; p < 4; p++)
+        {
+            int best = 0;
+            for (int c = 1; c < 3; c++)
+                if (sums[p, c] > sums[p, best]) best = c;
+            pattern[p] = (byte)best;
+        }
+        if (pattern.Count(c => c == 1) != 2 || !pattern.Contains((byte)0) || !pattern.Contains((byte)2))
+            throw new InvalidDataException($"Not a Bayer RGGB-type mosaic ({string.Join("", pattern)})");
+
+        int n = width * height;
+        var cfa = new float[n];
+        var source = mosaic.ToArray();
+        Parallel.For(0, height, y =>
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int i = y * width + x;
+                cfa[i] = source[i * 3 + pattern[((y & 1) << 1) | (x & 1)]];
+            }
+        });
+        float[] r = new float[n], g = new float[n], b = new float[n];
+        switch (demosaic)
+        {
+            case RawDemosaic.Rcd: BayerDemosaic.Rcd(cfa, width, height, pattern, r, g, b); break;
+            case RawDemosaic.Amaze: BayerDemosaic.Amaze(cfa, width, height, pattern, clipPoint, r, g, b); break;
+            default: BayerDemosaic.Bilinear(cfa, width, height, pattern, r, g, b); break;
+        }
+        var result = new ushort[n * 3];
+        Parallel.For(0, height, y =>
+        {
+            for (int x = 0, i = y * width; x < width; x++, i++)
+            {
+                result[i * 3] = (ushort)Math.Clamp(MathF.Round(r[i]), 0f, 65535f);
+                result[i * 3 + 1] = (ushort)Math.Clamp(MathF.Round(g[i]), 0f, 65535f);
+                result[i * 3 + 2] = (ushort)Math.Clamp(MathF.Round(b[i]), 0f, 65535f);
+            }
+        });
+        return result;
     }
 
     /// <summary>
@@ -627,4 +689,9 @@ public enum RawDemosaic
     Dcb = 4,
     Dht = 11,
     Aahd = 12,
+
+    /// <summary>Our own C# methods (<see cref="BayerDemosaic"/>) on LibRaw's mosaic, not LibRaw user_qual values.</summary>
+    BilinearCs = 100,
+    Rcd = 101,
+    Amaze = 102,
 }
