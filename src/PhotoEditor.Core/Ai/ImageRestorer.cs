@@ -242,7 +242,7 @@ public sealed class RestoreCache(string directory)
     public string Directory { get; } = directory;
 
     /// <summary>Bump when the denoise processing changes, so old results are recomputed.</summary>
-    public const int Version = 4; // 3: RAW base curve with a higher white point and DCB demosaicing; 4: base curve fitted to Lightroom
+    public const int Version = 5; // 3: RAW base curve with a higher white point and DCB demosaicing; 4: base curve fitted to Lightroom; 5: RCD demosaicing
 
     /// <summary>Cache file for the photo at <paramref name="imagePath"/> (changes when the photo file changes).</summary>
     public string PathFor(string imagePath, string variant)
