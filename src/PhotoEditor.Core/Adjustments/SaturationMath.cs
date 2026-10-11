@@ -31,7 +31,7 @@ public static class SaturationMath
     /// Saturation: factor on the amount for a grey-ish colour (the RGB scaling moves OKLab chroma less than its factor),
     /// and the OKLab chroma at which +100 stops boosting (it fades linearly from full at grey).
     /// </summary>
-    public const float SaturationStrength = 1.35f, SaturationReach = 0.17f;
+    public const float SaturationStrength = 1.75f, SaturationReach = 0.145f;
 
     /// <summary>Vibrance: share of its amount applied to a grey-ish colour, and the OKLab chroma where it reaches 0.</summary>
     public const float VibranceWeight = 0.6f, VibranceReach = 0.25f;

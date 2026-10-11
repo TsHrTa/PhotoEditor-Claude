@@ -180,10 +180,11 @@ public sealed class HeadroomTests
     [Fact]
     public void RawExposure_BrightensAlongTheShoulder_AndKeepsHue()
     {
-        // Midtones: about the same as a plain gain.
+        // Midtones: +1 stop of scene light is more than a plain gain on the display (the curve is steep there, as
+        // Lightroom's: its Exposure +1 took sRGB 56 to 98 on the R8 sample).
         float r = 0.1f, g = 0.1f, b = 0.1f;
         RawBaseCurve.ApplyExposure(ref r, ref g, ref b, 2);
-        Assert.InRange(r, 0.17f, 0.2f);
+        Assert.InRange(r, 0.27f, 0.35f);
         Assert.Equal(r, g);
         // A bright cloud (display 0.7): +1 stop stays near white instead of going 1 stop above it (1.4).
         float c = 0.7f, c2 = 0.7f, c3 = 0.7f;
@@ -213,17 +214,20 @@ public sealed class HeadroomTests
     {
         // Warm white balance gains (what Temperature +60 gives): on display values a bright grey cloud is multiplied
         // outright (a strong orange cast, one channel far above white); on scene values the shoulder compresses it.
-        var (gr, gg, gb) = PreparedAdjustments.WhiteBalanceGains(60, 0);
+        var (dr, _, db) = PreparedAdjustments.WhiteBalanceGains(60, 0);
+        var p = PreparedAdjustments.From(new AdjustmentSettings { Temperature = 60 }).ForScene(true);
+        var (gr, gg, gb) = (p.WhiteBalanceR, p.WhiteBalanceG, p.WhiteBalanceB);
         float v = 0.9f;
         float r = v, g = v, b = v;
         RawBaseCurve.ApplyScene(ref r, ref g, ref b, gr, gg, gb);
-        float naiveSpread = (v * gr - v * gb) / (v * gr + v * gb);
+        float naiveSpread = (v * dr - v * db) / (v * dr + v * db);
         float sceneSpread = (r - b) / (r + b);
         Assert.True(sceneSpread > 0 && sceneSpread < naiveSpread * 0.7f, $"scene {sceneSpread:0.000} vs display {naiveSpread:0.000}");
-        // Midtones are balanced about the same either way (the curve is nearly a power law there).
+        // Midtones are balanced about the same either way: the scene gains are taken to 1 / Contrast because the curve
+        // is about a power of 2 there (PreparedAdjustments.ForScene).
         float mr = 0.1f, mg = 0.1f, mb = 0.1f;
         RawBaseCurve.ApplyScene(ref mr, ref mg, ref mb, gr, gg, gb);
-        float midNaive = (0.1f * gr - 0.1f * gb) / (0.1f * gr + 0.1f * gb);
+        float midNaive = (0.1f * dr - 0.1f * db) / (0.1f * dr + 0.1f * db);
         Assert.InRange((mr - mb) / (mr + mb), midNaive * 0.6f, midNaive * 1.3f);
         // Neutral gains leave everything alone, and a grey stays grey under equal gains.
         float nr = 0.35f, ng = 0.35f, nb = 0.35f;
@@ -256,7 +260,8 @@ public sealed class HeadroomTests
         using var a = CpuAdjustmentRenderer.Render(plain, settings);
         using var b = CpuAdjustmentRenderer.Render(raw, settings);
         // Grey (bottom): about the same brightening.
-        Assert.InRange(b.GetPixel(80, 100).Red - a.GetPixel(80, 100).Red, -25, 10);
+        // (more than by a plain gain: the curve is steep in the midtones, as Lightroom's)
+        Assert.InRange(b.GetPixel(80, 100).Red - a.GetPixel(80, 100).Red, 0, 40);
         // The sky: blown with a plain gain, still shaded below white with the base curve.
         Assert.True(SkyStats(a).Std < 1, $"plain {SkyStats(a).Std:0.0}");
         Assert.True(SkyStats(b).Std > 3 && SkyStats(b).Mean < 252, $"raw {SkyStats(b).Mean:0} ± {SkyStats(b).Std:0.0}");
@@ -409,9 +414,11 @@ public sealed class HeadroomTests
         Assert.Equal(0, RawImageLoader.BaseCurve(0));
         // White is reached above the sensor's clip, so what the highlight rebuild reconstructs keeps its gradation.
         Assert.Equal(1, RawImageLoader.BaseCurve(RawBaseCurve.WhiteScene), 5);
-        Assert.InRange(RawImageLoader.BaseCurve(1), 0.8f, 0.95f);
-        Assert.InRange(RawImageLoader.BaseCurve(1 / 16f), 0.18f, 0.23f); // 4 stops down: about as bright as the camera's JPEG
-        Assert.True(RawImageLoader.BaseCurve(2) > 1.02f);
+        // Lightroom's levels on the R8 sample: the clip ≈ sRGB 250, 4 stops down ≈ sRGB 85 (an S-curve, darker and
+        // steeper in the midtones than the camera JPEG the old curve was fitted to).
+        Assert.InRange(RawImageLoader.BaseCurve(1), 0.93f, 0.98f);
+        Assert.InRange(RawImageLoader.BaseCurve(1 / 16f), 0.07f, 0.11f);
+        Assert.True(RawImageLoader.BaseCurve(RawBaseCurve.WhiteScene * 1.2f) > 1f);
         float prev = -1;
         for (float x = 0.01f; x <= 4; x += 0.01f)
         {
@@ -427,14 +434,14 @@ public sealed class HeadroomTests
     [Fact]
     public void DevelopSensor_WhiteIsWhite_ClippedGreenIsNotPink_AndBrighterGoesToHeadroom()
     {
-        float[] clip = [60000, 30000, 40000];
+        float[] clip = [30000, 15000, 20000];
         float[] identity = [1, 0, 0, 0, 1, 0, 0, 0, 1];
         ushort[] rgb =
         [
-            30000, 30000, 30000,  // a neutral that just clips (the lowest clip level)
-            45000, 30000, 45000,  // brighter: green clipped, red / blue 1.5 × — a white cloud's core
-            15000, 15000, 15000,  // one stop down: grey
-            65000, 65000, 65000,  // far above the clip level (2.2 x): beyond even the shoulder
+            15000, 15000, 15000,  // a neutral that just clips (the lowest clip level)
+            22500, 15000, 22500,  // brighter: green clipped, red / blue 1.5 × — a white cloud's core
+            7500, 7500, 7500,     // one stop down: grey
+            65000, 65000, 65000,  // far above the clip level (4.3 x): beyond even the shoulder
         ];
         using var photo = RawImageLoader.DevelopSensor(rgb, 4, 1, clip, identity);
         var headroom = Headroom.Of(photo)!;
@@ -449,7 +456,7 @@ public sealed class HeadroomTests
         Assert.True(extra.Red > 0 && extra.Red == extra.Green && extra.Green == extra.Blue, extra.ToString());
         var grey = photo.GetPixel(2, 0);
         Assert.Equal(grey.Red, grey.Green);
-        Assert.InRange(grey.Red, 200, 240);
+        Assert.InRange(grey.Red, 200, 245);
         Assert.Equal(0, headroom.Bitmap.GetPixel(2, 0).Red);
     }
 

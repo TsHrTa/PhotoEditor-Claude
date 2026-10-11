@@ -49,6 +49,21 @@ public readonly record struct PreparedAdjustments(
     public bool SceneExposure { get; init; }
 
     /// <summary>
+    /// These adjustments for a photo that does (<paramref name="scene"/>) or does not carry the RAW base curve. On such
+    /// a photo the white balance gains act on the scene values, where the curve (about a power of 2 in the midtones,
+    /// <see cref="RawBaseCurve.Contrast"/>) would double their visible effect; they are taken to 1 / Contrast so
+    /// Temperature / Tint move midtone colours as much as on a JPEG and as before the curve was fitted to Lightroom.
+    /// Exposure keeps its full gain (measured equal to Lightroom's).
+    /// </summary>
+    public PreparedAdjustments ForScene(bool scene) => !scene ? this with { SceneExposure = false } : this with
+    {
+        SceneExposure = true,
+        WhiteBalanceR = MathF.Pow(WhiteBalanceR, 1f / RawBaseCurve.Contrast),
+        WhiteBalanceG = MathF.Pow(WhiteBalanceG, 1f / RawBaseCurve.Contrast),
+        WhiteBalanceB = MathF.Pow(WhiteBalanceB, 1f / RawBaseCurve.Contrast),
+    };
+
+    /// <summary>
     /// Hue (degrees) of Lightroom's purple / green defringe range ends 0 and 100. The purple defaults (30–70) cover
     /// blue-violet to mauve fringes (254–326°, fading out by 229° / 351°) but not a blue sky (≈ 200–225°).
     /// </summary>

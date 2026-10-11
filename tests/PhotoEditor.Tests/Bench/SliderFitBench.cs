@@ -74,6 +74,61 @@ public sealed class SliderFitBench(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// Highlights check (the constants were fitted by a grid over these three values): PHOTOEDITOR_GRID set to anything
+    /// runs it; prints the tone RMS against Lightroom's −95 and the detail per scale.
+    /// </summary>
+    [Fact]
+    public void HighlightsGrid()
+    {
+        var raw = Environment.GetEnvironmentVariable("PHOTOEDITOR_BENCH");
+        var dir = Environment.GetEnvironmentVariable("PHOTOEDITOR_LR_DIR");
+        var grid = Environment.GetEnvironmentVariable("PHOTOEDITOR_GRID");
+        if (raw is null || dir is null || grid is null)
+            return;
+        var (_, before, after, ours, oursAfter) = Pairs.Single(p => p.Name.StartsWith("Highlights"));
+        using var photo = RawImageLoader.Load(raw);
+        var lens = Core.Lens.PhotoLens.Of(raw);
+        Planes lrA, lrB, ourA;
+        using (var a = TiffImageLoader.Load(Path.Combine(dir, before + ".tif"))) lrA = Planes.Of(a);
+        using (var b = TiffImageLoader.Load(Path.Combine(dir, after + ".tif"))) lrB = Planes.Of(b);
+        using (var a = CpuAdjustmentRenderer.Render(photo, new EditState { Adjustments = ours }, lens)) ourA = Planes.Of(a);
+        var lrTone = ToneBins(lrA, lrB);
+        var lrDetail = Detail(lrA, lrB);
+        output.WriteLine($"LR detail {string.Join(" ", lrDetail.Select(F2))}");
+        Planes ourB;
+        using (var b = CpuAdjustmentRenderer.Render(photo, new EditState { Adjustments = oursAfter }, lens)) ourB = Planes.Of(b);
+        var tone = ToneBins(ourA, ourB);
+        double rms = Math.Sqrt(Enumerable.Range(0, 16).Where(i => !float.IsNaN(lrTone[i]) && !float.IsNaN(tone[i]))
+            .Average(i => (tone[i] - lrTone[i]) * (tone[i] - lrTone[i])));
+        output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"top {ToneCurve.HighlightsTopStops} keep {ToneCurve.HighlightsDetailKeep} max {ToneBaseMap.MaxDetailStops}: tone rms {rms:F1} (top bins {tone[12]:F0}/{tone[15]:F0} vs {lrTone[12]:F0}/{lrTone[15]:F0}) detail {string.Join(" ", Detail(ourA, ourB).Select(F2))}"));
+    }
+
+    private static string F2(double v) => v.ToString("F2", CultureInfo.InvariantCulture);
+
+    private static float[] ToneBins(Planes a, Planes b)
+    {
+        var tone = new List<float>[16];
+        for (int i = 0; i < 16; i++) tone[i] = [];
+        for (int i = 0; i < a.SmallLuma.Length; i++)
+            tone[Math.Min(15, (int)(a.SmallLuma[i] * 16))].Add(b.SmallLuma[i]);
+        return tone.Select(l => l.Count < 50 ? float.NaN : Median(l) * 255).ToArray();
+    }
+
+    private static double[] Detail(Planes a, Planes b)
+    {
+        var bandsA = new double[4];
+        var bandsB = new double[4];
+        foreach (var (cx, cy) in Crops)
+        {
+            var ea = Bands(a.Luma, a.Width, cx, cy);
+            var eb = Bands(b.Luma, b.Width, cx, cy);
+            for (int k = 0; k < 4; k++) { bandsA[k] += ea[k]; bandsB[k] += eb[k]; }
+        }
+        return bandsA.Select((v, k) => bandsB[k] / v).ToArray();
+    }
+
     private void Report(string who, Planes a, Planes b)
     {
         string F(double v) => v.ToString("F0", CultureInfo.InvariantCulture);

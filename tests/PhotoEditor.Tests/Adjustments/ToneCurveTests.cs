@@ -75,7 +75,7 @@ public class ToneCurveTests
     {
         var p = P(new AdjustmentSettings { Highlights = -100 });
         Assert.True(ToneCurve.Apply(1.2f, p) < 1f);
-        Assert.Equal(0.2f, ToneCurve.Apply(0.2f, p), 5); // shadows untouched
+        Assert.Equal(0.01f, ToneCurve.Apply(0.01f, p), 5); // the deepest shadows untouched
     }
 
     [Fact]
@@ -95,43 +95,55 @@ public class ToneCurveTests
         Assert.Equal(0.5f, ToneCurve.Apply(0.5f, P(new AdjustmentSettings { Whites = 100 })), 1);
     }
 
+    /// <summary>
+    /// Pulled down, Highlights brings values above white back (white itself by 1.09 stops at −100) and never changes
+    /// the order of tones, even with the second pass at −200 over the whole headroom.
+    /// </summary>
     [Fact]
     public void Highlights_RollsOffAboveWhite()
     {
         const float a = -PreparedAdjustments.MaxHighlightsShift;
-        // Two stops over white (linear 4 ≈ 1.9 perceptually) comes back under white at −100 …
-        Assert.True(ToneCurve.Highlights(1.9f, a) < 1f, $"{ToneCurve.Highlights(1.9f, a)}");
-        Assert.True(ToneCurve.Highlights(3f, a) < 1f);
-        // … keeping the gradient: brighter stays brighter.
-        float prev = -1;
-        for (float x = 0; x <= 4f; x += 0.05f)
+        // One stop over white (linear 2 ≈ 1.37 perceptually) comes back under white at −100.
+        Assert.True(ToneCurve.Highlights(1.37f, a) < 1f, $"{ToneCurve.Highlights(1.37f, a)}");
+        Assert.Equal(-1.09f, MathF.Log2(MathF.Pow(ToneCurve.Highlights(1f, a), ToneCurve.PerceptualGamma)), 2);
+        foreach (int passes in new[] { 1, 2 })
         {
-            float y = ToneCurve.Highlights(x, a);
-            Assert.True(y > prev, $"not rising at {x}");
-            prev = y;
+            float prev = -1;
+            for (float x = 0; x <= 2.6f; x += 0.01f)
+            {
+                float y = x;
+                for (int i = 0; i < passes; i++) y = ToneCurve.Highlights(y, a);
+                Assert.True(y > prev, $"not rising at {x} ({passes} passes)");
+                prev = y;
+            }
         }
-        // Continuous at white, the full amount there.
-        Assert.Equal(ToneCurve.Highlights(1f, a), ToneCurve.Highlights(1.0001f, a), 3);
-        Assert.Equal(1f + a, ToneCurve.Highlights(1f, a), 5);
     }
 
     /// <summary>
-    /// User report: Highlights made the whole photo greyish. The midtones stay put and the bright range keeps
-    /// at least ~45 % of its contrast at −100 (the old curve flattened it to ~30 %, starting below mid grey).
+    /// User report: Highlights made the whole photo greyish and changed colours, and did something else than
+    /// Lightroom's. Measured on the user's Lightroom TIFFs (R8 sample, −95): Lightroom darkens by a number of stops
+    /// that grows with the brightness, about 0.4 in the lower midtones, nothing in the deepest shadows. As a gain it
+    /// keeps colour ratios (no grey veil); raising Highlights keeps its own curve (from 0.4, white stays white).
     /// </summary>
     [Fact]
-    public void Highlights_LeaveMidtonesAndKeepContrast()
+    public void Highlights_DarkenLikeLightroom()
     {
-        foreach (float a in new[] { -PreparedAdjustments.MaxHighlightsShift, PreparedAdjustments.MaxHighlightsShift })
+        const float a = -PreparedAdjustments.MaxHighlightsShift;
+        float Stops(float x) => MathF.Log2(MathF.Pow(ToneCurve.Highlights(x, a) / x, ToneCurve.PerceptualGamma));
+        Assert.Equal(0f, Stops(0.015f), 3);
+        Assert.InRange(Stops(0.25f), -0.46f, -0.42f);
+        Assert.InRange(Stops(0.6f), -0.85f, -0.70f);
+        // more darkening for brighter tones
+        for (float x = 0.12f; x < 1f; x += 0.02f)
+            Assert.True(Stops(x + 0.02f) <= Stops(x) + 1e-5f, $"at {x}");
+
+        const float up = PreparedAdjustments.MaxHighlightsShift;
+        Assert.Equal(0.3f, ToneCurve.Highlights(0.3f, up), 5);
+        Assert.Equal(0.4f, ToneCurve.Highlights(0.4f, up), 5);
+        for (float x = 0.4f; x < 1f; x += 0.01f)
         {
-            Assert.Equal(0.3f, ToneCurve.Highlights(0.3f, a), 5);
-            Assert.Equal(0.4f, ToneCurve.Highlights(0.4f, a), 5);
-            Assert.InRange(ToneCurve.Highlights(0.5f, a) - 0.5f, -0.02f, 0.04f);
-            for (float x = 0.4f; x < 1f; x += 0.01f)
-            {
-                float slope = (ToneCurve.Highlights(x + 0.005f, a) - ToneCurve.Highlights(x, a)) / 0.005f;
-                Assert.InRange(slope, a < 0 ? 0.4f : 0f, 1.7f);
-            }
+            float slope = (ToneCurve.Highlights(x + 0.005f, up) - ToneCurve.Highlights(x, up)) / 0.005f;
+            Assert.InRange(slope, 0f, 1.7f);
         }
     }
 

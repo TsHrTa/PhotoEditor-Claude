@@ -70,6 +70,27 @@ public sealed class LocalToneTests
         Assert.True(after.Std > flat.Std * 1.2, numbers);
     }
 
+    /// <summary>
+    /// Highlights acts on a local mean; a plain mean took in the dark ground, so the sky next to the horizon was darkened
+    /// less and gained "detail" (a bright band). The range-limited mean keeps the sky's own: the band just above the
+    /// horizon changes like the open sky, for dark ground and for ground only about two stops darker than the sky.
+    /// </summary>
+    [Theory]
+    [InlineData(40)]
+    [InlineData(110)]
+    public void Highlights_DarkenTheSky_WithoutAHaloAtTheHorizon(int ground)
+    {
+        using var src = SkyAndGround();
+        for (int y = Horizon; y < 480; y++)
+            for (int x = 0; x < 640; x++)
+                src.SetPixel(x, y, new SKColor((byte)ground, (byte)ground, (byte)ground));
+        using var dark = CpuAdjustmentRenderer.Render(src, new AdjustmentSettings { Highlights = -100 });
+        double Change(int y0, int y1) => Stats(dark, y0, y1).Mean - Stats(src, y0, y1).Mean;
+        double open = Change(40, 120), nearHorizon = Change(Horizon - 12, Horizon - 2);
+        Assert.True(open < -15, $"sky not darkened ({open:0.0})");
+        Assert.InRange(nearHorizon - open, -4, 4);
+    }
+
     [Fact]
     public void Shadows_LiftTheGround_WithoutAHaloAtTheHorizon()
     {

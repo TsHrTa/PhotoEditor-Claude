@@ -71,7 +71,7 @@ public static class CpuAdjustmentRenderer
         // RAW highlights above white, added after the detail filters (as the shader's global pass does).
         var headroom = Headroom.Of(source) is { } hr && hr.Width == input.Width && hr.Height == input.Height ? hr : null;
         bool sceneExposure = Headroom.Of(source)?.BaseCurve == true;
-        var p = PreparedAdjustments.From(state.Adjustments) with { SceneExposure = sceneExposure };
+        var p = PreparedAdjustments.From(state.Adjustments).ForScene(sceneExposure);
         // Sharpening works on the source pixels, before everything else (as the shader's global pass does).
         using var sharpened = p.HasSharpening ? Sharpening.Apply(input, p) : null;
         input = sharpened ?? input;
@@ -81,7 +81,7 @@ public static class CpuAdjustmentRenderer
         var layers = state.Masks
             .Where(m => m.IsActive)
             // The tone curve is whole-image only.
-            .Select(m => new MaskLayer(PreparedAdjustments.From(m.Adjustments) with { CurveTable = null, SceneExposure = sceneExposure },
+            .Select(m => new MaskLayer((PreparedAdjustments.From(m.Adjustments) with { CurveTable = null }).ForScene(sceneExposure),
                 MaskRasterizer.RasterizeToBytes(m, width, height)))
             .ToArray();
         var result = new SKBitmap(new SKImageInfo(width, height, floatOutput ? SKColorType.RgbaF16 : SKColorType.Rgba8888, SKAlphaType.Premul));
@@ -260,8 +260,8 @@ public static class CpuAdjustmentRenderer
                 HazeMap.Apply(ref r, ref g, ref b, t, p.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
             }
             // Base / pixel brightness from the original, computed once per pixel when a pass needs it.
-            float baseRatio = toneBase is not null ? originalPixels.BaseRatio(toneBase, i / 4, y, width, height) : 1f;
-            ApplyLinear(ref r, ref g, ref b, p, baseRatio);
+            var (baseRatio, detailRatio) = toneBase is not null ? originalPixels.Ratios(toneBase, i / 4, y, width, height) : (1f, 1f);
+            ApplyLinear(ref r, ref g, ref b, p, baseRatio, detailRatio);
             if (p.HasVignette)
                 VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, p);
             if (layers.Length == 0)
@@ -298,7 +298,7 @@ public static class CpuAdjustmentRenderer
                         t = haze.Sample(i / 4, y, width, height);
                     HazeMap.Apply(ref r, ref g, ref b, t, layer.Adjustments.DehazeAmount, haze.LightR, haze.LightG, haze.LightB);
                 }
-                ApplyLinear(ref r, ref g, ref b, layer.Adjustments, baseRatio);
+                ApplyLinear(ref r, ref g, ref b, layer.Adjustments, baseRatio, detailRatio);
                 if (layer.Adjustments.HasVignette)
                     VignetteMath.Apply(ref r, ref g, ref b, i / 4, y, frame, layer.Adjustments);
                 if (last)
@@ -404,7 +404,7 @@ public static class CpuAdjustmentRenderer
         private readonly int _extraRowBytes = headroom?.Bitmap.RowBytes ?? 0;
         private readonly float _extraScale = (headroom?.Scale ?? 0f) / 255f;
 
-        public float BaseRatio(ToneBaseMap map, int x, int y, int width, int height)
+        public (float Base, float Detail) Ratios(ToneBaseMap map, int x, int y, int width, int height)
         {
             byte* p = (byte*)pixels + (long)y * rowBytes + x * 4;
             float er = 0, eg = 0, eb = 0;
@@ -413,7 +413,7 @@ public static class CpuAdjustmentRenderer
                 byte* e = (byte*)_extra + (long)y * _extraRowBytes + x * 4;
                 er = e[0] * _extraScale; eg = e[1] * _extraScale; eb = e[2] * _extraScale;
             }
-            return map.BaseRatio(x, y, width, height, ToneBaseMap.LogLuminance(p[0], p[1], p[2], p[3], er, eg, eb));
+            return map.Ratios(x, y, width, height, ToneBaseMap.LogLuminance(p[0], p[1], p[2], p[3], er, eg, eb));
         }
     }
 
@@ -425,7 +425,9 @@ public static class CpuAdjustmentRenderer
     /// The photo's base (area) brightness over this pixel's brightness, from <see cref="ToneBaseMap"/> (1 = no map:
     /// highlights / shadows then act on the pixel itself, like a global curve).
     /// </param>
-    public static void ApplyLinear(ref float r, ref float g, ref float b, in PreparedAdjustments p, float baseRatio = 1f)
+    /// <param name="detailRatio">Local mean over pixel brightness (<see cref="ToneBaseMap.Ratios"/>): the detail darkened highlights keep.</param>
+    public static void ApplyLinear(ref float r, ref float g, ref float b, in PreparedAdjustments p, float baseRatio = 1f,
+        float detailRatio = 1f)
     {
         if (p.SceneExposure)
         {
@@ -445,7 +447,7 @@ public static class CpuAdjustmentRenderer
         float y = ToneCurve.Luminance(r, g, b);
         if (p.HasLocalTone)
         {
-            float gain = ToneCurve.LocalGain(y * baseRatio, p, baseRatio);
+            float gain = ToneCurve.LocalGain(y * baseRatio, p, detailRatio, y * detailRatio);
             // Raised highlights brighten colours without clipping a channel.
             if (p.HighlightsAmount > 0f)
                 gain = ToneCurve.LimitBrightening(MathF.Max(r, MathF.Max(g, b)), gain);

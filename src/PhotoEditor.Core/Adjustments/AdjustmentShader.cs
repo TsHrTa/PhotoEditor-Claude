@@ -74,6 +74,11 @@ public static class AdjustmentShader
         // stretched over the image; useToneBase = 1 when bound.
         uniform shader toneBase;
         uniform float useToneBase;
+        // The range-limited local mean (ToneBaseMap.GridImage): 10 levels 2 stops apart from -14, stacked vertically,
+        // each toneGridSpan high in image units; toneGridHalf = half a map texel (keeps sampling inside a level).
+        uniform shader toneGrid;
+        uniform float toneGridSpan;
+        uniform float toneGridHalf;
         // RAW highlights above white (see Headroom): value = 1 + headroomScale × stored, 0 = none. The global pass
         // adds it to the photo (addHeadroom = 1); every pass uses it for the base brightness.
         uniform shader headroom;
@@ -158,7 +163,8 @@ public static class AdjustmentShader
         float highlightsStep(float x, float a) {
             if (a < 0.0) {
                 float s = clamp((x - 0.02) / 0.1, 0.0, 1.0);
-                float stops = s * s * (3.0 - 2.0 * s) * (0.44 + 0.32 / 0.7 * max(x - 0.3, 0.0));
+                float rise = max(min(x, 1.0) - 0.3, 0.0) + 0.4 * max(x - 1.0, 0.0);
+                float stops = s * s * (3.0 - 2.0 * s) * (0.44 + 0.65 / 0.7 * rise);
                 return x * exp2(a / 0.25 * stops / perceptualGamma);
             }
             if (a == 0.0 || x <= 0.4 || x >= 1.0) return x;
@@ -486,8 +492,9 @@ public static class AdjustmentShader
         }
 
         // Base (area) brightness over the pixel's own brightness, both from the original photo.
-        float baseRatioAt(float2 coord) {
-            if (useToneBase < 0.5) return 1.0;
+        // x: base over pixel; y: local mean over pixel, limited to ±1 stop (ToneBaseMap.Ratios / DetailRatioFrom).
+        float2 baseRatioAt(float2 coord) {
+            if (useToneBase < 0.5) return float2(1.0);
             half4 o = source.eval(coord);
             float l = log2(1e-4);
             if (o.a > 0.0) {
@@ -496,7 +503,16 @@ public static class AdjustmentShader
                     float3(0.2126, 0.7152, 0.0722)), 1e-4));
             }
             float4 ab = float4(toneBase.eval(coord));
-            return exp2(ab.r * l + (ab.g * 16.0 - 16.0) - l);
+            float t = clamp((l + 14.0) / 2.0, 0.0, 8.999);
+            float k = floor(t);
+            float f = t - k;
+            float yc = clamp(coord.y, toneGridHalf, toneGridSpan - toneGridHalf);
+            float4 g0 = float4(toneGrid.eval(float2(coord.x, yc + k * toneGridSpan)));
+            float4 g1 = float4(toneGrid.eval(float2(coord.x, yc + (k + 1.0) * toneGridSpan)));
+            float w0 = g0.g * (1.0 - f);
+            float w1 = g1.g * f;
+            float mean = w0 + w1 > 1e-4 ? (w0 * (g0.r * 16.0 - 16.0) + w1 * (g1.r * 16.0 - 16.0)) / (w0 + w1) : l;
+            return float2(exp2(ab.r * l + (ab.g * 16.0 - 16.0) - l), exp2(clamp(mean - l, -1.0, 1.0)));
         }
 
         // Medium-size detail for Texture, part 1: luminance of a 3 × 3 (1-2-1) blur of the original minus the pixel's.
@@ -521,16 +537,21 @@ public static class AdjustmentShader
             return clamp(pow(max(ratio, 1e-6), -clarityAmount * weight), 0.25, 4.0);
         }
 
-        // Highlights / shadows as a factor: the curve moves the base brightness, the pixel follows (detail kept).
-        // Darkened highlights keep the pixel's perceptual distance from the base (ToneCurve.LocalGain).
-        float localGain(float baseLuminance, float baseRatio) {
+        // Highlights / shadows as a factor (ToneCurve.LocalGain): highlights act on the local mean (meanLuminance) and
+        // a darkened area gets its detail back (x HighlightsDetailKeep 1.2); shadows act on the edge-preserving base.
+        float localGain(float baseLuminance, float meanLuminance, float detailRatio) {
             float yb = max(baseLuminance, 1e-6);
-            float x0 = pow(yb, 1.0 / perceptualGamma);
-            float x = highlightsStep(highlightsStep(x0, highlightsAmount), highlightsAmount2);
-            float detail = x < x0 && x > 0.0 ? pow(max(baseRatio, 1e-6), 1.0 - x0 / x) : 1.0;
-            x = shadowsStep(shadowsStep(x, shadowsAmount), shadowsAmount2);
-            float y2 = pow(max(x, 0.0), perceptualGamma);
-            return clamp(y2 / yb * detail, 0.125, 8.0);
+            float gain = 1.0;
+            if (highlightsAmount != 0.0) {
+                float h0 = pow(max(meanLuminance, 1e-6), 1.0 / perceptualGamma);
+                float h = highlightsStep(highlightsStep(h0, highlightsAmount), highlightsAmount2);
+                gain = pow(max(h, 0.0) / h0, perceptualGamma);
+                if (h < h0 && h > 0.0) gain *= pow(max(detailRatio, 1e-6), 1.2 * (1.0 - h0 / h));
+            }
+            float x0 = pow(yb * gain, 1.0 / perceptualGamma);
+            float x = shadowsStep(shadowsStep(x0, shadowsAmount), shadowsAmount2);
+            if (x0 > 0.0) gain *= pow(max(x, 0.0) / x0, perceptualGamma);
+            return clamp(gain, 0.125, 8.0);
         }
 
         // The tone curve table on each channel; values above 1 keep their distance above the curve's end.
@@ -594,9 +615,10 @@ public static class AdjustmentShader
 
             // Local highlights / shadows, then the tone curve on perceptual luminance, applied as a ratio
             float y = dot(c, float3(0.2126, 0.7152, 0.0722));
-            float ratio = highlightsAmount != 0.0 || shadowsAmount != 0.0 || clarityAmount != 0.0 ? baseRatioAt(coord) : 1.0;
+            float2 ratios = highlightsAmount != 0.0 || shadowsAmount != 0.0 || clarityAmount != 0.0 ? baseRatioAt(coord) : float2(1.0);
+            float ratio = ratios.x;
             if (highlightsAmount != 0.0 || shadowsAmount != 0.0) {
-                float gain = localGain(y * ratio, ratio);
+                float gain = localGain(y * ratio, y * ratios.y, ratios.y);
                 if (highlightsAmount > 0.0) gain = limitBrightening(max(c.r, max(c.g, c.b)), gain);
                 c *= gain;
                 y *= gain;
@@ -616,7 +638,7 @@ public static class AdjustmentShader
                 float chroma = sqrt(dot(ab, ab));
                 float sAmount = saturationFactor - 1.0;
                 float satF = sAmount > 0.0
-                    ? 1.0 + sAmount * 1.35 * max(1.0 - chroma / (0.17 * max(sAmount, 1.0)), 0.0) : saturationFactor;
+                    ? 1.0 + sAmount * 1.75 * max(1.0 - chroma / (0.145 * max(sAmount, 1.0)), 0.0) : saturationFactor;
                 float vibF = 1.0 + vibranceAmount * 0.6 * max(1.0 - chroma / (0.25 * max(vibranceAmount, 1.0)), 0.0);
                 float factor = max(satF * vibF, 0.0);
                 float mn = min(c.r, min(c.g, c.b));
@@ -693,7 +715,12 @@ public static class AdjustmentShader
             ? SKShader.CreateColor(SKColors.Black)
             : toneMap.Image.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, new SKSamplingOptions(SKFilterMode.Linear),
                 SKMatrix.CreateScale((float)image.Width / toneMap.Width, (float)image.Height / toneMap.Height));
-        var tone = new ToneInput(toneShader, toneMap is not null);
+        using var gridShader = toneMap is null
+            ? SKShader.CreateColor(SKColors.Black)
+            : toneMap.GridImage.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, new SKSamplingOptions(SKFilterMode.Linear),
+                SKMatrix.CreateScale((float)image.Width / toneMap.Width, (float)image.Height / toneMap.Height));
+        var tone = new ToneInput(toneShader, toneMap is not null, gridShader, image.Height,
+            toneMap is null ? 0.5f : 0.5f * image.Height / toneMap.Height);
         var headroomMap = Headroom.Of(image) is { } hr && hr.Width == image.Width && hr.Height == image.Height ? hr : null;
         using var headroomShader = headroomMap is null
             ? SKShader.CreateColor(SKColors.Black)
@@ -738,7 +765,7 @@ public static class AdjustmentShader
 
     private readonly record struct HazeInput(SKShader Shader, HazeMap? Map);
 
-    private readonly record struct ToneInput(SKShader Shader, bool Bound);
+    private readonly record struct ToneInput(SKShader Shader, bool Bound, SKShader Grid, float GridSpan, float GridHalf);
 
     /// <summary>The drawn image's vignetting table (as a shader; Bound = false: none) and its size.</summary>
     private readonly record struct LensInput(SKShader Table, bool Bound, int Width, int Height, float[]? Matrix);
@@ -791,7 +818,7 @@ public static class AdjustmentShader
         AdjustmentSettings settings, VignetteMath.Frame frame, float pixelScale, float softenStep, bool sharpen, bool last)
     {
         var effect = Effect;
-        var p = PreparedAdjustments.From(settings);
+        var p = PreparedAdjustments.From(settings).ForScene(headroom.BaseCurve);
         // The tone curve is whole-image only (the global pass).
         var curve = sharpen ? p.CurveTable : null;
         using var curveShader = curve is null ? SKShader.CreateColor(SKColors.White)
@@ -832,6 +859,8 @@ public static class AdjustmentShader
             ["sharpenFineStep"] = 0.5f * (pixelScale < 1 ? MathF.Max(p.SharpenRadius * pixelScale, 0.5f) : p.SharpenRadius * pixelScale),
             ["softenAmount"] = p.SoftenAmount,
             ["useToneBase"] = tone.Bound ? 1f : 0f,
+            ["toneGridSpan"] = tone.GridSpan,
+            ["toneGridHalf"] = tone.GridHalf,
             ["noiseLumaAmount"] = sharpen ? p.NoiseLuminanceAmount : 0f,
             ["noiseColorAmount"] = sharpen ? p.NoiseColorAmount : 0f,
             ["defringePurple"] = sharpen ? p.DefringePurpleAmount : 0f,
@@ -869,6 +898,7 @@ public static class AdjustmentShader
             ["source"] = source,
             ["haze"] = haze.Shader,
             ["toneBase"] = tone.Shader,
+            ["toneGrid"] = tone.Grid,
             ["mask"] = mask,
             ["headroom"] = headroom.Shader,
             ["lensTable"] = lens.Table,

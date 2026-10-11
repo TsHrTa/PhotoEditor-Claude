@@ -31,10 +31,30 @@ public sealed class ToneBaseMap
     /// <summary>Luminance floor for the log (≈ −13.3 stops).</summary>
     public const float MinLuminance = 1e-4f;
 
-    private ToneBaseMap(Half[] a, Half[] b, int width, int height)
+    /// <summary>Box radius (map pixels, applied twice) of the local mean Highlights acts on.</summary>
+    private const int DetailRadius = 2;
+
+    /// <summary>Largest pixel / local mean difference (stops) credited as detail.</summary>
+    public const float MaxDetailStops = 1f;
+
+    /// <summary>
+    /// The local mean is range-limited (a bilateral grid): log luminance levels <see cref="GridStep"/> stops apart from
+    /// <see cref="GridMin"/>, <see cref="GridLevels"/> of them; each pixel is averaged with its neighbours of similar
+    /// brightness only, so a white sky next to dark ground keeps its own mean (a plain mean mixed in the ground and gave
+    /// darkened highlights a bright halo along the horizon), while texture within about two stops (leaves and the
+    /// gaps between them) is averaged. 2 stops kept 0.89 to 0.94 of the foliage detail at −95 (1 stop: 0.80, like no
+    /// grid, the mean then follows the texture), and the horizon halo test still passes.
+    /// </summary>
+    public const float GridMin = -14f, GridStep = 2f;
+
+    public const int GridLevels = 10;
+
+    private ToneBaseMap(Half[] a, Half[] b, Half[] gridMean, Half[] gridWeight, int width, int height)
     {
         A = a;
         B = b;
+        GridMean = gridMean;
+        GridWeight = gridWeight;
         Width = width;
         Height = height;
     }
@@ -45,25 +65,38 @@ public sealed class ToneBaseMap
     /// <summary>Coefficient b per map pixel, stored offset: (b + 16) / 16.</summary>
     public Half[] B { get; }
 
+    /// <summary>
+    /// Range-limited local mean of the log luminance per grid level and map pixel (level k at [k · Width · Height]),
+    /// stored offset like b. The guided base follows strong texture (foliage against the sky: a ≈ 1), so it cannot tell
+    /// a leaf from its surroundings; Highlights acts on this mean instead.
+    /// </summary>
+    public Half[] GridMean { get; }
+
+    /// <summary>Weight (share of the neighbourhood near each level, 0..1) per grid level and map pixel.</summary>
+    public Half[] GridWeight { get; }
+
     public int Width { get; }
     public int Height { get; }
 
     /// <summary>The map as an RGBA half-float image for the shader (a in red, stored b in green).</summary>
-    public SKImage Image => _image ??= CreateImage();
+    public SKImage Image => _image ??= CreateImage(Width * Height, i => (A[i], B[i]), Height);
     private SKImage? _image;
 
-    private SKImage CreateImage()
+    /// <summary>The grid as an RGBA half-float image, the levels stacked vertically (stored mean in red, weight in green).</summary>
+    public SKImage GridImage => _gridImage ??= CreateImage(Width * Height * GridLevels, i => (GridMean[i], GridWeight[i]), Height * GridLevels);
+    private SKImage? _gridImage;
+
+    private SKImage CreateImage(int count, Func<int, (Half, Half)> texel, int height)
     {
-        var halves = new Half[Width * Height * 4];
-        for (int i = 0; i < Width * Height; i++)
+        var halves = new Half[count * 4];
+        for (int i = 0; i < count; i++)
         {
-            halves[i * 4] = A[i];
-            halves[i * 4 + 1] = B[i];
+            (halves[i * 4], halves[i * 4 + 1]) = texel(i);
             halves[i * 4 + 2] = (Half)0f;
             halves[i * 4 + 3] = (Half)1f;
         }
         var bytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(halves.AsSpan()).ToArray();
-        var info = new SKImageInfo(Width, Height, SKColorType.RgbaF16, SKAlphaType.Opaque);
+        var info = new SKImageInfo(Width, height, SKColorType.RgbaF16, SKAlphaType.Opaque);
         using var data = SKData.CreateCopy(bytes);
         return SKImage.FromPixels(info, data, Width * 8) ?? throw new InvalidOperationException("Could not create the tone map image.");
     }
@@ -138,7 +171,43 @@ public sealed class ToneBaseMap
             ha[i] = (Half)Math.Clamp(meanA[i], 0f, 1f);
             hb[i] = (Half)((meanB[i] + BOffset) / BOffset);
         }
-        return new ToneBaseMap(ha, hb, w, h);
+        var (gridMean, gridWeight) = ComputeGrid(l, w, h);
+        return new ToneBaseMap(ha, hb, gridMean, gridWeight, w, h);
+    }
+
+    /// <summary>
+    /// The bilateral grid: each map pixel's log luminance is split between the two nearest levels (linear weights),
+    /// the sums and weights are blurred spatially per level, the mean per level is their ratio.
+    /// </summary>
+    private static (Half[] Mean, Half[] Weight) ComputeGrid(float[] l, int w, int h)
+    {
+        int n = w * h;
+        var mean = new Half[n * GridLevels];
+        var weight = new Half[n * GridLevels];
+        Parallel.For(0, GridLevels, k =>
+        {
+            var sum = new float[n];
+            var wt = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                float d = MathF.Abs((l[i] - GridMin) / GridStep - k);
+                if (d < 1f)
+                {
+                    wt[i] = 1f - d;
+                    sum[i] = (1f - d) * l[i];
+                }
+            }
+            sum = GuidedFilter.BoxMean(GuidedFilter.BoxMean(sum, w, h, DetailRadius), w, h, DetailRadius);
+            wt = GuidedFilter.BoxMean(GuidedFilter.BoxMean(wt, w, h, DetailRadius), w, h, DetailRadius);
+            float level = GridMin + k * GridStep;
+            for (int i = 0; i < n; i++)
+            {
+                float m = wt[i] > 1e-4f ? sum[i] / wt[i] : level;
+                mean[k * n + i] = (Half)((m + BOffset) / BOffset);
+                weight[k * n + i] = (Half)wt[i];
+            }
+        });
+        return (mean, weight);
     }
 
     /// <summary>log2 of the linear luminance of a premultiplied RGBA8888 pixel (floored at <see cref="MinLuminance"/>).</summary>
@@ -160,22 +229,41 @@ public sealed class ToneBaseMap
     /// multiplying the (edited) pixel luminance by this gives the base in the same state (exposure etc. included).
     /// The map is stretched over the image with bilinear, edge-clamped sampling at pixel centres (as Skia samples it).
     /// </summary>
-    public float BaseRatio(int x, int y, int imageWidth, int imageHeight, float logLuminance)
+    public float BaseRatio(int x, int y, int imageWidth, int imageHeight, float logLuminance) =>
+        Ratios(x, y, imageWidth, imageHeight, logLuminance).Base;
+
+    /// <summary>
+    /// <see cref="BaseRatio"/> and the detail ratio: the range-limited local mean (the grid levels around the pixel's own
+    /// brightness, weighted) over the pixel, the difference limited to ±<see cref="MaxDetailStops"/>. Mirrored in the shader.
+    /// </summary>
+    public (float Base, float Detail) Ratios(int x, int y, int imageWidth, int imageHeight, float logLuminance)
     {
         float u = (x + 0.5f) * Width / imageWidth - 0.5f;
-        float v = (y + 0.5f) * Height / imageHeight - 0.5f;
+        // vertically clamped to the level's band before sampling, as the shader does (its grid image stacks the levels)
+        float v = Math.Clamp((y + 0.5f) * Height / imageHeight - 0.5f, 0f, Height - 1);
         int x0 = (int)MathF.Floor(u), y0 = (int)MathF.Floor(v);
         float fx = u - x0, fy = v - y0;
-        float Bilinear(Half[] map)
+        float Bilinear(Half[] map, int offset = 0)
         {
-            float At(int xi, int yi) => (float)map[Math.Clamp(yi, 0, Height - 1) * Width + Math.Clamp(xi, 0, Width - 1)];
+            float At(int xi, int yi) => (float)map[offset + Math.Clamp(yi, 0, Height - 1) * Width + Math.Clamp(xi, 0, Width - 1)];
             float top = At(x0, y0) * (1 - fx) + At(x0 + 1, y0) * fx;
             float bottom = At(x0, y0 + 1) * (1 - fx) + At(x0 + 1, y0 + 1) * fx;
             return top * (1 - fy) + bottom * fy;
         }
         float a = Bilinear(A), b = Bilinear(B) * BOffset - BOffset;
-        return RatioFrom(a, b, logLuminance);
+        float t = Math.Clamp((logLuminance - GridMin) / GridStep, 0f, GridLevels - 1.001f);
+        int k = (int)t;
+        float f = t - k;
+        int n = Width * Height;
+        float w0 = Bilinear(GridWeight, k * n) * (1 - f), w1 = Bilinear(GridWeight, (k + 1) * n) * f;
+        float m0 = Bilinear(GridMean, k * n) * BOffset - BOffset, m1 = Bilinear(GridMean, (k + 1) * n) * BOffset - BOffset;
+        float mean = w0 + w1 > 1e-4f ? (w0 * m0 + w1 * m1) / (w0 + w1) : logLuminance;
+        return (RatioFrom(a, b, logLuminance), DetailRatioFrom(mean, logLuminance));
     }
+
+    /// <summary>2^clamp(m − L, ±<see cref="MaxDetailStops"/>). Mirrored in the shader.</summary>
+    public static float DetailRatioFrom(float mean, float logLuminance) =>
+        MathF.Pow(2f, Math.Clamp(mean - logLuminance, -MaxDetailStops, MaxDetailStops));
 
     /// <summary>2^(a·L + b − L): the base over the pixel's own luminance. Mirrored in the shader.</summary>
     public static float RatioFrom(float a, float b, float logLuminance) => MathF.Pow(2f, a * logLuminance + b - logLuminance);

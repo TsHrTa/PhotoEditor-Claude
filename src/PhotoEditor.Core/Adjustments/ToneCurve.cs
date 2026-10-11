@@ -39,21 +39,33 @@ public static class ToneCurve
     /// <paramref name="baseLuminance"/> (linear): the curve moves the base, the pixel follows by the same factor,
     /// so its detail relative to the area is kept. Mirrored in the shader.
     /// </summary>
-    /// <param name="baseRatio">
-    /// Base over pixel luminance. Darkened highlights keep the visible detail: the base moves down by the curve, the
-    /// pixel's perceptual distance from it is kept (factor baseRatio^−(1/g − 1) for the highlights' perceptual factor g,
-    /// as Lightroom, whose Highlights −95 keeps the fine detail of bright foliage while darkening it by half a stop; a
-    /// plain gain lost 19 %).
+    /// <param name="detailRatio">
+    /// Local mean over pixel luminance (<see cref="ToneBaseMap.Ratios"/>, limited to ±1 stop; 1 = no map). Highlights
+    /// acts on that plain local mean, not on the edge-preserving base: the guided base follows foliage texture pixel by
+    /// pixel, so a darkening that grows with brightness flattened the texture (19 % less detail at −95, where Lightroom
+    /// keeps it). A darkened area also gets back the detail the darkening takes from it, ×
+    /// <see cref="HighlightsDetailKeep"/> (factor detailRatio^(keep · (1 − 1/g)) for the perceptual factor g).
+    /// Shadows stays on the edge-preserving base.
     /// </param>
-    public static float LocalGain(float baseLuminance, in PreparedAdjustments p, float baseRatio = 1f)
+    public static float LocalGain(float baseLuminance, in PreparedAdjustments p, float detailRatio = 1f, float meanLuminance = -1f)
     {
         float yb = MathF.Max(baseLuminance, 1e-6f);
-        float x0 = MathF.Pow(yb, 1f / PerceptualGamma);
-        float x = Highlights(Highlights(x0, p.HighlightsAmount), p.HighlightsAmount2);
-        float detail = x < x0 && x > 0f ? MathF.Pow(MathF.Max(baseRatio, 1e-6f), 1f - x0 / x) : 1f;
-        x = Shadows(Shadows(x, p.ShadowsAmount), p.ShadowsAmount2);
-        float y2 = MathF.Pow(MathF.Max(x, 0f), PerceptualGamma);
-        return Math.Clamp(y2 / yb * detail, 1f / MaxLocalGain, MaxLocalGain);
+        float gain = 1f;
+        if (p.HighlightsAmount != 0f)
+        {
+            // the local mean (pixel × detailRatio; without a map the base)
+            float ym = MathF.Max(meanLuminance >= 0f ? meanLuminance : yb, 1e-6f);
+            float h0 = MathF.Pow(ym, 1f / PerceptualGamma);
+            float h = Highlights(Highlights(h0, p.HighlightsAmount), p.HighlightsAmount2);
+            gain = MathF.Pow(MathF.Max(h, 0f) / h0, PerceptualGamma);
+            if (h < h0 && h > 0f)
+                gain *= MathF.Pow(MathF.Max(detailRatio, 1e-6f), HighlightsDetailKeep * (1f - h0 / h));
+        }
+        float x0 = MathF.Pow(yb * gain, 1f / PerceptualGamma);
+        float x = Shadows(Shadows(x0, p.ShadowsAmount), p.ShadowsAmount2);
+        if (x0 > 0f)
+            gain *= MathF.Pow(MathF.Max(x, 0f) / x0, PerceptualGamma);
+        return Math.Clamp(gain, 1f / MaxLocalGain, MaxLocalGain);
     }
 
     /// <summary>
@@ -80,7 +92,7 @@ public static class ToneCurve
     /// <para>
     /// Pulled down: as Lightroom (measured on its TIFFs of the R8 sample, Highlights 0 → −95,
     /// <c>Bench/SliderFitBench</c>), a darkening by a number of stops that grows with the brightness
-    /// (<see cref="HighlightsDarkening"/>: none in the deepest shadows, 0.44 stops in the lower midtones, 0.76 at white,
+    /// (<see cref="HighlightsDarkening"/>: none in the deepest shadows, 0.44 stops in the lower midtones, 1.09 at white,
     /// more above white so RAW highlights come back): mostly an exposure reduction weighted towards the bright tones.
     /// A gain keeps the local contrast and the colour ratios; the old curve, which flattened only the upper range, took
     /// 20 % of the detail of bright foliage and turned skies grey. Beyond −100 the second pass applies it again.
@@ -104,13 +116,29 @@ public static class ToneCurve
     }
 
     /// <summary>
+    /// Extra darkening (stops at −100) from perceptual 0.3 to white (0.44 → 1.09 stops). Fitted with
+    /// <c>Bench/SliderFitBench.HighlightsGrid</c> to Lightroom's −95 on the R8 sample: tone within 2.5 levels RMS, detail kept
+    /// (0.89 to 0.94 per scale, a plain gain gave 0.81; Lightroom 0.91 to 1.05).
+    /// </summary>
+    public const float HighlightsTopStops = 0.65f;
+
+    /// <summary>
+    /// How much of the detail a darkened area loses is put back (1 = the pixel keeps its perceptual distance from its
+    /// local mean). Above 1 as Lightroom, whose Highlights −95 raised the finest detail of bright foliage by 5 %.
+    /// </summary>
+    public const float HighlightsDetailKeep = 1.2f;
+
+    /// <summary>
     /// Stops of darkening at Highlights −100 for a perceptual brightness <paramref name="x"/> (1 = white): fades in over
-    /// the deepest shadows (0.02 to 0.12), 0.44 stops up to 0.3, then rising linearly to 0.76 at white and beyond.
+    /// the deepest shadows (0.02 to 0.12), 0.44 stops up to 0.3, then rising linearly by <see cref="HighlightsTopStops"/>
+    /// to white and beyond.
     /// </summary>
     public static float HighlightsDarkening(float x)
     {
         float s = Math.Clamp((x - 0.02f) / 0.1f, 0f, 1f);
-        return s * s * (3f - 2f * s) * (0.44f + 0.32f / 0.7f * MathF.Max(x - 0.3f, 0f));
+        // above white the growth is 0.4 x as steep, so even two passes (-200) never reverse the order of tones
+        float rise = MathF.Max(MathF.Min(x, 1f) - 0.3f, 0f) + 0.4f * MathF.Max(x - 1f, 0f);
+        return s * s * (3f - 2f * s) * (0.44f + HighlightsTopStops / 0.7f * rise);
     }
 
     /// <summary>Linear value from which a brightened pixel's brightest channel is compressed towards white.</summary>
