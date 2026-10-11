@@ -120,6 +120,16 @@ public static class AdjustmentShader
         const float softenRangeSigma = 0.1;
 
         const float perceptualGamma = 2.2;
+        // Feature switches: a compiled variant sets the unused ones to false so their code (and texture taps) is gone;
+        // some GPU compilers (Intel) run both sides of a uniform branch, so every pixel paid for every filter (Variant).
+        const bool kSharpen = true;
+        const bool kLumaNoise = true;
+        const bool kColorNoise = true;
+        const bool kDefringe = true;
+        const bool kSoften = true;
+        const bool kDehaze = true;
+        const bool kLocal = true;
+        const bool kHsl = true;
 
         float srgbToLinear(float c) {
             return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
@@ -570,15 +580,15 @@ public static class AdjustmentShader
             float3 s = float3(src.rgb) / a;
             // What this pass leaves outside its mask.
             float3 s0 = s;
-            if (sharpenAmount > 0.0) s = sharpen(s, coord);
-            if (noiseLumaAmount > 0.0 || noiseColorAmount > 0.0 || defringePurple > 0.0 || defringeGreen > 0.0) {
+            if (kSharpen && sharpenAmount > 0.0) s = sharpen(s, coord);
+            if ((kLumaNoise || kColorNoise || kDefringe) && (noiseLumaAmount > 0.0 || noiseColorAmount > 0.0 || defringePurple > 0.0 || defringeGreen > 0.0)) {
                 float3 c0 = sourceAt(coord, s);
-                if (noiseLumaAmount > 0.0) s -= noiseLumaAmount * lumaNoise(coord, c0);
-                if (noiseColorAmount > 0.0) s -= noiseColorAmount * colorNoise(coord, c0);
-                if (defringePurple > 0.0 || defringeGreen > 0.0) s += defringe(coord, c0);
+                if (kLumaNoise && noiseLumaAmount > 0.0) s -= noiseLumaAmount * lumaNoise(coord, c0);
+                if (kColorNoise && noiseColorAmount > 0.0) s -= noiseColorAmount * colorNoise(coord, c0);
+                if (kDefringe && (defringePurple > 0.0 || defringeGreen > 0.0)) s += defringe(coord, c0);
                 s = clamp(s, 0.0, 1.0);
             }
-            if (softenAmount > 0.0 || textureAmount != 0.0) {
+            if (kSoften && (softenAmount > 0.0 || textureAmount != 0.0)) {
                 float3 sd = softDetail(coord);
                 if (softenAmount > 0.0) s = clamp(s - softenAmount * sd, float3(0.0), max(s, float3(1.0)));
                 if (textureAmount != 0.0) {
@@ -605,7 +615,7 @@ public static class AdjustmentShader
                 // On the scene values before the base curve for RAWs (the lens darkened the light, not the picture).
                 if (sceneExposure > 0.0) c = rawScene(c, float3(gain)); else c *= gain;
             }
-            if (dehazeAmount != 0.0) c = dehaze(c, coord);
+            if (kDehaze && dehazeAmount != 0.0) c = dehaze(c, coord);
             if (sceneExposure > 0.0) {
                 float3 gains = whiteBalance * exposureGain;
                 if (gains.r != 1.0 || gains.g != 1.0 || gains.b != 1.0) c = rawScene(c, gains);
@@ -615,7 +625,7 @@ public static class AdjustmentShader
 
             // Local highlights / shadows, then the tone curve on perceptual luminance, applied as a ratio
             float y = dot(c, float3(0.2126, 0.7152, 0.0722));
-            float2 ratios = highlightsAmount != 0.0 || shadowsAmount != 0.0 || clarityAmount != 0.0 ? baseRatioAt(coord) : float2(1.0);
+            float2 ratios = kLocal && (highlightsAmount != 0.0 || shadowsAmount != 0.0 || clarityAmount != 0.0) ? baseRatioAt(coord) : float2(1.0);
             float ratio = ratios.x;
             if (highlightsAmount != 0.0 || shadowsAmount != 0.0) {
                 float gain = localGain(y * ratio, y * ratios.y, ratios.y);
@@ -647,7 +657,7 @@ public static class AdjustmentShader
                 c = max(y + (c - y) * factor, 0.0);
             }
 
-            if (hslOn > 0.5) c = applyHsl(c);
+            if (kHsl && hslOn > 0.5) c = applyHsl(c);
 
             if (vignetteStops != 0.0) {
                 float2 d = coord - vignetteCenter;
@@ -678,6 +688,47 @@ public static class AdjustmentShader
             ?? throw new InvalidOperationException("Adjustment shader failed to compile: " + errors));
 
     public static SKRuntimeEffect Effect => LazyEffect.Value;
+
+    /// <summary>The features a compiled variant keeps (the others' code is removed at compile time).</summary>
+    [Flags]
+    public enum Features
+    {
+        None = 0,
+        Sharpen = 1,
+        LumaNoise = 2,
+        ColorNoise = 64,
+        Defringe = 128,
+        Soften = 4,
+        Dehaze = 8,
+        Local = 16,
+        Hsl = 32,
+        All = Sharpen | LumaNoise | ColorNoise | Defringe | Soften | Dehaze | Local | Hsl,
+    }
+
+    private static readonly (Features Flag, string Name)[] Switches =
+    [
+        (Features.Sharpen, "kSharpen"), (Features.LumaNoise, "kLumaNoise"), (Features.ColorNoise, "kColorNoise"),
+        (Features.Defringe, "kDefringe"), (Features.Soften, "kSoften"),
+        (Features.Dehaze, "kDehaze"), (Features.Local, "kLocal"), (Features.Hsl, "kHsl"),
+    ];
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Features, SKRuntimeEffect> Variants = new();
+
+    /// <summary>
+    /// The effect with only <paramref name="features"/> compiled in. Measured on an Intel Iris Xe: with every filter
+    /// compiled in, a frame cost 12 ms at fit and 32 ms at 100 % even with all adjustments off (a plain image draw:
+    /// 0.2 ms), because the compiler runs the code behind uniform branches anyway. The uniforms and children are the
+    /// same in every variant, only the switches differ.
+    /// </summary>
+    public static SKRuntimeEffect Variant(Features features) => features == Features.All ? Effect : Variants.GetOrAdd(features, f =>
+    {
+        var source = Source;
+        foreach (var (flag, name) in Switches)
+            if (!f.HasFlag(flag))
+                source = source.Replace($"const bool {name} = true;", $"const bool {name} = false;");
+        return SKRuntimeEffect.CreateShader(source, out var errors)
+            ?? throw new InvalidOperationException($"Adjustment shader variant {f} failed to compile: " + errors);
+    });
 
     /// <summary>Creates the adjustment shader for <paramref name="image"/> in the image's pixel coordinates.</summary>
     public static SKShader CreateShader(SKImage image, AdjustmentSettings settings, SKSamplingOptions sampling) =>
@@ -817,8 +868,18 @@ public static class AdjustmentShader
     private static SKShader CreatePass(SKShader input, SKShader source, SKShader mask, HazeInput haze, ToneInput tone, HeadroomInput headroom, LensInput lens,
         AdjustmentSettings settings, VignetteMath.Frame frame, float pixelScale, float softenStep, bool sharpen, bool last)
     {
-        var effect = Effect;
         var p = PreparedAdjustments.From(settings).ForScene(headroom.BaseCurve);
+        // Only the features this pass uses are compiled in (the same conditions as the uniforms below set).
+        var features = Features.None;
+        if (sharpen && p.SharpenAmount > 0f) features |= Features.Sharpen;
+        if (sharpen && p.NoiseLuminanceAmount > 0f) features |= Features.LumaNoise;
+        if (sharpen && p.NoiseColorAmount > 0f) features |= Features.ColorNoise;
+        if (sharpen && (p.DefringePurpleAmount > 0f || p.DefringeGreenAmount > 0f)) features |= Features.Defringe;
+        if (p.SoftenAmount > 0f || p.TextureAmount != 0f) features |= Features.Soften;
+        if (haze.Map is not null && p.DehazeAmount != 0f) features |= Features.Dehaze;
+        if (p.HighlightsAmount != 0f || p.ShadowsAmount != 0f || p.ClarityAmount != 0f) features |= Features.Local;
+        if (p.HasHsl) features |= Features.Hsl;
+        var effect = Variant(features);
         // The tone curve is whole-image only (the global pass).
         var curve = sharpen ? p.CurveTable : null;
         using var curveShader = curve is null ? SKShader.CreateColor(SKColors.White)

@@ -1048,7 +1048,7 @@ public class ImageViewer : Control
         var overlay = OverlayMask is { } om ? _maskCache.Get(om, mw, mh) : null;
         _maskCache.Retain(OverlayMask is { } keep ? state.Masks.Add(keep) : state.Masks);
         context.Custom(new ImageDrawOperation(bounds, image, clip, toView, _view.Scale, (double)image.Width / source.Width,
-            state, maskImages, overlay));
+            state, maskImages, overlay, GpuBench.Wanted(source) ? source : null));
 
         if (Tool == EditTool.Crop)
             DrawCropFrame(context, bounds);
@@ -1158,7 +1158,7 @@ public class ImageViewer : Control
 
     private sealed class ImageDrawOperation(
         Rect bounds, SKImage image, SKRect clip, SKMatrix toView, double scale, double pixelScale, EditState state,
-        Dictionary<Guid, SKImage> maskImages, SKImage? overlay)
+        Dictionary<Guid, SKImage> maskImages, SKImage? overlay, PreviewImage? benchSource)
         : ICustomDrawOperation
     {
         public Rect Bounds => bounds;
@@ -1172,6 +1172,8 @@ public class ImageViewer : Control
             if (leaseFeature is null)
                 return;
             using var lease = leaseFeature.Lease();
+            if (benchSource is not null && lease.GrContext is { } gpu)
+                GpuBench.Run(gpu, benchSource);
             // Crisp pixels when zoomed in far; plain bilinear when the image is at most 1.5x the screen size (the preview
             // pyramid makes that the usual case; mipmaps would blur fine detail); mipmaps for a bigger reduction.
             var sampling = scale >= 2
