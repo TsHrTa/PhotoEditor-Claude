@@ -33,11 +33,12 @@ public sealed record RawMetadata
 public static class RawImageLoader
 {
     /// <summary>
-    /// The demosaicing used for editing and export. DCB: on the sample R8 CR3 (24 MP) it is the sharpest of the
-    /// classic algorithms by a small margin and gives the cleanest edges (AAHD adds zipper artefacts, DHT is softer),
-    /// at 4.7 s instead of PPG's 1.9 s (AHD 2.2 s). The embedded preview is shown while it runs.
+    /// The demosaicing used for editing and export. RCD (our C# port, <see cref="BayerDemosaic"/>): on the R8 sample
+    /// (<c>Bench/DemosaicCompareBench</c>) 5 to 10 % more fine leaf detail than LibRaw's DCB, less false colour in most
+    /// regions, and 2.7 s instead of DCB's 6.2 s (single-threaded in LibRaw). AMaZE is as sharp with slightly less false
+    /// colour but slower (3.7 s). The quick half-size preview needs no demosaicing.
     /// </summary>
-    public const RawDemosaic DefaultDemosaic = RawDemosaic.Dcb;
+    public const RawDemosaic DefaultDemosaic = RawDemosaic.Rcd;
 
     public static readonly string[] Extensions =
     [
@@ -170,7 +171,7 @@ public static class RawImageLoader
             o.HighlightMode = 1; // channel multipliers normalised by the largest: nothing clips before the sensor
             o.NoAutoBright = true;
             o.OutputBps = 16;
-            o.UserQual = ownDemosaic ? 0 : (Sdcb.LibRaw.DemosaicAlgorithm)(int)demosaic;
+            o.UserQual = demosaic >= RawDemosaic.BilinearCs ? 0 : (Sdcb.LibRaw.DemosaicAlgorithm)(int)demosaic;
             o.HalfSize = halfSize; // one output pixel per 2 x 2 sensor cells: no demosaicing at all
             if (ownDemosaic)
                 o.Interpolation = false; // LibRaw's mosaic as it would interpolate it; BayerDemosaic does that step
