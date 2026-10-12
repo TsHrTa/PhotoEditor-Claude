@@ -326,6 +326,35 @@ public sealed class HeadroomTests
         }
     }
 
+    /// <summary>
+    /// Highlights −95 turned a RAW's clouds as grey as the sky around them: the base curve's shoulder had pressed them
+    /// together. The clouds (small bright patches in a near-white sky) come out clearly brighter than the sky, further
+    /// apart than before the darkening; the shader matches.
+    /// </summary>
+    [Fact]
+    public void RawHighlights_KeepCloudsBrighterThanTheSky()
+    {
+        const int w = 96, h = 64;
+        var photo = new SKBitmap(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul));
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                bool cloud = (x / 8 + y / 8) % 3 == 0 && x % 8 > 1 && y % 8 > 1;
+                photo.SetPixel(x, y, cloud ? new SKColor(252, 252, 252) : new SKColor(222, 236, 250));
+            }
+        Headroom.Attach(photo, new Headroom(new SKBitmap(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Opaque)), 0.01f)
+            { BaseCurve = true });
+        var settings = new AdjustmentSettings { Exposure = 1, Highlights = -95 };
+        using var darkened = CpuAdjustmentRenderer.Render(photo, settings);
+        using var original = CpuAdjustmentRenderer.Render(photo, settings with { Highlights = 0 });
+        static double Luma(SKColor c) => 0.2126 * c.Red + 0.7152 * c.Green + 0.0722 * c.Blue;
+        double Step(SKBitmap b) => Luma(b.GetPixel(4, 4)) - Luma(b.GetPixel(12, 4));
+        Assert.True(Step(darkened) > Step(original) + 4, $"cloud − sky: {Step(darkened):0.0}, before {Step(original):0.0}");
+        using var gpu = AdjustmentShader.RenderRaster(photo, new EditState { Adjustments = settings });
+        int diff = TestImages.MaxDifference(darkened, gpu, out var at);
+        Assert.True(diff <= 2, $"shader differs by {diff} at {at}: {darkened.GetPixel(at.X, at.Y)} vs {gpu.GetPixel(at.X, at.Y)}");
+    }
+
     [Fact]
     public void RawHighlights_DarkenedInAMask_BringBackTheSkysColourAsTheGlobalSlider()
     {

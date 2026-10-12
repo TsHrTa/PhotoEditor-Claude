@@ -190,6 +190,19 @@ public static class AdjustmentShader
             float h = 1.0 - pow(1.0 - t, 1.0 + 12.0 * a);
             return 0.4 + (t + t * (h - t)) * 0.6;
         }
+        // ToneCurve.ShoulderSlope / ShoulderLift (amount 1.5, start 2.5, grain 0.04): a darkened RAW pixel's lift above
+        // its local mean comes back from the base curve's shoulder.
+        float shoulderSlope(float y) {
+            y = max(y, 1e-6);
+            float z = 2.0 * y / (1.0 - y + sqrt((1.0 - y) * (1.0 - y) + 4.0 * y / (429.889 * 429.889)));
+            return 1.0 + z / (429.889 * 429.889 + z) - z / (1.0 + z);
+        }
+        float shoulderLift(float meanLuminance, float meanGain, float detailRatio) {
+            float ym = max(meanLuminance, 1e-6);
+            float e = shoulderSlope(ym * meanGain) / shoulderSlope(ym);
+            float lift = max(-log(max(detailRatio, 1e-6)) - 0.04, 0.0);
+            return exp(1.5 * max(e - 2.5, 0.0) * lift);
+        }
         // A brightening gain limited so the brightest channel approaches white softly (see ToneCurve.LimitBrightening).
         float limitBrightening(float hi, float gain) {
             float v = hi * gain;
@@ -566,7 +579,11 @@ public static class AdjustmentShader
                 float h0 = pow(max(meanLuminance, 1e-6), 1.0 / perceptualGamma);
                 float h = highlightsStep(highlightsStep(h0, highlightsAmount), highlightsAmount2);
                 gain = pow(max(h, 0.0) / h0, perceptualGamma);
-                if (h < h0 && h > 0.0) gain *= pow(max(detailRatio, 1e-6), 1.2 * (1.0 - h0 / h));
+                if (h < h0 && h > 0.0) {
+                    float meanGain = gain;
+                    gain *= pow(max(detailRatio, 1e-6), 1.2 * (1.0 - h0 / h));
+                    if (sceneExposure > 0.0) gain *= min(shoulderLift(meanLuminance, meanGain, detailRatio), max(1.0 / gain, 1.0));
+                }
             }
             float x0 = pow(yb * gain, 1.0 / perceptualGamma);
             float x = shadowsStep(shadowsStep(x0, shadowsAmount), shadowsAmount2);

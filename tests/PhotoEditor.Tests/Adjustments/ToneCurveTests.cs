@@ -120,6 +120,28 @@ public class ToneCurveTests
     }
 
     /// <summary>
+    /// Highlights −95 left a RAW's clouds as grey as the sky next to them (luma 191 / 183, Lightroom 214 / 185): the base
+    /// curve's shoulder had pressed them together. On a RAW a pixel well above its darkened local mean near white gets
+    /// its lift back; the sky's grain, pixels below their mean, midtones and JPEGs keep the plain darkening.
+    /// </summary>
+    [Fact]
+    public void Highlights_GiveRawCloudsBackTheirBrightness()
+    {
+        var jpeg = P(new AdjustmentSettings { Highlights = -95 });
+        var raw = jpeg.ForScene(true);
+        float Gain(in PreparedAdjustments p, float mean, float pixel) => ToneCurve.LocalGain(pixel, p, mean / pixel, mean);
+        // the R8 sample's cloud edge: pixel 0.985 over a local mean of 0.885
+        Assert.InRange(Gain(raw, 0.885f, 0.985f) / Gain(jpeg, 0.885f, 0.985f), 1.15f, 1.6f);
+        // sky grain (2 % above its mean), a pixel below its mean, a midtone above its mean: unchanged
+        Assert.Equal(Gain(jpeg, 0.92f, 0.94f), Gain(raw, 0.92f, 0.94f), 5);
+        Assert.Equal(Gain(jpeg, 0.885f, 0.8f), Gain(raw, 0.885f, 0.8f), 5);
+        Assert.Equal(Gain(jpeg, 0.2f, 0.3f), Gain(raw, 0.2f, 0.3f), 5);
+        // never brighter than the pixel was
+        for (float pixel = 0.9f; pixel <= 1.6f; pixel += 0.05f)
+            Assert.True(Gain(raw, 0.885f, pixel) <= 1f + 1e-5f, $"at {pixel}");
+    }
+
+    /// <summary>
     /// User report: Highlights made the whole photo greyish and changed colours, and did something else than
     /// Lightroom's. Measured on the user's Lightroom TIFFs (R8 sample, −95): Lightroom darkens by a number of stops
     /// that grows with the brightness, about 0.4 in the lower midtones, nothing in the deepest shadows. As a gain it
