@@ -136,7 +136,7 @@ public partial class MainViewModel
         var settings = State.Adjustments;
         var lens = PhotoLensInfo;
         // (a quick check without measuring: measuring only matters once something is to be corrected)
-        var full = LensSetup.For(lens, settings, basePreview.Width, basePreview.Height, measureCa: () => (1.001, 1));
+        var full = LensSetup.For(lens, settings, basePreview.Width, basePreview.Height, measureCa: () => ChannelShift.Scales(1.001, 1));
         if (full is null)
         {
             _lensPreview = null;
@@ -156,15 +156,21 @@ public partial class MainViewModel
         try
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            // The chromatic aberration is measured once, on the full-size photo, as the export does (the measurement
-            // uses a fixed-size copy, so the result is the same).
-            Func<(double, double)> measure = () =>
+            // The chromatic aberration is measured once, on the full-size photo, as the export does (the shifts are in
+            // half-diagonals, so they fit the preview size too).
+            Func<ChannelShift?> measure = () =>
             {
                 using var bitmap = SKBitmap.FromImage(basePreview.Full);
                 return ChromaticAberration.Measure(bitmap);
             };
-            (double, double)? measured = null;
-            Func<(double, double)> once = () => measured ??= measure();
+            ChannelShift? measured = null;
+            bool done = false;
+            Func<ChannelShift?> once = () =>
+            {
+                if (!done)
+                    (measured, done) = (measure(), true);
+                return measured;
+            };
             // 1. The preview size (what the fitted view shows); the full size follows.
             var small = await Task.Run(() => Corrected(basePreview.Preview, lens, settings, once));
             if (Current())
@@ -206,7 +212,7 @@ public partial class MainViewModel
 
     /// <summary>One image of the shown photo corrected; its headroom and vignetting table attached, maps shared.</summary>
     private static (SKImage Image, SKBitmap? Bitmap) Corrected(SKImage image, PhotoLens lens, AdjustmentSettings settings,
-        Func<(double, double)> measureCa)
+        Func<ChannelShift?> measureCa)
     {
         var correction = LensSetup.For(lens, settings, image.Width, image.Height, measureCa: measureCa)
             ?? new LensCorrection(image.Width, image.Height, null, 1); // nothing measured after all

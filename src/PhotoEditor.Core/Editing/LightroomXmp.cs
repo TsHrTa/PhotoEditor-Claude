@@ -520,7 +520,7 @@ public static class LightroomXmp
             Clarity = Get("Clarity2012"),
             Dehaze = Get("Dehaze"),
             LensProfile = Get("LensProfileEnable", AdjustmentSettings.DefaultFor(geometry.IsRaw).LensProfile ? 1 : 0) != 0,
-            RemoveChromaticAberration = Get("AutoLateralCA") != 0,
+            RemoveChromaticAberration = Get("AutoLateralCA", AdjustmentSettings.DefaultFor(geometry.IsRaw).RemoveChromaticAberration ? 1 : 0) != 0,
             LensProfileVignetting = Get("LensProfileVignettingScale", AdjustmentSettings.DefaultFor(geometry.IsRaw).LensProfileVignetting),
             LensDistortion = Get("LensManualDistortionAmount"),
             LensVignetting = Get("VignetteAmount"),

@@ -51,8 +51,8 @@ public sealed class LightroomCompareBench(ITestOutputHelper output)
             var ours = settings;
             if (Environment.GetEnvironmentVariable("PHOTOEDITOR_OURS_SHARPEN") is { } sharpen)
                 ours = ours with { SharpenAmount = double.Parse(sharpen, CultureInfo.InvariantCulture) };
-            if (Environment.GetEnvironmentVariable("PHOTOEDITOR_OURS_CA") == "1")
-                ours = ours with { RemoveChromaticAberration = true };
+            if (Environment.GetEnvironmentVariable("PHOTOEDITOR_OURS_CA") is { } ca) // 0 or 1; on by default for RAWs
+                ours = ours with { RemoveChromaticAberration = ca == "1" };
             using var mine = CpuAdjustmentRenderer.Render(photo, new Core.Editing.EditState { Adjustments = ours }, Core.Lens.PhotoLens.Of(raw));
             output.WriteLine($"== {file} (LR {lr.Width} x {lr.Height}, ours {mine.Width} x {mine.Height})");
             WriteOverview(lr, mine, Path.Combine(outDir, Slug(file) + "_overview.png"));

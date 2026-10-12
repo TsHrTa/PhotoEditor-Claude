@@ -25,9 +25,12 @@ public sealed class LensCorrection
     /// <param name="blueScale">Same for blue.</param>
     /// <param name="perspective">The Transform panel's map (applied before the lens corrections), or null.</param>
     /// <param name="vignettingScale">How much of the profile's vignetting correction to apply, in stops (0..2, 1 = all).</param>
+    /// <param name="moves">Moves of the red and blue images after their scales (automatic chromatic aberration), or null.</param>
     public LensCorrection(int width, int height, LensProfile? profile, double cropFactor, double manualDistortion = 0,
-        double redScale = 1, double blueScale = 1, Perspective? perspective = null, double vignettingScale = 1)
+        double redScale = 1, double blueScale = 1, Perspective? perspective = null, double vignettingScale = 1,
+        ShiftField? moves = null)
     {
+        Moves = moves;
         VignettingScale = vignettingScale;
         Width = width;
         Height = height;
@@ -49,6 +52,22 @@ public sealed class LensCorrection
     public double BlueScale { get; }
 
     /// <summary>
+    /// Where the red and blue images are taken from, relative to the places their scales give (a lens whose colours
+    /// are not centred on the frame, see <see cref="ChannelShift"/>), or null.
+    /// </summary>
+    public ShiftField? Moves { get; }
+
+    /// <summary>The <see cref="Moves"/> in pixels at a photo position.</summary>
+    private (float RedX, float RedY, float BlueX, float BlueY) MovesAt(double sx, double sy)
+    {
+        if (Moves is null)
+            return default;
+        var m = Moves.At((float)(sx / Width), (float)(sy / Height));
+        float k = (float)_halfDiagonal;
+        return (m.RedX * k, m.RedY * k, m.BlueX * k, m.BlueY * k);
+    }
+
+    /// <summary>
     /// How much of the profile's vignetting correction is applied, in stops: its gain is raised to this power
     /// (Lightroom's Profile "Vignetting" amount / 100).
     /// </summary>
@@ -65,8 +84,11 @@ public sealed class LensCorrection
 
     /// <summary>Nothing moves.</summary>
     public bool IsGeometryIdentity =>
-        Perspective is null && (Profile is null || (Profile.DistortionModel is null && Profile.TcaModel is null)) && ManualDistortion == 0
-        && RedScale == 1 && BlueScale == 1;
+        Perspective is null && Profile?.DistortionModel is null && ManualDistortion == 0 && !ChannelsMove;
+
+    /// <summary>Red or blue is taken from elsewhere than green (chromatic aberration).</summary>
+    private bool ChannelsMove =>
+        Profile?.TcaModel is not null || RedScale != 1 || BlueScale != 1 || Moves is not null;
 
     /// <summary>
     /// Where the output pixel at offset (<paramref name="dx"/>, <paramref name="dy"/>) from the centre takes its red,
@@ -125,10 +147,13 @@ public sealed class LensCorrection
                 {
                     var (ux, uy) = ToLens(x - Width / 2.0, y - Height / 2.0, Perspective?.Fill, zoom);
                     var f = Uncorrected(ux, uy);
-                    foreach (double k in new[] { f.Red, f.Green, f.Blue })
+                    // Red and blue may reach a little past the border (the edge pixels repeat there): enlarging
+                    // the whole photo for a sub-pixel colour shift would soften every pixel instead.
+                    var m = MovesAt(Width / 2.0 + ux * f.Green, Height / 2.0 + uy * f.Green);
+                    foreach (var (k, mx, my, slack) in new[] { (f.Red, m.RedX, m.RedY, 2.0), (f.Green, 0f, 0f, 0.01), (f.Blue, m.BlueX, m.BlueY, 2.0) })
                     {
-                        double sx = Width / 2.0 + ux * k, sy = Height / 2.0 + uy * k;
-                        if (sx < -0.01 || sy < -0.01 || sx > Width + 0.01 || sy > Height + 0.01)
+                        double sx = Width / 2.0 + ux * k + mx, sy = Height / 2.0 + uy * k + my;
+                        if (sx < -slack || sy < -slack || sx > Width + slack || sy > Height + slack)
                             return false;
                     }
                 }
@@ -285,7 +310,7 @@ public sealed class LensCorrection
         var table = RadialTable(maxDistance);
         var map = Perspective?.Full;
         float zoom = (float)Zoom;
-        bool sameForAll = Profile?.TcaModel is null && RedScale == 1 && BlueScale == 1;
+        bool sameForAll = !ChannelsMove;
         var inP = new Plane(photo);
         var outP = new Plane(outPhoto);
         var inA = above is null ? default : new Plane(above);
@@ -340,9 +365,10 @@ public sealed class LensCorrection
                 {
                     float kr = table[i * 3] + (table[i * 3 + 3] - table[i * 3]) * frac;
                     float kb = table[i * 3 + 2] + (table[i * 3 + 5] - table[i * 3 + 2]) * frac;
-                    Channel(0, new Taps(cx + ux * kr, cy + uy * kr, w, h), x);
+                    var (rmx, rmy, bmx, bmy) = MovesAt(sx, sy);
+                    Channel(0, new Taps(cx + ux * kr + rmx, cy + uy * kr + rmy, w, h), x);
                     Channel(1, tapsG, x);
-                    Channel(2, new Taps(cx + ux * kb, cy + uy * kb, w, h), x);
+                    Channel(2, new Taps(cx + ux * kb + bmx, cy + uy * kb + bmy, w, h), x);
                 }
                 o[3] = (byte)(inP.Sample(tapsG, 3) + 0.5f);
                 // premultiplied: a colour never exceeds its alpha
