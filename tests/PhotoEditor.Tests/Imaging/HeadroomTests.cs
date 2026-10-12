@@ -327,6 +327,57 @@ public sealed class HeadroomTests
     }
 
     [Fact]
+    public void RawHighlights_DarkenedInAMask_BringBackTheSkysColourAsTheGlobalSlider()
+    {
+        using var photo = SceneColourPhoto();
+        var global = new AdjustmentSettings { Exposure = 1, SharpenAmount = 40 };
+        using var slider = CpuAdjustmentRenderer.Render(photo, global with { Highlights = -95 });
+        foreach (var g in new[] { global, global with { LensVignetting = 40, Temperature = 15, Saturation = 20 } })
+        {
+            var state = new EditState { Adjustments = g, Masks = [MaskOf(new AdjustmentSettings { Highlights = -95 }, new ValueComponent(1))] };
+            using var cpu = CpuAdjustmentRenderer.Render(photo, state);
+            using var gpu = AdjustmentShader.RenderRaster(photo, state);
+            int diff = TestImages.MaxDifference(cpu, gpu, out var at);
+            Assert.True(diff <= 2, $"shader differs by {diff} at {at}: {cpu.GetPixel(at.X, at.Y)} vs {gpu.GetPixel(at.X, at.Y)}");
+            if (g != global)
+                continue;
+            // The sky gets the same colour as with the global slider; the neutral area and the fringe stay as they were.
+            var sky = cpu.GetPixel(20, 20);
+            var expected = slider.GetPixel(20, 20);
+            Assert.True(Math.Abs(sky.Red - expected.Red) <= 4 && Math.Abs(sky.Green - expected.Green) <= 4
+                && Math.Abs(sky.Blue - expected.Blue) <= 4 && Chroma(sky) > 40, $"{sky} vs {expected}");
+            Assert.True(Chroma(cpu.GetPixel(60, 20)) <= 3, cpu.GetPixel(60, 20).ToString());
+            Assert.True(Chroma(cpu.GetPixel(72, 20)) <= Chroma(photo.GetPixel(72, 20)) + 3, cpu.GetPixel(72, 20).ToString());
+        }
+
+        // Under earlier masks: their changes are part of the scene colour's original (here +0.5 stop, so it matches
+        // the global slider at Exposure 1.5), also when they darken highlights themselves; the shader matches.
+        using var brighter = CpuAdjustmentRenderer.Render(photo, global with { Exposure = 1.5, Highlights = -95 });
+        var highlights = MaskOf(new AdjustmentSettings { Highlights = -95 }, new ValueComponent(1));
+        foreach (var masks in new[]
+        {
+            new[] { MaskOf(new AdjustmentSettings { Exposure = 0.5 }, new ValueComponent(1)), highlights },
+            [MaskOf(new AdjustmentSettings { Highlights = -40, Exposure = 0.5 }, new RectComponent(0, 0, 0.6f, 1)),
+                MaskOf(new AdjustmentSettings { Saturation = 30 }, new RectComponent(0.3f, 0, 1, 1)), highlights],
+        })
+        {
+            var state = new EditState { Adjustments = global, Masks = [.. masks] };
+            using var cpu = CpuAdjustmentRenderer.Render(photo, state);
+            using var gpu = AdjustmentShader.RenderRaster(photo, state);
+            int diff = TestImages.MaxDifference(cpu, gpu, out var at);
+            // 3: at Exposure 1.5 the sharpening halo under the sky's edge has its blue pulled to near black (level 16),
+            // where sRGB is steepest and the CPU's and shader's sharpening (1 level apart) show 3 levels apart.
+            Assert.True(diff <= 3, $"shader differs by {diff} at {at}: {cpu.GetPixel(at.X, at.Y)} vs {gpu.GetPixel(at.X, at.Y)} ({masks.Length} masks)");
+            if (masks.Length != 2)
+                continue;
+            var sky = cpu.GetPixel(20, 20);
+            var expected = brighter.GetPixel(20, 20);
+            Assert.True(Math.Abs(sky.Red - expected.Red) <= 4 && Math.Abs(sky.Green - expected.Green) <= 4
+                && Math.Abs(sky.Blue - expected.Blue) <= 4 && Chroma(sky) > 40, $"stacked: {sky} vs {expected}");
+        }
+    }
+
+    [Fact]
     public void AMask_BringsBackWhatTheGlobalPassPushedAboveWhite()
     {
         // Any photo: +1 stop globally, −1 stop in a mask over everything = the photo again (no clipping between).
